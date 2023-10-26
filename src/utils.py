@@ -1,0 +1,309 @@
+import json
+import os
+import pickle
+import random
+import sys
+from pathlib import Path
+from typing import Tuple, List
+
+import numpy as np
+import torch
+import torch.nn.functional as F
+from fairscale.nn.model_parallel.initialize import initialize_model_parallel
+from torch.distributed import init_process_group
+from tqdm import trange
+
+
+def set_seed(seed):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+
+
+def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0):
+    freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
+    t = torch.arange(end, device=freqs.device)  # type: ignore
+    freqs = torch.outer(t, freqs).float()  # type: ignore
+    freqs_cis = torch.polar(torch.ones_like(freqs), freqs)  # complex64
+    return freqs_cis
+
+
+def reshape_for_broadcast(freqs_cis: torch.Tensor, x: torch.Tensor):
+    ndim = x.ndim
+    assert 0 <= 1 < ndim
+    assert freqs_cis.shape == (x.shape[1], x.shape[-1])
+    shape = [d if i == 1 or i == ndim - 1 else 1 for i, d in enumerate(x.shape)]
+    return freqs_cis.view(*shape)
+
+
+def apply_rotary_emb(
+        xq: torch.Tensor,
+        xk: torch.Tensor,
+        freqs_cis: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    xq_ = torch.view_as_complex(xq.float().reshape(*xq.shape[:-1], -1, 2))
+    xk_ = torch.view_as_complex(xk.float().reshape(*xk.shape[:-1], -1, 2))
+    freqs_cis = reshape_for_broadcast(freqs_cis, xq_)
+    xq_out = torch.view_as_real(xq_ * freqs_cis).flatten(3)
+    xk_out = torch.view_as_real(xk_ * freqs_cis).flatten(3)
+    return xq_out.type_as(xq), xk_out.type_as(xk)
+
+
+def json_dump(obj, f, indent=None):
+    if str(f).endswith(".json"):
+        with open(f, 'w', encoding='utf-8') as writer:
+            writer.write(json.dumps(obj, indent=indent))
+    elif str(f).endswith(".jsonl"):
+        with open(f, 'w', encoding='utf-8') as writer:
+            assert type(obj) is list
+            for data in obj:
+                writer.write(json.dumps(data) + '\n')
+    else:
+        raise ValueError(f"Unexpected file type: {str(f)}")
+
+
+def json_load(f):
+    """Load a .json file into a dictionary."""
+    if str(f).endswith(".json"):
+        with open(f, 'r', encoding='utf-8') as reader:
+            datalist = json.load(reader)
+    elif str(f).endswith(".jsonl"):
+        datalist = []
+        with open(f, 'r', encoding='utf-8') as reader:
+            for line in reader:
+                datalist.append(json.loads(line))
+    else:
+        raise ValueError(f"Unexpected file type: {str(f)}")
+    return datalist
+
+
+def pickle_load(f):
+    with open(f, "rb") as r:
+        objects = pickle.load(r)
+    return objects
+
+
+def pickle_dump(obj, f):
+    with open(f, "wb") as f:
+        pickle.dump(obj, f)
+    return f
+
+
+def setup_model_parallel(use_float16=True, seed=None) -> Tuple[int, int]:
+    local_rank = int(os.environ.get("LOCAL_RANK", -1))
+    world_size = int(os.environ.get("WORLD_SIZE", -1))
+    if local_rank > 0:
+        sys.stdout = open(os.devnull, "w")
+
+    init_process_group("nccl")
+    initialize_model_parallel(world_size)
+    torch.cuda.set_device(local_rank)
+
+    # seed must be the same in all processes
+    # torch.manual_seed(1)
+    set_seed(1 if seed is None else seed)
+    if use_float16:
+        torch.set_default_tensor_type('torch.HalfTensor')
+    return local_rank, world_size
+
+
+def sample_top_p(probs, p):
+    probs_sort, probs_idx = torch.sort(probs, dim=-1, descending=True)
+    probs_sum = torch.cumsum(probs_sort, dim=-1)
+    mask = probs_sum - probs_sort > p
+    probs_sort[mask] = 0.0
+    probs_sort.div_(probs_sort.sum(dim=-1, keepdim=True))
+    next_token = torch.multinomial(probs_sort, num_samples=1)
+    next_token = torch.gather(probs_idx, -1, next_token)
+    return next_token
+
+
+def cross_entropy(logits, labels, weights=None, keepdim=False):
+    """
+    Compute Cross-Entropy Loss..
+    :param logits: [batch_size, ..., num_classes] tensor.
+    :param labels: [batch_size, ...] tensor. LongTensor.
+    Same shape with 0th - (last - 1)th of logits.
+    :param weights: [batch_size, ...] tensor, where `1` donates validate and
+     `0` donates invalidate. Same shape with 0th - (last - 1)th of logits.
+    :param keepdim: bool, whether not to perform reduce sum of the final result.
+    :return: The mean of all examples' loss.
+    """
+    bzs = logits.shape[0]
+    logits = logits.float()
+    labels = labels.to(logits.device)
+    if weights is None:
+        weights = torch.ones_like(labels)
+    weights = weights.float().to(logits.device)
+    weights = torch.reshape(weights, [bzs, -1])
+    num_classes = int(logits.size()[-1])
+    logits = torch.reshape(logits, shape=[bzs, -1, num_classes])
+    log_probs = F.log_softmax(logits, dim=-1)
+    labels = torch.reshape(labels, [bzs, -1]).long()
+    labels = F.one_hot(labels, num_classes=num_classes)
+    loss = - torch.sum(log_probs * labels, dim=[-1])  # [b, s]
+    if not keepdim:
+        nrt = torch.sum(weights * loss, dim=-1)
+        dnm = torch.sum(weights, dim=-1) + 1e-8
+        loss = torch.mean(nrt / dnm, dim=0)
+    return loss
+
+
+def kl_div(source, target):
+    """ Compute Kullback-Leibler divergence Loss along last dim. """
+    result = source * torch.log(source) - source * torch.log(target)
+    return torch.sum(result, dim=-1)
+
+
+def kl_div_loss(p, q, weights=None):
+    """ Compute Kullback-Leibler divergence Loss """
+    p_loss = kl_div(p, q)
+    q_loss = kl_div(q, p)
+    if weights is not None:
+        weights = weights.to(p.device)
+        p_loss = p_loss * weights
+        q_loss = q_loss * weights
+        p_loss = p_loss.sum(dim=-1) / (weights.sum(dim=-1) + 1e-12)
+        q_loss = q_loss.sum(dim=-1) / (weights.sum(dim=-1) + 1e-12)
+    p_loss = p_loss.mean()
+    q_loss = q_loss.mean()
+    loss = (p_loss + q_loss) / 2
+    return loss
+
+
+def kl_div_loss_v2(p, q, weights=None):
+    """ Compute Kullback-Leibler divergence Loss """
+    p_loss = kl_div(p, q)
+    q_loss = kl_div(q, p)
+    if weights is None:
+        weights = torch.ones_like(p_loss)
+    weights = weights.to(p.device)
+    p_loss = p_loss * weights
+    q_loss = q_loss * weights
+    p_loss = p_loss.sum(dim=-1) / (weights.sum(dim=-1) + 1e-12)
+    q_loss = q_loss.sum(dim=-1) / (weights.sum(dim=-1) + 1e-12)
+    p_loss = p_loss.sum() / (torch.sign(weights.sum(dim=-1)).sum() + 1e-12)
+    q_loss = q_loss.sum() / (torch.sign(weights.sum(dim=-1)).sum() + 1e-12)
+    loss = (p_loss + q_loss) / 2
+    return loss
+
+
+def barrier():
+    """ make sure that all other processes cannot continue until reach this op. """
+    torch.distributed.barrier()
+
+
+def extract_logits(logits, p=0.8, max_n=10, min_n=5):
+    """
+    For extracting teacher distribution to distill.
+    We don't need to record the whole vocabulary's probabilities which is space-consuming.
+    Instead, we only retain those indices summed up to `p`.
+    :param: logits, two dim tensor [s, v].
+    :return: List[dict]
+    """
+    assert min_n <= max_n
+    assert len(logits.shape) == 2
+    probs = torch.softmax(logits, dim=-1)
+    values, indices = torch.topk(probs, k=max_n)
+    results = []
+    for vas, ins, lgs in zip(values, indices, logits):
+        end_index = 0
+        accum = 0
+        for v in vas:
+            accum += v
+            end_index += 1
+            if accum >= p:
+                break
+        if end_index < min_n:
+            end_index = min_n
+        result = {}
+        for i in range(end_index):
+            result[int(ins[i])] = round(float(lgs[ins[i]]), 6)
+        results.append(result)
+    return results
+
+
+def reconstruct_logits_from_dict(logits_dict: dict, vocab_size: int = 32000) -> torch.Tensor:
+    # logits = torch.zeros(size=(vocab_size,))
+    logits = torch.full(size=(vocab_size,), fill_value=-1e5, dtype=torch.float32)
+    for index, lgt in logits_dict.items():
+        index, lgt = int(index), float(lgt)
+        logits[index] = lgt
+    # normalize
+    # logits = logits / torch.sum(logits)
+    return logits  # [v]
+
+
+def reconstruct_logits_from_dicts(
+        logits_dicts: List[dict], vocab_size: int = 32000
+) -> torch.Tensor:
+    """ Reconstruct logits with return shape [seq_length, vocab_size] """
+    seq_len = len(logits_dicts)
+    logits = torch.zeros(size=(seq_len, vocab_size))
+    for i, logits_dict in enumerate(logits_dicts):
+        logits[i, :] = reconstruct_logits_from_dict(logits_dict, vocab_size)
+    return logits
+
+
+def powmax(tensor, exponent=1, dim=-1, eps=1e-12):
+    """ Similar to softmax, perform power max on vectors along one specific dimension. """
+    numerator = torch.pow(tensor, exponent=exponent)
+    denominator = torch.sum(numerator, dim=dim, keepdim=True)
+    return numerator / (denominator + eps)
+
+
+def masked_mean(
+        x: torch.Tensor,
+        mask: torch.Tensor = None,
+        dim: int = -1,
+        keepdim: bool = False,
+        eps: float = 1e-12
+):
+    if mask is None:
+        mask = torch.full_like(x, fill_value=True)
+    assert x.shape == mask.shape
+    mask = mask.to(x.dtype)
+    return torch.sum(
+        x * mask, dim=dim, keepdim=keepdim
+    ) / (torch.sum(mask, dim=dim, keepdim=keepdim) + eps)
+
+
+def logits_normalize(x: torch.Tensor, dim=-1):
+    """ Avoid overflowing """
+    return x - torch.max(x, dim=dim, keepdim=True)[0]
+
+
+def merge_lora_checkpoints(
+        ckpt_dir,
+        world_size=8,
+        layers=32
+):
+    """ Merge lora checkpoint. """
+    checkpoints = sorted(Path(ckpt_dir).glob("*.pth"))
+    state_dicts = []
+    for checkpoint in checkpoints:
+        state_dicts.append(torch.load(checkpoint, map_location='cpu'))
+
+    with torch.no_grad():
+        for i in range(layers):
+            for j in range(world_size):
+                for wx in ['wq', 'wk', 'wv', 'w1', 'w3', 'wo', 'w2']:
+                    module = 'feed_forward' if wx in ['w1', 'w2', 'w3'] else 'attention'
+                    w = state_dicts[j][f"layers.{i}.{module}.{wx}.weight"]
+                    a = state_dicts[j].pop(f"layers.{i}.{module}.lora_a_{wx}.weight")
+                    b = state_dicts[j].pop(f"layers.{i}.{module}.lora_b_{wx}.weight")
+                    state_dicts[j][f"layers.{i}.{module}.{wx}.weight"] = (w + b @ a).clone().to(w.dtype)
+        # output
+        for j in range(world_size):
+            w = state_dicts[j][f"output.weight"]
+            a = state_dicts[j].pop(f"lora_a_output.weight")
+            b = state_dicts[j].pop(f"lora_b_output.weight")
+            state_dicts[j][f"output.weight"] = (w + b @ a).clone().to(w.dtype)
+
+    saved_path = os.path.join(ckpt_dir, 'merged')
+    print(f"Saving checkpoint to {saved_path} ......")
+    for rank in trange(world_size):
+        os.makedirs(saved_path, exist_ok=True)
+        torch.save(state_dicts[rank], os.path.join(ckpt_dir, 'merged', f'consolidated.0{rank}.pth'))
