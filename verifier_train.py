@@ -7,8 +7,8 @@ from tqdm import tqdm
 
 from src.dataset import RewardDataset
 from src.evaluator import VerifierEvaluator
-from src.modeling_args import LoraModelArgs
-from src.modeling_lora import LoraLlamaVerifier
+from src.modeling.llama_lora import LoraLlamaVerifier
+from src.modeling.modeling_args import LoraLlamaArgs
 from src.tokenizer import LlamaTokenizer
 from src.trainer import DistributedVerifierTrainer
 from src.utils import setup_model_parallel, json_dump
@@ -38,7 +38,7 @@ def main(
     local_rank, world_size = setup_model_parallel(
         use_float16=True, seed=seed
     )
-    params = LoraModelArgs(
+    params = LoraLlamaArgs(
         max_seq_len=max_seq_len,
         local_rank=local_rank,
         world_size=world_size,

@@ -156,5 +156,24 @@ def remove_added_tokens(
         print(key, value.shape)
 
 
+def convert_dtype(
+        ckpt_file='consolidated.00.pth',
+        save_dir='',
+        dtype: str = 'float16'
+):
+    state_dict = torch.load(ckpt_file, map_location='cpu')
+    dt = None
+    if dtype == 'float16':
+        dt = torch.float16
+    elif dtype == 'float32':
+        dt = torch.float32
+    elif dtype == 'bfloat16':
+        dt = torch.bfloat16
+    for key, val in state_dict.items():
+        state_dict[key] = val.to(dt).clone()
+    os.makedirs(save_dir, exist_ok=True)
+    torch.save(state_dict, os.path.join(save_dir, ckpt_file.split('/')[-1]))
+
+
 if __name__ == '__main__':
-    fire.Fire(remove_added_tokens)
+    fire.Fire(convert_dtype)

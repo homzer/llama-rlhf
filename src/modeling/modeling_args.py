@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 
 @dataclass
-class ModelArgs:
+class LlamaArgs:
     max_seq_len: int
     local_rank: int
     world_size: int
@@ -38,5 +38,5 @@ class ModelArgs:
 
 
 @dataclass
-class LoraModelArgs(ModelArgs):
+class LoraLlamaArgs(LlamaArgs):
     r: int = None  # Rank of lora

@@ -7,8 +7,8 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from src.dataset import JsonDataset
-from src.modeling_args import LoraModelArgs
-from src.modeling_lora import LoraLlama
+from src.modeling.llama_lora import LoraLlama
+from src.modeling.modeling_args import LoraLlamaArgs
 from src.tokenizer import LlamaTokenizer
 from src.trainer import DistributedSolverTrainer
 from src.utils import setup_model_parallel
@@ -48,7 +48,7 @@ def main(
     local_rank, world_size = setup_model_parallel(
         use_float16=True, seed=seed
     )
-    params = LoraModelArgs(
+    params = LoraLlamaArgs(
         max_seq_len=max_seq_len,
         local_rank=local_rank,
         world_size=world_size,
@@ -63,7 +63,7 @@ def main(
         model=model,
         tokenizer=LlamaTokenizer(tokenizer_path),
         optimizer=optimizer,
-        eval_batch_size=eval_batch_size
+        max_seq_len=max_seq_len
     )
     trainer.load(ckpt_dir)
 

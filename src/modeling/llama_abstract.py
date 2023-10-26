@@ -1,6 +1,4 @@
 import math
-import os
-from pathlib import Path
 from typing import Optional
 
 import fairscale.nn.model_parallel.initialize as fs_init
@@ -8,59 +6,13 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from src.modeling_args import ModelArgs, LoraModelArgs
+from src.modeling.modeling import ParallelModule, ParallelModelForCausalLM, CausalLMOutputs
+from src.modeling.modeling_args import LlamaArgs, LoraLlamaArgs
 from src.utils import apply_rotary_emb, precompute_freqs_cis, barrier, logits_normalize
 
 
-class DistributedModule(nn.Module):
-    def __init__(self, local_rank, world_size):
-        super().__init__()
-        self.local_rank = local_rank
-        self.world_size = world_size
-
-    def load(self, ckpt_dir: str):
-        print(f'Loading model from {ckpt_dir} .....')
-        checkpoints = sorted(Path(ckpt_dir).glob("*.pth"))
-        assert self.world_size == len(
-            checkpoints
-        ), f"Loading a checkpoint for MP={len(checkpoints)} but world size is {self.world_size}"
-        ckpt_path = checkpoints[self.local_rank]
-        state_dict = torch.load(ckpt_path, map_location="cpu")
-        outputs = self.load_state_dict(state_dict, strict=False)
-        for missing_key in outputs.missing_keys:
-            print(f"MISSING KEY: {missing_key}")
-        for unexpected_key in outputs.unexpected_keys:
-            print(f"UNEXPECTED KEY: {unexpected_key}")
-        self.cuda(self.local_rank)
-        print(f'Loading done !')
-
-    def save(self, save_path):
-        if self.local_rank == 0:
-            os.makedirs(save_path, exist_ok=True)
-        print(f'Saving model to {save_path} ......')
-        # make sure that all other processes cannot continue until process 0 has created the directory.
-        barrier()
-        torch.save(self.state_dict(), os.path.join(save_path, f'consolidated.0{self.local_rank}.pth'))
-        barrier()
-        print(f'Saving done !')
-
-
-class RMSNorm(torch.nn.Module):
-    def __init__(self, dim: int, eps: float = 1e-6):
-        super().__init__()
-        self.eps = eps
-        self.weight = nn.Parameter(torch.ones(dim))
-
-    def _norm(self, x):
-        return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
-
-    def forward(self, x):
-        output = self._norm(x.float()).type_as(x)
-        return output * self.weight
-
-
 class AbstractAttention(nn.Module):
-    def __init__(self, args: ModelArgs):
+    def __init__(self, args: LlamaArgs):
         super().__init__()
         self.args = args
         self.n_local_heads = args.n_heads // fs_init.get_model_parallel_world_size()
@@ -131,7 +83,7 @@ class AbstractAttention(nn.Module):
 
 
 class AbstractFeedForward(nn.Module):
-    def __init__(self, args: ModelArgs):
+    def __init__(self, args: LlamaArgs):
         super().__init__()
         hidden_dim = int(2 * (4 * args.dim) / 3)
         hidden_dim = args.multiple_of * ((hidden_dim + args.multiple_of - 1) // args.multiple_of)
@@ -146,7 +98,7 @@ class AbstractFeedForward(nn.Module):
 
 
 class AbstractTransformerBlock(nn.Module):
-    def __init__(self, layer_id: int, args: ModelArgs):
+    def __init__(self, layer_id: int, args: LlamaArgs):
         super().__init__()
         self.n_heads = args.n_heads
         self.dim = args.dim
@@ -168,8 +120,8 @@ class AbstractTransformerBlock(nn.Module):
         return out
 
 
-class AbstractLlama(DistributedModule):
-    def __init__(self, args: ModelArgs):
+class AbstractLlama(ParallelModelForCausalLM):
+    def __init__(self, args: LlamaArgs):
         super().__init__(args.local_rank, args.world_size)
         self.params = args
         self.vocab_size = args.vocab_size
@@ -201,7 +153,7 @@ class AbstractLlama(DistributedModule):
             h = layer(h, start_pos, freqs_cis, mask, use_cache)
         h = self.norm(h)
         output = self.output(h)
-        return logits_normalize(output.float())
+        return CausalLMOutputs(logits=logits_normalize(output.float()), hidden_states=h)
 
     def flush(self):
         """ Clean cache in `Attention` module """
@@ -211,7 +163,7 @@ class AbstractLlama(DistributedModule):
 
 
 class AbstractLoraAttention(AbstractAttention):
-    def __init__(self, args: LoraModelArgs):
+    def __init__(self, args: LoraLlamaArgs):
         super().__init__(args)
 
         self.lora_a_wq = None
@@ -277,7 +229,7 @@ class AbstractLoraAttention(AbstractAttention):
 
 
 class AbstractLoraFeedForward(AbstractFeedForward):
-    def __init__(self, args: LoraModelArgs):
+    def __init__(self, args: LoraLlamaArgs):
         super().__init__(args)
         self.r = args.r
 
@@ -296,14 +248,14 @@ class AbstractLoraFeedForward(AbstractFeedForward):
 
 
 class AbstractLoraTransformerBlock(AbstractTransformerBlock):
-    def __init__(self, layer_id: int, args: LoraModelArgs):
+    def __init__(self, layer_id: int, args: LoraLlamaArgs):
         super().__init__(layer_id, args)
         self.attention = AbstractLoraAttention(args)
         self.feed_forward = AbstractLoraFeedForward(args)
 
 
 class AbstractLoraLlama(AbstractLlama):
-    def __init__(self, args: LoraModelArgs):
+    def __init__(self, args: LoraLlamaArgs):
         super().__init__(args)
         self.lora_a_output = None
         self.lora_b_output = None
@@ -324,7 +276,7 @@ class AbstractLoraLlama(AbstractLlama):
             h = layer(h, start_pos, freqs_cis, mask, use_cache)
         h = self.norm(h)
         output = self.output(h) + self.lora_b_output(self.lora_a_output(h.float())).to(h.dtype)
-        return logits_normalize(output.float())
+        return CausalLMOutputs(logits=logits_normalize(output.float()), hidden_states=h)
 
     def _freeze(self):
         """ Freeze all parameters but lora ones. """
@@ -335,8 +287,8 @@ class AbstractLoraLlama(AbstractLlama):
                 frozen_names.append(name)
 
 
-class AbstractLoraLlamaVerifier(DistributedModule):
-    def __init__(self, args: LoraModelArgs):
+class AbstractLoraLlamaVerifier(ParallelModule):
+    def __init__(self, args: LoraLlamaArgs):
         super().__init__(args.local_rank, args.world_size)
         self.params = args
         self.vocab_size = args.vocab_size

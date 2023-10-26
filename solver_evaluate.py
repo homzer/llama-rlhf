@@ -3,8 +3,8 @@ import os
 import fire
 
 from src.evaluator import SolverEvaluator
-from src.modeling_args import LoraModelArgs
-from src.modeling_lora import LoraLlama
+from src.modeling.llama_lora import LoraLlama
+from src.modeling.modeling_args import LoraLlamaArgs
 from src.tokenizer import LlamaTokenizer
 from src.utils import setup_model_parallel, json_dump
 
@@ -29,7 +29,7 @@ def main(
     local_rank, world_size = setup_model_parallel(
         use_float16=True, seed=seed
     )
-    params = LoraModelArgs(
+    params = LoraLlamaArgs(
         max_seq_len=max_seq_len,
         local_rank=local_rank,
         world_size=world_size,
@@ -38,7 +38,7 @@ def main(
 
     model = LoraLlama(params)
     model.load(ckpt_dir)
-    evaluator = SolverEvaluator(model, LlamaTokenizer(tokenizer_path), max_batch_size)
+    evaluator = SolverEvaluator(model, LlamaTokenizer(tokenizer_path), max_batch_size, max_seq_len)
     outputs = evaluator.forward(task, label_file, t=t, p=p)
     print("Evaluate Accuracy: ", outputs.acc, "Missing: ", outputs.missing)
     os.makedirs(log_dir, exist_ok=True)

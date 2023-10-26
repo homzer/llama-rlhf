@@ -6,12 +6,11 @@ import fire
 
 from src.dataset import JsonDataset
 from src.generator import Generator
-from src.modeling import Llama
-from src.modeling_args import LoraModelArgs, ModelArgs
-from src.modeling_lora import LoraLlama
-from src.timer import Timer
+from src.modeling.llama import Llama
+from src.modeling.llama_lora import LoraLlama
+from src.modeling.modeling_args import LoraLlamaArgs, LlamaArgs
 from src.tokenizer import LlamaTokenizer
-from src.utils import setup_model_parallel, barrier
+from src.utils import setup_model_parallel, barrier, Timer
 
 
 def create_questioner_batch_data(batch_size: int, dataset: JsonDataset, num_shots: int = 3):
@@ -42,14 +41,14 @@ def main(
     local_rank, world_size = setup_model_parallel(
         use_float16=True, seed=seed)
     if lora_rank < 0:
-        params = ModelArgs(
+        params = LlamaArgs(
             max_seq_len=max_seq_len,
             local_rank=local_rank,
             world_size=world_size
         ).from_json(config_file)
         model = Llama(params)
     else:
-        params = LoraModelArgs(
+        params = LoraLlamaArgs(
             max_seq_len=max_seq_len,
             local_rank=local_rank,
             world_size=world_size,
@@ -58,14 +57,14 @@ def main(
     model.load(ckpt_dir)
     barrier()
     dataset = JsonDataset(train_file)
-    generator = Generator(model, LlamaTokenizer(tokenizer_path))
+    generator = Generator(model, LlamaTokenizer(tokenizer_path), max_seq_len)
     os.makedirs(output_dir, exist_ok=True)
     timer = Timer(num_generated_samples // eval_batch_size)
     with open(os.path.join(output_dir, 'questions.jsonl'), 'a', encoding='utf-8') as writer:
         for i in range(num_generated_samples // eval_batch_size):
             timer.step()
             data = create_questioner_batch_data(eval_batch_size, dataset, num_shots)
-            outputs = generator.forward(data, max_seq_len, t=t, p=p)
+            outputs = generator.forward(data, t=t, p=p)
             for output in outputs:
                 writer.write(json.dumps(
                     {'instruction': output['output']}

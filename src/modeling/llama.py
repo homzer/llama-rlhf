@@ -3,18 +3,18 @@ from fairscale.nn.model_parallel.layers import (
     ColumnParallelLinear,
     ParallelEmbedding)
 
-from src.modeling_abstract import (
-    RMSNorm,
+from src.modeling.llama_abstract import (
     AbstractAttention,
     AbstractFeedForward,
     AbstractTransformerBlock,
     AbstractLlama
 )
-from src.modeling_args import ModelArgs
+from src.modeling.modeling import RMSNorm
+from src.modeling.modeling_args import LlamaArgs
 
 
 class Attention(AbstractAttention):
-    def __init__(self, args: ModelArgs):
+    def __init__(self, args: LlamaArgs):
         super().__init__(args)
 
         self.wq = ColumnParallelLinear(
@@ -48,7 +48,7 @@ class Attention(AbstractAttention):
 
 
 class FeedForward(AbstractFeedForward):
-    def __init__(self, args: ModelArgs):
+    def __init__(self, args: LlamaArgs):
         super().__init__(args)
 
         self.w1 = ColumnParallelLinear(
@@ -72,7 +72,7 @@ class FeedForward(AbstractFeedForward):
 
 
 class TransformerBlock(AbstractTransformerBlock):
-    def __init__(self, layer_id: int, args: ModelArgs):
+    def __init__(self, layer_id: int, args: LlamaArgs):
         super().__init__(layer_id, args)
         self.attention = Attention(args)
         self.feed_forward = FeedForward(args)
@@ -81,7 +81,7 @@ class TransformerBlock(AbstractTransformerBlock):
 
 
 class Llama(AbstractLlama):
-    def __init__(self, args: ModelArgs):
+    def __init__(self, args: LlamaArgs):
         super().__init__(args)
         for layer_id in range(args.n_layers):
             self.layers.append(TransformerBlock(layer_id, args))

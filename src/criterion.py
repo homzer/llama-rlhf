@@ -47,6 +47,22 @@ class KLDivLoss(Loss):
         return torch.mean(loss)
 
 
+class MSELoss(Loss):
+    def __init__(self):
+        super().__init__()
+
+    def forward(
+            self,
+            logits: torch.Tensor,
+            targets: torch.Tensor,
+            masks: torch.Tensor = None,
+    ):
+        logits = logits.view(-1)
+        targets = targets.view(-1)
+        loss = (logits - targets) ** 2
+        return masked_mean(loss, masks)
+
+
 class RewardLoss(Loss):
     def __init__(self):
         super().__init__()

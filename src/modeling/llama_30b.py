@@ -12,14 +12,14 @@ from fairscale.nn.model_parallel.mappings import (
     reduce_from_model_parallel_region
 )
 
-from src.modeling import FeedForward
-from src.modeling_abstract import (
+from src.modeling.llama import FeedForward
+from src.modeling.llama_abstract import (
     AbstractAttention,
     AbstractTransformerBlock,
     AbstractLlama,
-    RMSNorm
 )
-from src.modeling_args import LoraModelArgs
+from src.modeling.modeling import RMSNorm
+from src.modeling.modeling_args import LoraLlamaArgs
 
 
 class ColumnParallelLinear30B(nn.Module):
@@ -111,7 +111,7 @@ def get_n_local_heads(local_rank, layer_id):
 
 
 class Attention30B(AbstractAttention):
-    def __init__(self, args: LoraModelArgs, layer_id: int):
+    def __init__(self, args: LoraLlamaArgs, layer_id: int):
         super().__init__(args)
         local_rank = fs_init.get_model_parallel_rank()
         self.n_local_heads = get_n_local_heads(local_rank, layer_id)
@@ -147,7 +147,7 @@ class Attention30B(AbstractAttention):
 
 
 class TransformerBlock30B(AbstractTransformerBlock):
-    def __init__(self, layer_id: int, args: LoraModelArgs):
+    def __init__(self, layer_id: int, args: LoraLlamaArgs):
         super().__init__(layer_id, args)
         self.attention = Attention30B(args, layer_id)
         self.feed_forward = FeedForward(args)
@@ -156,7 +156,7 @@ class TransformerBlock30B(AbstractTransformerBlock):
 
 
 class Llama30B(AbstractLlama):
-    def __init__(self, args: LoraModelArgs):
+    def __init__(self, args: LoraLlamaArgs):
         super().__init__(args)
         for layer_id in range(args.n_layers):
             self.layers.append(TransformerBlock30B(layer_id, args))

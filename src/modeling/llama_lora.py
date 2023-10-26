@@ -5,19 +5,19 @@ from fairscale.nn.model_parallel.layers import (
     ColumnParallelLinear,
     ParallelEmbedding)
 
-from src.modeling_abstract import (
-    RMSNorm,
+from src.modeling.llama_abstract import (
     AbstractLoraAttention,
     AbstractLoraFeedForward,
     AbstractLoraTransformerBlock,
     AbstractLoraLlama,
     AbstractLoraLlamaVerifier
 )
-from src.modeling_args import LoraModelArgs
+from src.modeling.modeling import RMSNorm
+from src.modeling.modeling_args import LoraLlamaArgs
 
 
 class LoraAttention(AbstractLoraAttention):
-    def __init__(self, args: LoraModelArgs):
+    def __init__(self, args: LoraLlamaArgs):
         super().__init__(args)
 
         self.wq = ColumnParallelLinear(
@@ -101,7 +101,7 @@ class LoraAttention(AbstractLoraAttention):
 
 
 class LoraFeedForward(AbstractLoraFeedForward):
-    def __init__(self, args: LoraModelArgs):
+    def __init__(self, args: LoraLlamaArgs):
         super().__init__(args)
 
         self.w1 = ColumnParallelLinear(
@@ -163,7 +163,7 @@ class LoraFeedForward(AbstractLoraFeedForward):
 
 
 class LoraTransformerBlock(AbstractLoraTransformerBlock):
-    def __init__(self, layer_id: int, args: LoraModelArgs):
+    def __init__(self, layer_id: int, args: LoraLlamaArgs):
         super().__init__(layer_id, args)
         self.attention = LoraAttention(args)
         self.feed_forward = LoraFeedForward(args)
@@ -172,7 +172,7 @@ class LoraTransformerBlock(AbstractLoraTransformerBlock):
 
 
 class LoraLlama(AbstractLoraLlama):
-    def __init__(self, args: LoraModelArgs):
+    def __init__(self, args: LoraLlamaArgs):
         super().__init__(args)
         for layer_id in range(args.n_layers):
             self.layers.append(LoraTransformerBlock(layer_id, args))
@@ -203,7 +203,7 @@ class LoraLlama(AbstractLoraLlama):
 
 
 class LoraLlamaVerifier(AbstractLoraLlamaVerifier):
-    def __init__(self, args: LoraModelArgs):
+    def __init__(self, args: LoraLlamaArgs):
         super().__init__(args)
         for layer_id in range(args.n_layers):
             self.layers.append(LoraTransformerBlock(layer_id, args))

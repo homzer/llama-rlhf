@@ -3,24 +3,24 @@ import torch.nn as nn
 import torch.nn.init as init
 from fairscale.nn.model_parallel.layers import ParallelEmbedding, ColumnParallelLinear
 
-from src.modeling_30b import (
+from src.modeling.llama_30b import (
     get_n_local_heads,
     ColumnParallelLinear30B,
     get_partition_size,
     RowParallelLinear30B
 )
-from src.modeling_abstract import (
+from src.modeling.llama_abstract import (
     AbstractLoraAttention,
     AbstractLoraTransformerBlock,
     AbstractLoraLlama,
-    RMSNorm
 )
-from src.modeling_args import LoraModelArgs
-from src.modeling_lora import LoraFeedForward
+from src.modeling.modeling import RMSNorm
+from src.modeling.modeling_args import LoraLlamaArgs
+from src.modeling.llama_lora import LoraFeedForward
 
 
 class LoraAttention30B(AbstractLoraAttention):
-    def __init__(self, args: LoraModelArgs, layer_id: int):
+    def __init__(self, args: LoraLlamaArgs, layer_id: int):
         super().__init__(args)
         local_rank = fs_init.get_model_parallel_rank()
         self.n_local_heads = get_n_local_heads(local_rank, layer_id)
@@ -106,7 +106,7 @@ class LoraAttention30B(AbstractLoraAttention):
 
 
 class LoraTransformerBlock30B(AbstractLoraTransformerBlock):
-    def __init__(self, layer_id: int, args: LoraModelArgs):
+    def __init__(self, layer_id: int, args: LoraLlamaArgs):
         super().__init__(layer_id, args)
         self.attention = LoraAttention30B(args, layer_id)
         self.feed_forward = LoraFeedForward(args)
@@ -115,7 +115,7 @@ class LoraTransformerBlock30B(AbstractLoraTransformerBlock):
 
 
 class LoraLlama30B(AbstractLoraLlama):
-    def __init__(self, args: LoraModelArgs):
+    def __init__(self, args: LoraLlamaArgs):
         super().__init__(args)
         for layer_id in range(args.n_layers):
             self.layers.append(LoraTransformerBlock30B(layer_id, args))

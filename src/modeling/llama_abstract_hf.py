@@ -7,8 +7,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 import src.utils as utils
-from src.modeling_abstract import DistributedModule
-from src.modeling_args import ModelArgs, LoraModelArgs
+from src.modeling.modeling import ParallelModelForCausalLM, CausalLMOutputs
+from src.modeling.modeling_args import LlamaArgs, LoraLlamaArgs
 
 
 def rotate_half(x):
@@ -69,7 +69,7 @@ class LlamaRotaryEmbedding(nn.Module):
 
 
 class AbstractAttentionHF(nn.Module):
-    def __init__(self, args: ModelArgs):
+    def __init__(self, args: LlamaArgs):
         super().__init__()
         self.args = args
         self.n_local_heads = args.n_heads // fs_init.get_model_parallel_world_size()
@@ -147,7 +147,7 @@ class AbstractAttentionHF(nn.Module):
 
 
 class AbstractFeedForwardHF(nn.Module):
-    def __init__(self, args: ModelArgs):
+    def __init__(self, args: LlamaArgs):
         super().__init__()
         hidden_dim = int(2 * (4 * args.dim) / 3)
         hidden_dim = args.multiple_of * ((hidden_dim + args.multiple_of - 1) // args.multiple_of)
@@ -162,7 +162,7 @@ class AbstractFeedForwardHF(nn.Module):
 
 
 class AbstractTransformerBlockHF(nn.Module):
-    def __init__(self, layer_id: int, args: ModelArgs):
+    def __init__(self, layer_id: int, args: LlamaArgs):
         super().__init__()
         self.n_heads = args.n_heads
         self.dim = args.dim
@@ -184,7 +184,7 @@ class AbstractTransformerBlockHF(nn.Module):
 
 
 class AbstractBasicLLaMAHF(nn.Module):
-    def __init__(self, args: ModelArgs):
+    def __init__(self, args: LlamaArgs):
         super().__init__()
         self.params = args
         self.vocab_size = args.vocab_size
@@ -210,8 +210,8 @@ class AbstractBasicLLaMAHF(nn.Module):
         return self.norm(h)
 
 
-class AbstractLlamaHF(DistributedModule):
-    def __init__(self, args: ModelArgs):
+class AbstractLlamaHF(ParallelModelForCausalLM):
+    def __init__(self, args: LlamaArgs):
         super().__init__(args.local_rank, args.world_size)
         self.params = args
         self.model = AbstractBasicLLaMAHF(args)
@@ -220,7 +220,7 @@ class AbstractLlamaHF(DistributedModule):
     def forward(self, tokens: torch.Tensor, start_pos=0, use_cache=False):
         h = self.model.forward(tokens, start_pos, use_cache)
         output = self.lm_head(h)
-        return output.float()
+        return CausalLMOutputs(logits=output.float(), hidden_states=h)
 
     def flush(self):
         """ Clean cache in `Attention` module """
@@ -230,7 +230,7 @@ class AbstractLlamaHF(DistributedModule):
 
 
 class AbstractLoraAttentionHF(AbstractAttentionHF):
-    def __init__(self, args: LoraModelArgs):
+    def __init__(self, args: LoraLlamaArgs):
         super().__init__(args)
 
         self.lora_a_q_proj = None
@@ -302,7 +302,7 @@ class AbstractLoraAttentionHF(AbstractAttentionHF):
 
 
 class AbstractLoraFeedForwardHF(AbstractFeedForwardHF):
-    def __init__(self, args: LoraModelArgs):
+    def __init__(self, args: LoraLlamaArgs):
         super().__init__(args)
         self.r = args.r
 
@@ -321,19 +321,19 @@ class AbstractLoraFeedForwardHF(AbstractFeedForwardHF):
 
 
 class AbstractLoraTransformerBlockHF(AbstractTransformerBlockHF):
-    def __init__(self, layer_id: int, args: LoraModelArgs):
+    def __init__(self, layer_id: int, args: LoraLlamaArgs):
         super().__init__(layer_id, args)
         self.self_attn = AbstractLoraAttentionHF(args)
         self.mlp = AbstractLoraFeedForwardHF(args)
 
 
 class AbstractLoraBasicLLaMAHF(AbstractBasicLLaMAHF):
-    def __init__(self, args: ModelArgs):
+    def __init__(self, args: LlamaArgs):
         super().__init__(args)
 
 
 class AbstractLoraLlamaHF(AbstractLlamaHF):
-    def __init__(self, args: LoraModelArgs):
+    def __init__(self, args: LoraLlamaArgs):
         super().__init__(args)
         self.model = AbstractLoraBasicLLaMAHF(args)
         self.lora_a_lm_head = None
@@ -342,7 +342,7 @@ class AbstractLoraLlamaHF(AbstractLlamaHF):
     def forward(self, tokens: torch.Tensor, start_pos=0, use_cache=False):
         h = self.model.forward(tokens, start_pos, use_cache)
         output = self.lm_head(h) + self.lora_b_lm_head(self.lora_a_lm_head(h.float())).to(h.dtype)
-        return output.float()
+        return CausalLMOutputs(logits=output.float(), hidden_states=h)
 
     def _freeze(self):
         """ Freeze all parameters but lora ones. """

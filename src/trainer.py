@@ -6,17 +6,17 @@ from typing import List
 import torch
 import torch.nn as nn
 
-from src.criterion import KLDivLoss, RewardLoss
-from src.modeling_abstract import DistributedModule, AbstractLlama
-from src.modeling_lora import LoraLlamaVerifier
+from src.criterion import RewardLoss
+from src.modeling.llama_lora import LoraLlamaVerifier
+from src.modeling.modeling import ParallelModule, ParallelModelForCausalLM
 from src.tokenizer import LlamaTokenizer
-from src.utils import barrier, reconstruct_logits_from_dicts
+from src.utils import barrier
 
 
 class DistributedTrainer:
     def __init__(
             self,
-            model: DistributedModule,
+            model: ParallelModule,
             optimizer: torch.optim.Optimizer
     ):
         self.local_rank = model.local_rank
@@ -78,16 +78,17 @@ class DistributedTrainer:
 class DistributedSolverTrainer(DistributedTrainer):
     def __init__(
             self,
-            model: AbstractLlama,
+            model: ParallelModelForCausalLM,
             tokenizer: LlamaTokenizer,
             optimizer: torch.optim.Optimizer,
+            max_seq_len: int,
             accumulation_steps: int = 1
     ):
         super().__init__(model, optimizer)
         self.model = model
         self.local_rank = model.local_rank
         self.world_size = model.world_size
-        self.max_seq_len = self.model.params.max_seq_len
+        self.max_seq_len = max_seq_len
         self.tokenizer = tokenizer
         self.optimizer = optimizer
         self.criterion = nn.CrossEntropyLoss(ignore_index=-100)
@@ -146,7 +147,7 @@ class DistributedSolverTrainer(DistributedTrainer):
     def forward(self, instructions: List[str], outputs: List[str]):
         """ Instruction tuning """
         example = self.prepare_for_training(instructions=instructions, outputs=outputs)
-        logits = self.model.forward(example.tokens)
+        logits = self.model.forward(example.tokens).logits
         loss = self.criterion.forward(
             input=logits.view(-1, logits.size(-1)),
             target=example.labels.view(-1).to(logits.device)
@@ -228,77 +229,3 @@ class DistributedVerifierTrainer(DistributedTrainer):
 
         Output = collections.namedtuple('Output', ['loss'])
         return Output(loss=loss)
-
-
-# class DistributedDistillingSolverTrainer(DistributedSolverTrainer):
-#     def __init__(
-#             self,
-#             model: AbstractLlama,
-#             tokenizer: LlamaTokenizer,
-#             optimizer: torch.optim.Optimizer,
-#             accumulation_steps: int = 1
-#     ):
-#         super().__init__(model, tokenizer, optimizer, accumulation_steps)
-#         self.criterion_ce = nn.CrossEntropyLoss(ignore_index=-100)
-#         self.criterion_kl = KLDivLoss()
-#
-#     def prepare_for_distilling(self, instructions, outputs, logits_dicts_list):
-#         bsz = len(instructions)
-#         labels = torch.full((bsz, self.max_seq_len), -100).long()
-#         logits = torch.full((bsz, self.max_seq_len, self.tokenizer.n_words), 0).float()
-#         for i, (instruction, output, logits_dicts) in enumerate(zip(instructions, outputs, logits_dicts_list)):
-#             instruction_ids = self.tokenizer.encode(instruction, bos=True, eos=False)
-#             output_ids = self.tokenizer.encode(output, bos=False, eos=True)
-#             instruction_ids, output_ids = self._truncating_strategy(instruction_ids, output_ids)
-#             instr_len, output_len = len(instruction_ids), len(output_ids)
-#             logits_dicts = logits_dicts[: output_len]
-#             assert output_len == len(logits_dicts)
-#             logits[i, instr_len - 1: instr_len - 1 + output_len, :] = reconstruct_logits_from_dicts(
-#                 logits_dicts, self.tokenizer.n_words)
-#             labels[i, instr_len - 1: instr_len - 1 + output_len] = torch.tensor(output_ids).long()
-#         label_masks = (labels != -100)
-#         probs = torch.softmax(logits, dim=-1)
-#         Output = collections.namedtuple('Outputs', ['teacher_logits', 'teacher_probs', 'label_masks'])
-#         return Output(teacher_logits=logits, teacher_probs=probs, label_masks=label_masks)
-#
-#     def forward(
-#             self,
-#             instructions: List[str],
-#             outputs: List[str],
-#             logits_dicts_list: List[dict],
-#             alpha: float,
-#             logits_dicts_list2: List[dict] = None,
-#             beta: float = None
-#     ):
-#         forward_example = self.prepare_for_training(instructions=instructions, outputs=outputs)
-#         logits = self.model.forward(forward_example.tokens)
-#         ce_loss = self.criterion_ce.forward(
-#             input=logits.view(-1, logits.size(-1)),
-#             target=forward_example.labels.view(-1).to(logits.device)
-#         )
-#
-#         distill_example = self.prepare_for_distilling(
-#             instructions, outputs, logits_dicts_list
-#         )
-#         distill_loss = self.criterion_kl.forward(
-#             logits=logits,
-#             targets=distill_example.teacher_probs.to(logits.device),
-#             masks=distill_example.label_masks.to(logits.device)
-#         )
-#         loss = ce_loss + alpha * distill_loss
-#
-#         distill_loss2 = None
-#         if logits_dicts_list2 is not None:
-#             distill_example2 = self.prepare_for_distilling(
-#                 instructions, outputs, logits_dicts_list2
-#             )
-#             distill_loss2 = self.criterion_kl.forward(
-#                 logits=logits,
-#                 targets=distill_example2.teacher_probs.to(logits.device),
-#                 masks=distill_example2.label_masks.to(logits.device)
-#             )
-#             loss = loss + beta * distill_loss2
-#
-#         self._back_propagation(loss)
-#         Output = collections.namedtuple('Output', ['loss', 'distill_loss', 'logits', 'distill_loss2'])
-#         return Output(logits=logits, distill_loss=distill_loss, loss=ce_loss, distill_loss2=distill_loss2)

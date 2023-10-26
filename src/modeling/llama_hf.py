@@ -4,8 +4,8 @@ from fairscale.nn.model_parallel.layers import (
     ParallelEmbedding
 )
 
-from src.modeling import RMSNorm
-from src.modeling_abstract_hf import (
+from src.modeling.modeling import RMSNorm
+from src.modeling.llama_abstract_hf import (
     AbstractAttentionHF,
     AbstractFeedForwardHF,
     AbstractTransformerBlockHF,
@@ -13,11 +13,11 @@ from src.modeling_abstract_hf import (
     AbstractLlamaHF,
     LlamaRotaryEmbedding
 )
-from src.modeling_args import ModelArgs
+from src.modeling.modeling_args import LlamaArgs
 
 
 class AttentionHF(AbstractAttentionHF):
-    def __init__(self, args: ModelArgs):
+    def __init__(self, args: LlamaArgs):
         super().__init__(args)
         self.q_proj = ColumnParallelLinear(
             args.dim,
@@ -51,7 +51,7 @@ class AttentionHF(AbstractAttentionHF):
 
 
 class FeedForwardHF(AbstractFeedForwardHF):
-    def __init__(self, args: ModelArgs):
+    def __init__(self, args: LlamaArgs):
         super().__init__(args)
         self.gate_proj = ColumnParallelLinear(
             self.dim, self.hidden_dim,
@@ -74,7 +74,7 @@ class FeedForwardHF(AbstractFeedForwardHF):
 
 
 class TransformerBlockHF(AbstractTransformerBlockHF):
-    def __init__(self, layer_id: int, args: ModelArgs):
+    def __init__(self, layer_id: int, args: LlamaArgs):
         super().__init__(layer_id, args)
         self.self_attn = AttentionHF(args)
         self.mlp = FeedForwardHF(args)
@@ -83,7 +83,7 @@ class TransformerBlockHF(AbstractTransformerBlockHF):
 
 
 class BasicLLaMAHF(AbstractBasicLLaMAHF):
-    def __init__(self, args: ModelArgs):
+    def __init__(self, args: LlamaArgs):
         super().__init__(args)
         self.embed_tokens = ParallelEmbedding(
             args.vocab_size, args.dim, init_method=lambda x: x
@@ -95,7 +95,7 @@ class BasicLLaMAHF(AbstractBasicLLaMAHF):
 
 
 class LlamaHF(AbstractLlamaHF):
-    def __init__(self, args: ModelArgs):
+    def __init__(self, args: LlamaArgs):
         super().__init__(args)
         self.model = BasicLLaMAHF(args)
         self.lm_head = ColumnParallelLinear(

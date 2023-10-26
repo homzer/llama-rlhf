@@ -3,15 +3,16 @@ from typing import List
 
 import torch
 
-from src.modeling_abstract import AbstractLlama, AbstractLoraLlamaVerifier
+from src.modeling.llama_abstract import AbstractLoraLlamaVerifier
+from src.modeling.modeling import ModelForCausalLM
 from src.tokenizer import LlamaTokenizer
 from src.utils import sample_top_p, masked_mean
 
 
 class Generator:
-    def __init__(self, model: AbstractLlama, tokenizer: LlamaTokenizer):
+    def __init__(self,  model: ModelForCausalLM,  tokenizer: LlamaTokenizer, max_seq_len: int):
         self.model = model
-        self.max_seq_len = model.params.max_seq_len
+        self.max_seq_len = max_seq_len
         self.tokenizer = tokenizer
 
     def forward(self, instructions: List[str], t: float = 0.0, p: float = 1.0) -> List[dict]:
@@ -30,7 +31,8 @@ class Generator:
         unfinished_sequences = torch.ones(size=[bsz], dtype=torch.long).cuda()
         for cur_pos in range(start_pos, self.max_seq_len):
             with torch.no_grad():
-                logits = self.model.forward(tokens[:, prev_pos:cur_pos], prev_pos, use_cache=True)[:, -1, :]
+                outputs = self.model.forward(tokens[:, prev_pos:cur_pos], prev_pos, use_cache=True)
+                logits = outputs.logits[:, -1, :]
             if t > 0:
                 probs = torch.softmax(logits / t, dim=-1)
                 next_token = sample_top_p(probs, p)

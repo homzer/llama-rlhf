@@ -6,8 +6,7 @@ from fairscale.nn.model_parallel.layers import (
     ParallelEmbedding
 )
 
-from src.modeling_abstract import RMSNorm
-from src.modeling_abstract_hf import (
+from src.modeling.llama_abstract_hf import (
     AbstractLoraAttentionHF,
     AbstractLoraFeedForwardHF,
     AbstractLoraTransformerBlockHF,
@@ -15,11 +14,12 @@ from src.modeling_abstract_hf import (
     AbstractLoraBasicLLaMAHF,
     LlamaRotaryEmbedding
 )
-from src.modeling_args import LoraModelArgs
+from src.modeling.modeling import RMSNorm
+from src.modeling.modeling_args import LoraLlamaArgs
 
 
 class LoraAttentionHF(AbstractLoraAttentionHF):
-    def __init__(self, args: LoraModelArgs):
+    def __init__(self, args: LoraLlamaArgs):
         super().__init__(args)
         self.q_proj = ColumnParallelLinear(
             args.dim,
@@ -104,7 +104,7 @@ class LoraAttentionHF(AbstractLoraAttentionHF):
 
 
 class LoraFeedForwardHF(AbstractLoraFeedForwardHF):
-    def __init__(self, args: LoraModelArgs):
+    def __init__(self, args: LoraLlamaArgs):
         super().__init__(args)
 
         self.gate_proj = ColumnParallelLinear(
@@ -166,7 +166,7 @@ class LoraFeedForwardHF(AbstractLoraFeedForwardHF):
 
 
 class LoraTransformerBlockHF(AbstractLoraTransformerBlockHF):
-    def __init__(self, layer_id: int, args: LoraModelArgs):
+    def __init__(self, layer_id: int, args: LoraLlamaArgs):
         super().__init__(layer_id, args)
         self.self_attn = LoraAttentionHF(args)
         self.mlp = LoraFeedForwardHF(args)
@@ -175,7 +175,7 @@ class LoraTransformerBlockHF(AbstractLoraTransformerBlockHF):
 
 
 class LoraBasicLLaMA(AbstractLoraBasicLLaMAHF):
-    def __init__(self, args: LoraModelArgs):
+    def __init__(self, args: LoraLlamaArgs):
         super().__init__(args)
         for layer_id in range(args.n_layers):
             self.layers.append(LoraTransformerBlockHF(layer_id, args))
@@ -187,7 +187,7 @@ class LoraBasicLLaMA(AbstractLoraBasicLLaMAHF):
 
 
 class LoraLlamaHF(AbstractLoraLlamaHF):
-    def __init__(self, args: LoraModelArgs):
+    def __init__(self, args: LoraLlamaArgs):
         super().__init__(args)
         self.model = LoraBasicLLaMA(args)
         self.lm_head = ColumnParallelLinear(

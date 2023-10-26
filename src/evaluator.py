@@ -7,18 +7,20 @@ from tqdm import tqdm
 
 from src.dataset import JsonDataset, RewardDataset
 from src.generator import Generator, VerifierGenerator
-from src.modeling_abstract import AbstractLlama, AbstractLoraLlamaVerifier
+from src.modeling.llama_abstract import AbstractLoraLlamaVerifier
+from src.modeling.modeling import ModelForCausalLM
 from src.tokenizer import LlamaTokenizer
 
 
 class SolverEvaluator:
     def __init__(
             self,
-            model: AbstractLlama,
+            model: ModelForCausalLM,
             tokenizer: LlamaTokenizer,
-            batch_size: int
+            batch_size: int,
+            max_seq_len: int
     ):
-        self.generator = Generator(model, tokenizer)
+        self.generator = Generator(model, tokenizer, max_seq_len)
         self.evaluators = {
             "GSM8K": GSM8KEvaluator,
         }
