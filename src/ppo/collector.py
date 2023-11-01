@@ -3,7 +3,7 @@ from typing import List
 import numpy as np
 import torch
 
-from src.ppo.buffer import RolloutBuffer
+from src.ppo.buffer import RolloutBuffer, PolicyRolloutBuffer, PolicyRolloutBufferSample, EnvRolloutBuffer
 from src.ppo.env import LlamaRewardEnv
 from src.ppo.policy import ActorCriticPolicyForCausalLM
 
@@ -21,12 +21,8 @@ class BufferCollector:
         self.max_seq_len = max_seq_len
         self.buffer_size = buffer_size
 
-    def collect(self, instructions: List[str]) -> RolloutBuffer:
+    def forward(self, instructions: List[str]) -> RolloutBuffer:
         bzs = len(instructions)
-        rollout_buffer = RolloutBuffer(
-            buffer_size=self.buffer_size,
-            max_seq_len=self.max_seq_len
-        ).reset()
         with torch.no_grad():
             policy_outputs = self.policy.forward(instructions)
         obs = policy_outputs.obs.cpu().numpy()
@@ -35,13 +31,12 @@ class BufferCollector:
         action_logits = policy_outputs.action_logits.cpu().numpy()
         action_masks = policy_outputs.action_masks.cpu().numpy()
 
-        # rewards = np.zeros((bzs, self.max_seq_len), dtype=np.float32)
-        # action_rewards = self.env.step(instructions, actions, action_masks)
-        # for i in range(bzs):
-        #     rewards[i, :][action_masks[i]] = action_rewards[i]
-        rewards = torch.randn((bzs, self.max_seq_len), dtype=torch.float32).numpy()
+        rewards = np.zeros((bzs, self.max_seq_len), dtype=np.float32)
+        action_rewards = self.env.step(instructions, actions, action_masks)
+        for i in range(bzs):
+            rewards[i, :][action_masks[i]] = action_rewards[i]
 
-        rollout_buffer.add(
+        rollout_buffer = RolloutBuffer(
             obs=obs,
             actions=actions,
             rewards=rewards,
@@ -53,3 +48,33 @@ class BufferCollector:
         rollout_buffer.compute_returns_and_advantage()
 
         return rollout_buffer
+
+
+class PolicyBufferCollector:
+    def __init__(self, policy: ActorCriticPolicyForCausalLM):
+        self.policy = policy
+
+    def forward(self, instructions: List[str]) -> PolicyRolloutBuffer:
+        with torch.no_grad():
+            policy_outputs = self.policy.forward(instructions)
+        obs = policy_outputs.obs.cpu().numpy()
+        actions = policy_outputs.actions.cpu().numpy()
+        values = policy_outputs.values.cpu().numpy()
+        action_logits = policy_outputs.action_logits.cpu().numpy()
+        action_masks = policy_outputs.action_masks.cpu().numpy()
+
+        return PolicyRolloutBuffer(obs, actions, values, action_logits, action_masks)
+
+
+class EnvBufferCollector:
+    def __init__(self, env: LlamaRewardEnv):
+        self.env = env
+
+    def forward(self, rollout_data: PolicyRolloutBufferSample) -> EnvRolloutBuffer:
+        action_rewards = self.env.step(
+            obs=rollout_data.instructions,
+            actions=rollout_data.actions,
+            action_masks=rollout_data.action_masks
+        )
+        return EnvRolloutBuffer(action_rewards, rollout_data.action_masks)
+

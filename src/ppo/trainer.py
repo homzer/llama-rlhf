@@ -26,7 +26,7 @@ class PPOTrainerForCausalLM:
         self.optimizer = optimizer
         self.criterion = MSELoss()
 
-    def train(self, rollout_buffer: RolloutBuffer):
+    def forward(self, rollout_buffer: RolloutBuffer):
         self.policy.train()
         self.step += 1
 
