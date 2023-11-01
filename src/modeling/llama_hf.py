@@ -4,7 +4,7 @@ from fairscale.nn.model_parallel.layers import (
     ParallelEmbedding
 )
 
-from src.modeling.modeling import RMSNorm
+from src.modeling.modeling_acts import RMSNorm
 from src.modeling.llama_abstract_hf import (
     AbstractAttentionHF,
     AbstractFeedForwardHF,

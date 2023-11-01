@@ -4,8 +4,8 @@ from typing import List
 import torch
 import torch.nn as nn
 
-from src.generator import Generator
 from src.modeling.modeling import ModelForCausalLM, Module
+from src.ppo.generator import PPOGeneratorForCausalLM
 
 PolicyForwardOutputs = collections.namedtuple(
     "PolicyForwardOutputs", ["obs", "actions", "values", "action_logits", "action_masks"]
@@ -35,7 +35,7 @@ class ActorCriticPolicyForCausalLM(AbstractPolicy):
     def __init__(
             self,
             model: ModelForCausalLM,
-            generator: Generator,
+            generator: PPOGeneratorForCausalLM,
             dim: int,
     ):
         super().__init__()
@@ -52,9 +52,9 @@ class ActorCriticPolicyForCausalLM(AbstractPolicy):
         actions[:, :-1] = outputs.tokens[:, 1:]
 
         return PolicyForwardOutputs(
-            obs=outputs.tokens,
-            actions=actions,
-            values=values,
+            obs=outputs.tokens,  # [b, s]
+            actions=actions,  # [b, s]
+            values=values,  # [b, s]
             action_logits=outputs.tokens_logits,
             action_masks=outputs.output_masks
         )

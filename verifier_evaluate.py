@@ -35,7 +35,7 @@ def main(
 
     model = LoraLlamaVerifier(params)
     model.load(ckpt_dir)
-    evaluator = VerifierEvaluator(model, LlamaTokenizer(tokenizer_path), max_batch_size)
+    evaluator = VerifierEvaluator(model, LlamaTokenizer(tokenizer_path), max_batch_size, max_seq_len)
     outputs = evaluator.forward(label_file)
     print('Evaluate Accuracy: ', outputs.acc)
     os.makedirs(log_dir, exist_ok=True)

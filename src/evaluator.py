@@ -6,21 +6,21 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from src.dataset import JsonDataset, RewardDataset
-from src.generator import Generator, VerifierGenerator
+from src.generator import GeneratorForCausalLM, GeneratorForVerifier
 from src.modeling.llama_abstract import AbstractLoraLlamaVerifier
 from src.modeling.modeling import ModelForCausalLM
-from src.tokenizer import LlamaTokenizer
+from src.tokenizer import Tokenizer, LlamaTokenizer
 
 
 class SolverEvaluator:
     def __init__(
             self,
             model: ModelForCausalLM,
-            tokenizer: LlamaTokenizer,
+            tokenizer: Tokenizer,
             batch_size: int,
             max_seq_len: int
     ):
-        self.generator = Generator(model, tokenizer, max_seq_len)
+        self.generator = GeneratorForCausalLM(model, tokenizer, max_seq_len)
         self.evaluators = {
             "GSM8K": GSM8KEvaluator,
         }
@@ -54,9 +54,10 @@ class VerifierEvaluator:
             self,
             model: AbstractLoraLlamaVerifier,
             tokenizer: LlamaTokenizer,
-            batch_size: int
+            batch_size: int,
+            max_seq_len: int
     ):
-        self.generator = VerifierGenerator(model, tokenizer)
+        self.generator = GeneratorForVerifier(model, tokenizer, max_seq_len)
         self.meter = AccMeter()
         self.batch_size = batch_size
 
@@ -67,22 +68,19 @@ class VerifierEvaluator:
         self.meter.reset()
         datalist = []
         for data in tqdm(dataloader):
-            outs = self.generator.forward(
-                instructions=data['instruction'],
-                chosen=data['chosen'],
-                rejected=data['rejected']
-            )
+            chosen_outs = self.generator.forward(data['instruction'], data['chosen'])
+            rejected_outs = self.generator.forward(data['instruction'], data['rejected'])
             for i in range(len(data['instruction'])):
-                c_reward = outs.chosen_rewards[i]
-                r_reward = outs.rejected_rewards[i]
+                c_reward = chosen_outs.rewards[i]
+                r_reward = rejected_outs.rewards[i]
                 datalist.append(dict(
                     instruction=data['instruction'][i],
                     chosen=data['chosen'][i],
                     rejected=data['rejected'][i],
                     chosen_reward=c_reward,
                     rejected_reward=r_reward,
-                    chosen_tokens_rewards=outs.chosen_tokens_rewards[i],
-                    rejected_tokens_rewards=outs.rejected_tokens_rewards[i]
+                    chosen_tokens_rewards=chosen_outs.tokens_rewards[i],
+                    rejected_tokens_rewards=rejected_outs.tokens_rewards[i]
                 ))
                 self.meter.forward(1 if c_reward > r_reward else 0)
         Output = collections.namedtuple('Output', ['acc', 'datalist'])

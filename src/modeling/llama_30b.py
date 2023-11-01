@@ -18,7 +18,7 @@ from src.modeling.llama_abstract import (
     AbstractTransformerBlock,
     AbstractLlama,
 )
-from src.modeling.modeling import RMSNorm
+from src.modeling.modeling_acts import RMSNorm
 from src.modeling.modeling_args import LoraLlamaArgs
 
 

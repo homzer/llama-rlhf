@@ -12,7 +12,7 @@ from src.modeling.llama_abstract import (
     AbstractLoraLlama,
     AbstractLoraLlamaVerifier
 )
-from src.modeling.modeling import RMSNorm
+from src.modeling.modeling_acts import RMSNorm
 from src.modeling.modeling_args import LoraLlamaArgs
 
 

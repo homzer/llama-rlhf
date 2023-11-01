@@ -5,12 +5,12 @@ import torch
 
 from src.modeling.llama_abstract import AbstractLoraLlamaVerifier
 from src.modeling.modeling import ModelForCausalLM
-from src.tokenizer import LlamaTokenizer
+from src.tokenizer import LlamaTokenizer, Tokenizer
 from src.utils import sample_top_p, masked_mean
 
 
-class Generator:
-    def __init__(self,  model: ModelForCausalLM,  tokenizer: LlamaTokenizer, max_seq_len: int):
+class GeneratorForCausalLM:
+    def __init__(self,  model: ModelForCausalLM,  tokenizer: Tokenizer, max_seq_len: int):
         self.model = model
         self.max_seq_len = max_seq_len
         self.tokenizer = tokenizer
@@ -65,10 +65,10 @@ class Generator:
         return decoded
 
 
-class VerifierGenerator:
-    def __init__(self, model: AbstractLoraLlamaVerifier, tokenizer: LlamaTokenizer):
+class GeneratorForVerifier:
+    def __init__(self, model: AbstractLoraLlamaVerifier, tokenizer: LlamaTokenizer, max_seq_len: int):
         self.model = model
-        self.max_seq_len = model.params.max_seq_len
+        self.max_seq_len = max_seq_len
         self.tokenizer = tokenizer
 
     def _truncating_strategy(self, instruction_ids, output_ids):
@@ -99,25 +99,35 @@ class VerifierGenerator:
         Output = collections.namedtuple('Outputs', ['tokens', 'masks'])
         return Output(tokens=tokens, masks=masks)
 
-    def forward(self, instructions: List[str], chosen: List[str], rejected: List[str]):
-        self.model.eval()
-        c_examples = self._prepare_for_generation(instructions, chosen)
-        r_examples = self._prepare_for_generation(instructions, rejected)
+    def forward(self, instructions: List[str], outputs: List[str]):
+        examples = self._prepare_for_generation(instructions, outputs)
         with torch.no_grad():
-            c_tokens_rewards = self.model.forward(c_examples.tokens).cpu()
-            r_tokens_rewards = self.model.forward(r_examples.tokens).cpu()
-        chosen_tokens_rewards = []
-        rejected_tokens_rewards = []
-        for i, (ctr, rtr) in enumerate(zip(c_tokens_rewards, r_tokens_rewards)):
-            chosen_tokens_rewards.append(torch.masked_select(ctr, c_examples.masks[i]).tolist())
-            rejected_tokens_rewards.append(torch.masked_select(rtr, r_examples.masks[i]).tolist())
-        c_rewards = masked_mean(c_tokens_rewards, c_examples.masks).tolist()
-        r_rewards = masked_mean(r_tokens_rewards, r_examples.masks).tolist()
-        Output = collections.namedtuple('Output', [
-            'chosen_rewards', 'rejected_rewards', 'chosen_tokens_rewards', 'rejected_tokens_rewards'])
-        return Output(
-            chosen_rewards=c_rewards,
-            rejected_rewards=r_rewards,
-            chosen_tokens_rewards=chosen_tokens_rewards,
-            rejected_tokens_rewards=rejected_tokens_rewards
-        )
+            tokens_rewards = self.model.forward(examples.tokens).cpu()
+        result_tokens_rewards = []
+        for i, tr in enumerate(tokens_rewards):
+            result_tokens_rewards.append(torch.masked_select(tr, examples.masks[i]).tolist())
+        rewards = masked_mean(tokens_rewards, examples.masks).tolist()
+        Output = collections.namedtuple('Output', ['rewards', 'tokens_rewards'])
+        return Output(rewards=rewards, tokens_rewards=result_tokens_rewards)
+
+    # def forward(self, instructions: List[str], chosen: List[str], rejected: List[str]):
+    #     c_examples = self._prepare_for_generation(instructions, chosen)
+    #     r_examples = self._prepare_for_generation(instructions, rejected)
+    #     with torch.no_grad():
+    #         c_tokens_rewards = self.model.forward(c_examples.tokens).cpu()
+    #         r_tokens_rewards = self.model.forward(r_examples.tokens).cpu()
+    #     chosen_tokens_rewards = []
+    #     rejected_tokens_rewards = []
+    #     for i, (ctr, rtr) in enumerate(zip(c_tokens_rewards, r_tokens_rewards)):
+    #         chosen_tokens_rewards.append(torch.masked_select(ctr, c_examples.masks[i]).tolist())
+    #         rejected_tokens_rewards.append(torch.masked_select(rtr, r_examples.masks[i]).tolist())
+    #     c_rewards = masked_mean(c_tokens_rewards, c_examples.masks).tolist()
+    #     r_rewards = masked_mean(r_tokens_rewards, r_examples.masks).tolist()
+    #     Output = collections.namedtuple('Output', [
+    #         'chosen_rewards', 'rejected_rewards', 'chosen_tokens_rewards', 'rejected_tokens_rewards'])
+    #     return Output(
+    #         chosen_rewards=c_rewards,
+    #         rejected_rewards=r_rewards,
+    #         chosen_tokens_rewards=chosen_tokens_rewards,
+    #         rejected_tokens_rewards=rejected_tokens_rewards
+    #     )

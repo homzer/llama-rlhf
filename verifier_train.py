@@ -55,7 +55,7 @@ def main(
         tokenizer=tokenizer,
         optimizer=optimizer
     )
-    evaluator = VerifierEvaluator(model, tokenizer, eval_batch_size)
+    evaluator = VerifierEvaluator(model, tokenizer, eval_batch_size, max_seq_len)
     trainer.load(ckpt_dir)
     for epoch in range(epochs):
         for data in tqdm(dataloader):

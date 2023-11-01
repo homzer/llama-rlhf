@@ -5,7 +5,7 @@ import random
 import fire
 
 from src.dataset import JsonDataset
-from src.generator import Generator
+from src.generator import GeneratorForCausalLM
 from src.modeling.llama import Llama
 from src.modeling.llama_lora import LoraLlama
 from src.modeling.modeling_args import LoraLlamaArgs, LlamaArgs
@@ -57,7 +57,7 @@ def main(
     model.load(ckpt_dir)
     barrier()
     dataset = JsonDataset(train_file)
-    generator = Generator(model, LlamaTokenizer(tokenizer_path), max_seq_len)
+    generator = GeneratorForCausalLM(model, LlamaTokenizer(tokenizer_path), max_seq_len)
     os.makedirs(output_dir, exist_ok=True)
     timer = Timer(num_generated_samples // eval_batch_size)
     with open(os.path.join(output_dir, 'questions.jsonl'), 'a', encoding='utf-8') as writer:

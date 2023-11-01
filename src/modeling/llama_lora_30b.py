@@ -14,7 +14,7 @@ from src.modeling.llama_abstract import (
     AbstractLoraTransformerBlock,
     AbstractLoraLlama,
 )
-from src.modeling.modeling import RMSNorm
+from src.modeling.modeling_acts import RMSNorm
 from src.modeling.modeling_args import LoraLlamaArgs
 from src.modeling.llama_lora import LoraFeedForward
 

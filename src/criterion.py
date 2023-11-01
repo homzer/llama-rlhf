@@ -57,10 +57,9 @@ class MSELoss(Loss):
             targets: torch.Tensor,
             masks: torch.Tensor = None,
     ):
-        logits = logits.view(-1)
-        targets = targets.view(-1)
         loss = (logits - targets) ** 2
-        return masked_mean(loss, masks)
+        loss = masked_mean(loss, masks)
+        return loss.mean()
 
 
 class RewardLoss(Loss):

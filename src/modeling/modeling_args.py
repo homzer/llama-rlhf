@@ -2,19 +2,7 @@ import json
 from dataclasses import dataclass
 
 
-@dataclass
-class LlamaArgs:
-    max_seq_len: int
-    local_rank: int
-    world_size: int
-
-    dim: int = None
-    n_layers: int = None
-    n_heads: int = None
-    vocab_size: int = None  # defined later by tokenizer
-    multiple_of: int = None  # make SwiGLU hidden layer size multiple of large power of 2
-    norm_eps: float = None
-
+class Args:
     def _set_attribute(self, name, value):
         try:
             if getattr(self, name, None) is None:
@@ -27,7 +15,7 @@ class LlamaArgs:
         param_str = '\n'.join(['%30s = %s' % (k, v) for k, v in sorted(vars(self).items())])
         print('%30s   %s\n%s\n%s\n' % ('ATTRIBUTE', 'VALUE', '_' * 60, param_str))
 
-    def from_json(self, filename):
+    def from_json(self, filename: str):
         with open(filename, 'r', encoding='utf-8') as reader:
             config_dict = json.load(reader)
         for key, value in config_dict.items():
@@ -35,6 +23,36 @@ class LlamaArgs:
                 continue
             self._set_attribute(key, value)
         return self
+
+
+@dataclass
+class GPT2Args(Args):
+    max_seq_len: int
+    attn_pdrop: int = None
+    embd_pdrop: int = None
+    layer_norm_epsilon: float = None
+    n_ctx: int = None
+    n_embd: int = None
+    n_head: int = None
+    n_layer: int = None
+    n_positions: int = None
+    resid_pdrop: float = None
+    vocab_size: int = None
+    activation_function: str = None
+
+
+@dataclass
+class LlamaArgs(Args):
+    max_seq_len: int
+    local_rank: int
+    world_size: int
+
+    dim: int = None
+    n_layers: int = None
+    n_heads: int = None
+    vocab_size: int = None  # defined later by tokenizer
+    multiple_of: int = None  # make SwiGLU hidden layer size multiple of large power of 2
+    norm_eps: float = None
 
 
 @dataclass
