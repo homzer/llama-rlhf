@@ -1,13 +1,11 @@
 import collections
 import os
-from abc import ABC
 from pathlib import Path
 
 import torch
 import torch.nn as nn
 
 from src.utils import set_barrier
-
 
 CausalLMOutputs = collections.namedtuple('CausalLMOutputs', ['logits', 'hidden_states'])
 Seq2SeqLMOutputs = collections.namedtuple('Seq2SeqLMOutputs', ['logits'])
@@ -104,6 +102,7 @@ class ParallelModule(Module):
         for unexpected_key in outputs.unexpected_keys:
             print(f"UNEXPECTED KEY: {unexpected_key}")
         self.cuda(self.local_rank)
+        set_barrier()
         print(f'Loading done !')
 
     def save(self, save_path):
@@ -116,16 +115,43 @@ class ParallelModule(Module):
         print(f'Saving done !')
 
 
-class ParallelModelForCausalLM(ParallelModule, ModelForCausalLM, ABC):
+class ParallelModelForCausalLM(ParallelModule):
     def __init__(self, local_rank, world_size):
         super().__init__(local_rank, world_size)
 
+    def forward(
+            self,
+            tokens: torch.Tensor,
+            start_pos: int = 0,
+            use_cache: bool = False
+    ) -> CausalLMOutputs:
+        raise NotImplementedError
 
-class ParallelModelForMaskedLM(ParallelModule, ModelForMaskedLM, ABC):
+    def flush(self):
+        raise NotImplementedError
+
+
+class ParallelModelForMaskedLM(ParallelModule):
     def __init__(self, local_rank, world_size):
         super().__init__(local_rank, world_size)
 
+    def forward(
+            self,
+            tokens: torch.Tensor,
+    ) -> MaskedLMOutputs:
+        raise NotImplementedError
 
-class ParallelModelForSeq2SeqLM(ParallelModule, ModelForSeq2SeqLM, ABC):
+
+class ParallelModelForSeq2SeqLM(ParallelModule):
     def __init__(self, local_rank, world_size):
         super().__init__(local_rank, world_size)
+
+    def forward(
+            self,
+            input_ids: torch.Tensor,
+            decoder_input_ids: torch.Tensor,
+            encoder_hidden_states: torch.Tensor = None,
+            use_cache: bool = False,
+            start_pos: int = None
+    ) -> Seq2SeqLMOutputs:
+        raise NotImplementedError

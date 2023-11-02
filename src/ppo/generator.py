@@ -1,9 +1,9 @@
 import collections
-from typing import List
+from typing import List, Union
 
 import torch
 
-from src.modeling.modeling import ModelForCausalLM
+from src.modeling.modeling import ModelForCausalLM, ParallelModelForCausalLM
 from src.tokenizer import Tokenizer
 
 GeneratorOutputs = collections.namedtuple("GeneratorOutputs", [
@@ -14,7 +14,7 @@ GeneratorOutputs = collections.namedtuple("GeneratorOutputs", [
 class PPOGeneratorForCausalLM:
     def __init__(
             self,
-            model: ModelForCausalLM,
+            model: Union[ModelForCausalLM, ParallelModelForCausalLM],
             tokenizer: Tokenizer,
             max_seq_len: int,
     ):

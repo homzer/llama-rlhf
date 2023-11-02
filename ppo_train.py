@@ -13,23 +13,24 @@ from src.ppo.buffer import PolicyRolloutBuffer, EnvRolloutBuffer, RolloutBuffer
 from src.ppo.collector import PolicyBufferCollector, EnvBufferCollector
 from src.ppo.env import LlamaRewardEnv
 from src.ppo.generator import PPOGeneratorForCausalLM
-from src.ppo.policy import ActorCriticPolicyForCausalLM
-from src.ppo.trainer import PPOTrainerForCausalLM
+from src.ppo.policy import ActorCriticPolicyForCausalLM, ParallelActorCriticPolicyForCausalLM
+from src.ppo.trainer import ParallelPPOTrainerForCausalLM
 from src.tokenizer import LlamaTokenizer
 from src.utils import setup_model_parallel, set_barrier
 
 
 def run(
-        solver_ckpt_dir: str,
+        policy_ckpt_dir: str,
         verifier_ckpt_dir: str,
+        save_dir: str,
         train_file: str,
-        max_batch_size: int = 16,
-        max_buffer_size: int = 32,
-        max_seq_len: int = 256,
+        model_type: str = "gpt2-base",
+        max_batch_size: int = 4,
+        max_buffer_size: int = 96,
+        max_seq_len: int = 512,
         epochs: int = 1,
         inner_epochs: int = 4,
         lr: float = 1e-5,
-        model_type: str = "gpt2-base",
         tokenizer_path: str = None,
         config_file: str = None
 ):
@@ -50,8 +51,8 @@ def run(
         print('Policy buffer collecting ...')
         solver = LoraLlama(args)
         generator = PPOGeneratorForCausalLM(solver, tokenizer, max_seq_len)
-        policy = ActorCriticPolicyForCausalLM(solver, generator, args.dim)
-        policy.load()
+        policy = ParallelActorCriticPolicyForCausalLM(solver, generator, args.dim)
+        policy.load(policy_ckpt_dir if epoch == 0 else save_dir)
         policy_collector = PolicyBufferCollector(policy)
         policy_rollout_buffer = PolicyRolloutBuffer()
         for data in tqdm(dataloader):
@@ -94,15 +95,16 @@ def run(
         print('Policy training ...')
         solver = LoraLlama(args)
         policy = ActorCriticPolicyForCausalLM(solver, generator, args.dim)
-        policy.load()
         optimizer = torch.optim.Adam(policy.parameters(), lr=lr)
-        trainer = PPOTrainerForCausalLM(policy, optimizer)
+        trainer = ParallelPPOTrainerForCausalLM(policy, optimizer)
+        trainer.load(policy_ckpt_dir if epoch == 0 else save_dir)
         for inner_epoch in range(inner_epochs):
             for data in rollout_buffer.get(max_batch_size):
                 outputs = trainer.forward(data)
                 print('Loss: ', outputs.loss)
                 print('Policy Loss: ', outputs.policy_loss)
                 print('Value Loss: ', outputs.value_loss)
+        trainer.save(save_dir)
 
         solver.cpu()
         policy.cpu()

@@ -8,9 +8,54 @@ import torch.nn as nn
 
 from src.criterion import RewardLoss
 from src.modeling.llama_lora import LoraLlamaVerifier
-from src.modeling.modeling import ParallelModule, ParallelModelForCausalLM
+from src.modeling.modeling import ParallelModule, ParallelModelForCausalLM, Module
 from src.tokenizer import LlamaTokenizer
 from src.utils import set_barrier
+
+
+class Trainer:
+    def __init__(self, model: Module, optimizer: torch.optim.Optimizer):
+        self.model = model
+        self.optimizer = optimizer
+
+    def forward(self, *args, **kwargs):
+        raise NotImplementedError
+
+    def save_optimizer(self, save_path: str):
+        os.makedirs(save_path, exist_ok=True)
+        print(f'Saving optimizer to {save_path} ......')
+        torch.save(self.optimizer.state_dict(), os.path.join(save_path, f'optimizer.bin'))
+        print(f'Saving done !')
+
+    def load_optimizer(self, save_path: str):
+        print(f'Loading optimizer from {save_path} .....')
+        state_dict = torch.load(save_path)
+        self.optimizer.load_state_dict(state_dict)
+        for state in self.optimizer.state.values():
+            for k, v in state.items():
+                if torch.is_tensor(v):
+                    state[k] = v.cuda()
+        print(f'Loading done !')
+
+    def save_model(self, save_path: str):
+        self.model.save(save_path)
+
+    def load_model(self, save_path: str):
+        self.model.load(save_path)
+
+    def load(self, save_path: str):
+        if save_path is None or save_path.lower() == "none":
+            print("WARNING: Not loading model because `save_path` is None")
+            return
+        self.load_optimizer(save_path)
+        self.load_model(save_path)
+
+    def save(self, save_path: str):
+        if save_path is None or save_path.lower() == "none":
+            print("WARNING: Not saving model because `save_path` is None")
+            return
+        self.save_optimizer(save_path)
+        self.save_model(save_path)
 
 
 class ParallelTrainer:
@@ -27,7 +72,7 @@ class ParallelTrainer:
     def forward(self, *args, **kwargs):
         raise NotImplementedError
 
-    def save_distributed_optimizer(self, save_path: str):
+    def save_optimizer(self, save_path: str):
         if self.local_rank == 0:
             os.makedirs(save_path, exist_ok=True)
         print(f'Saving optimizer to {save_path} ......')
@@ -37,7 +82,7 @@ class ParallelTrainer:
         set_barrier()
         print(f'Saving done !')
 
-    def load_distributed_optimizer(self, save_path: str):
+    def load_optimizer(self, save_path: str):
         checkpoints = sorted(Path(save_path).glob("optimizer.*.bin"))
         if len(checkpoints) == 0:
             return
@@ -52,27 +97,28 @@ class ParallelTrainer:
             for k, v in state.items():
                 if torch.is_tensor(v):
                     state[k] = v.cuda()
+        set_barrier()
         print(f'Loading done !')
 
-    def save_distributed_model(self, save_path: str):
+    def save_model(self, save_path: str):
         self.model.save(save_path)
 
-    def load_distributed_model(self, save_path: str):
+    def load_model(self, save_path: str):
         self.model.load(save_path)
 
     def load(self, save_path: str):
         if save_path is None or save_path.lower() == "none":
             print("WARNING: Not loading model because `save_path` is None")
             return
-        self.load_distributed_optimizer(save_path)
-        self.load_distributed_model(save_path)
+        self.load_optimizer(save_path)
+        self.load_model(save_path)
 
     def save(self, save_path: str):
         if save_path is None or save_path.lower() == "none":
             print("WARNING: Not saving model because `save_path` is None")
             return
-        self.save_distributed_optimizer(save_path)
-        self.save_distributed_model(save_path)
+        self.save_optimizer(save_path)
+        self.save_model(save_path)
 
 
 class ParallelSolverTrainer(ParallelTrainer):

@@ -15,8 +15,10 @@ PolicyEvaluateOutputs = collections.namedtuple(
 )
 
 
-class AbstractPolicyForCausalLM:
+class AbstractPolicyForCausalLM(Module):
     """ Abstract Actor-Critic Policy """
+    def __init__(self):
+        super().__init__()
 
     def forward(self, *args, **kwargs) -> PolicyForwardOutputs:
         raise NotImplementedError()
@@ -31,13 +33,26 @@ class AbstractPolicyForCausalLM:
         raise NotImplementedError()
 
 
-class ActorCriticPolicyForCausalLM(Module, AbstractPolicyForCausalLM):
-    def __init__(
-            self,
-            model: ModelForCausalLM,
-            generator: PPOGeneratorForCausalLM,
-            dim: int,
-    ):
+class AbstractParallelPolicyForCausalLM(ParallelModule):
+    """ Abstract Actor-Critic Policy """
+    def __init__(self, local_rank, world_size):
+        super().__init__(local_rank, world_size)
+
+    def forward(self, *args, **kwargs) -> PolicyForwardOutputs:
+        raise NotImplementedError()
+
+    def evaluate_actions(self, *args, **kwargs) -> PolicyEvaluateOutputs:
+        raise NotImplementedError()
+
+    def predict_values(self, *args, **kwargs) -> torch.Tensor:
+        raise NotImplementedError()
+
+    def predict_actions(self, *args, **kwargs):
+        raise NotImplementedError()
+
+
+class ActorCriticPolicyForCausalLM(AbstractPolicyForCausalLM):
+    def __init__(self, model: ModelForCausalLM, generator: PPOGeneratorForCausalLM, dim: int):
         super().__init__()
         self.model = model
         self.ln = nn.LayerNorm(dim, elementwise_affine=False)
@@ -83,16 +98,9 @@ class ActorCriticPolicyForCausalLM(Module, AbstractPolicyForCausalLM):
         return outputs.tokens
 
 
-class ParallelActorCriticPolicyForCausalLM(ParallelModule, AbstractPolicyForCausalLM):
-    def __init__(
-            self,
-            local_rank: int,
-            world_size: int,
-            model: ParallelModelForCausalLM,
-            generator: PPOGeneratorForCausalLM,
-            dim: int,
-    ):
-        super().__init__(local_rank, world_size)
+class ParallelActorCriticPolicyForCausalLM(AbstractParallelPolicyForCausalLM):
+    def __init__(self, model: ParallelModelForCausalLM, generator: PPOGeneratorForCausalLM, dim: int):
+        super().__init__(model.local_rank, model.world_size)
         self.model = model
         self.ln = nn.LayerNorm(dim, elementwise_affine=False)
         self.value = nn.Linear(dim, 1).float()

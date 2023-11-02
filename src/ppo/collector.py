@@ -1,18 +1,18 @@
-from typing import List
+from typing import List, Union
 
 import numpy as np
 import torch
 
 from src.ppo.buffer import RolloutBuffer, PolicyRolloutBuffer, PolicyRolloutBufferSample, EnvRolloutBuffer
 from src.ppo.env import LlamaRewardEnv
-from src.ppo.policy import ActorCriticPolicyForCausalLM
+from src.ppo.policy import AbstractPolicyForCausalLM, AbstractParallelPolicyForCausalLM
 
 
 class BufferCollector:
     def __init__(
             self,
             env: LlamaRewardEnv,
-            policy: ActorCriticPolicyForCausalLM,
+            policy: Union[AbstractPolicyForCausalLM, AbstractParallelPolicyForCausalLM],
             buffer_size: int,
             max_seq_len: int,
     ):
@@ -51,7 +51,7 @@ class BufferCollector:
 
 
 class PolicyBufferCollector:
-    def __init__(self, policy: ActorCriticPolicyForCausalLM):
+    def __init__(self, policy: Union[AbstractPolicyForCausalLM, AbstractParallelPolicyForCausalLM]):
         self.policy = policy
 
     def forward(self, instructions: List[str]) -> PolicyRolloutBuffer:
