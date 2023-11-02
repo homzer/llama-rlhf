@@ -10,10 +10,10 @@ from src.criterion import RewardLoss
 from src.modeling.llama_lora import LoraLlamaVerifier
 from src.modeling.modeling import ParallelModule, ParallelModelForCausalLM
 from src.tokenizer import LlamaTokenizer
-from src.utils import barrier
+from src.utils import set_barrier
 
 
-class DistributedTrainer:
+class ParallelTrainer:
     def __init__(
             self,
             model: ParallelModule,
@@ -31,10 +31,10 @@ class DistributedTrainer:
         if self.local_rank == 0:
             os.makedirs(save_path, exist_ok=True)
         print(f'Saving optimizer to {save_path} ......')
-        barrier()
+        set_barrier()
         torch.save(self.optimizer.state_dict(), os.path.join(
             save_path, f'optimizer.0{self.local_rank}.bin'))
-        barrier()
+        set_barrier()
         print(f'Saving done !')
 
     def load_distributed_optimizer(self, save_path: str):
@@ -75,7 +75,7 @@ class DistributedTrainer:
         self.save_distributed_model(save_path)
 
 
-class DistributedSolverTrainer(DistributedTrainer):
+class ParallelSolverTrainer(ParallelTrainer):
     def __init__(
             self,
             model: ParallelModelForCausalLM,
@@ -157,7 +157,7 @@ class DistributedSolverTrainer(DistributedTrainer):
         return Output(logits=logits, loss=loss)
 
 
-class DistributedVerifierTrainer(DistributedTrainer):
+class ParallelVerifierTrainer(ParallelTrainer):
     def __init__(
             self,
             model: LoraLlamaVerifier,

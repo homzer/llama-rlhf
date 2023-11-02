@@ -10,7 +10,7 @@ from src.modeling.llama import Llama
 from src.modeling.llama_lora import LoraLlama
 from src.modeling.modeling_args import LoraLlamaArgs, LlamaArgs
 from src.tokenizer import LlamaTokenizer
-from src.utils import setup_model_parallel, barrier, Timer
+from src.utils import setup_model_parallel, set_barrier, Timer
 
 
 def create_questioner_batch_data(batch_size: int, dataset: JsonDataset, num_shots: int = 3):
@@ -55,7 +55,7 @@ def main(
             r=lora_rank).from_json(config_file)
         model = LoraLlama(params)
     model.load(ckpt_dir)
-    barrier()
+    set_barrier()
     dataset = JsonDataset(train_file)
     generator = GeneratorForCausalLM(model, LlamaTokenizer(tokenizer_path), max_seq_len)
     os.makedirs(output_dir, exist_ok=True)

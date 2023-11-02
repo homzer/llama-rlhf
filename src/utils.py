@@ -191,7 +191,7 @@ def kl_div_loss_v2(p, q, weights=None):
     return loss
 
 
-def barrier():
+def set_barrier():
     """ make sure that all other processes cannot continue until reach this op. """
     torch.distributed.barrier()
 

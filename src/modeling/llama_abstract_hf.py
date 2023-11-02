@@ -226,7 +226,7 @@ class AbstractLlamaHF(ParallelModelForCausalLM):
         """ Clean cache in `Attention` module """
         for i in range(self.params.n_layers):
             self.model.layers[i].self_attn.flush()
-        utils.barrier()
+        utils.set_barrier()
 
 
 class AbstractLoraAttentionHF(AbstractAttentionHF):

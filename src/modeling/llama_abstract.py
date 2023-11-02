@@ -8,7 +8,7 @@ import torch.nn.functional as F
 
 from src.modeling.modeling import ParallelModule, ParallelModelForCausalLM, CausalLMOutputs
 from src.modeling.modeling_args import LlamaArgs, LoraLlamaArgs
-from src.utils import apply_rotary_emb, precompute_freqs_cis, barrier, logits_normalize
+from src.utils import apply_rotary_emb, precompute_freqs_cis, set_barrier, logits_normalize
 
 
 class AbstractAttention(nn.Module):
@@ -159,7 +159,7 @@ class AbstractLlama(ParallelModelForCausalLM):
         """ Clean cache in `Attention` module """
         for i in range(self.params.n_layers):
             self.layers[i].attention.flush()
-        barrier()
+        set_barrier()
 
 
 class AbstractLoraAttention(AbstractAttention):

@@ -6,7 +6,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 
-from src.utils import barrier
+from src.utils import set_barrier
 
 
 CausalLMOutputs = collections.namedtuple('CausalLMOutputs', ['logits', 'hidden_states'])
@@ -110,9 +110,9 @@ class ParallelModule(Module):
         if self.local_rank == 0:
             os.makedirs(save_path, exist_ok=True)
         print(f'Saving model to {save_path} ......')
-        barrier()
+        set_barrier()
         torch.save(self.state_dict(), os.path.join(save_path, f'consolidated.0{self.local_rank}.pth'))
-        barrier()
+        set_barrier()
         print(f'Saving done !')
 
 

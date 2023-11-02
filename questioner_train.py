@@ -10,7 +10,7 @@ from src.dataset import JsonDataset
 from src.modeling.llama_lora import LoraLlama
 from src.modeling.modeling_args import LoraLlamaArgs
 from src.tokenizer import LlamaTokenizer
-from src.trainer import DistributedSolverTrainer
+from src.trainer import ParallelSolverTrainer
 from src.utils import setup_model_parallel
 
 
@@ -59,7 +59,7 @@ def main(
     dataset = JsonDataset(filename=train_file)
     dataloader = DataLoader(dataset, batch_size=max_batch_size)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    trainer = DistributedSolverTrainer(
+    trainer = ParallelSolverTrainer(
         model=model,
         tokenizer=LlamaTokenizer(tokenizer_path),
         optimizer=optimizer,
