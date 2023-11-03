@@ -140,9 +140,12 @@ class RolloutBuffer:
 
         self._set(obs, actions, rewards, values, action_logits, action_masks)
 
+        self.compute_returns_and_advantage()
+
     def _set(self, obs, actions, rewards, values, action_logits, action_masks):
         self.obs = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.int64)
         self.actions = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.int64)
+        self.rewards = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.float32)
         self.values = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.float32)
         self.action_logits = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.float32)
         self.action_masks = np.zeros((self.buffer_size, self.max_seq_len), dtype=bool)
@@ -267,19 +270,21 @@ class EnvRolloutBuffer:
         if rewards is not None:
             self._set(rewards, action_masks)
 
-    def _set(self, rewards, action_masks):
-        buffer_size = action_masks.shape[0]
-        max_seq_len = action_masks.shape[1]
-        self.rewards = np.zeros((buffer_size, max_seq_len), dtype=np.float32)
-        if type(rewards) is list:
+    def _set(self, rewards, action_masks=None):
+        if action_masks is None:
+            assert type(rewards) is np.ndarray
+            self.rewards = rewards.copy()
+        else:
+            assert type(rewards) is list
+            buffer_size = action_masks.shape[0]
+            max_seq_len = action_masks.shape[1]
+            self.rewards = np.zeros((buffer_size, max_seq_len), dtype=np.float32)
             for i in range(buffer_size):
                 self.rewards[i, :][action_masks[i]] = rewards[i]
-        else:
-            self.rewards[:, :] = rewards.copy()
 
     def extend(self, rollout_buffer):
         if self.rewards is None:
-            self._set(rollout_buffer.rewards, rollout_buffer.action_masks)
+            self._set(rollout_buffer.rewards)
         else:
             self.rewards = np.concatenate([self.rewards, rollout_buffer.rewards], axis=0)
         return self

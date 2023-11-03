@@ -27,16 +27,14 @@ class PPOGeneratorForCausalLM:
         bsz = len(prompts)
         prompt_tokens = [self.tokenizer.encode(x, bos=True, eos=False) for x in prompts]
         min_prompt_size = min([len(t) for t in prompt_tokens])
-        # max_prompt_size = max([len(t) for t in prompt_tokens])
-        total_len = self.max_seq_len
-        tokens = torch.full((bsz, total_len), self.tokenizer.pad_id).long()
+        tokens = torch.full((bsz, self.max_seq_len), self.tokenizer.pad_id).long()
         for k, t in enumerate(prompt_tokens):
             tokens[k, : len(t)] = torch.tensor(t).long()
         input_masks = tokens != self.tokenizer.pad_id
         unfinished_sequences = torch.ones(size=[bsz], dtype=torch.long)
         Outputs = collections.namedtuple("Outputs", [
             'tokens', 'input_masks', 'min_prompt_size',
-            'unfinished_sequences', 'start_pos', 'total_len'
+            'unfinished_sequences', 'start_pos'
         ])
         return Outputs(
             tokens=tokens.to(self.model.device()),
@@ -44,7 +42,6 @@ class PPOGeneratorForCausalLM:
             unfinished_sequences=unfinished_sequences.to(self.model.device()),
             min_prompt_size=min_prompt_size,
             start_pos=min_prompt_size,
-            total_len=total_len
         )
 
     def _model_forward(self, preparation):
@@ -56,7 +53,7 @@ class PPOGeneratorForCausalLM:
         hidden_states = None
         logits = torch.zeros((*tokens.shape, self.vocab_size), dtype=torch.float32, device=self.model.device())
         tokens_logits = torch.zeros(tokens.shape, dtype=torch.float32, device=self.model.device())
-        for cur_pos in range(start_pos, preparation.total_len):
+        for cur_pos in range(start_pos, self.max_seq_len):
             with torch.no_grad():
                 outputs = self.model.forward(
                     tokens[:, prev_pos: cur_pos], prev_pos, use_cache=True

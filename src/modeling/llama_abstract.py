@@ -153,7 +153,7 @@ class AbstractLlama(ParallelModelForCausalLM):
             h = layer(h, start_pos, freqs_cis, mask, use_cache)
         h = self.norm(h)
         output = self.output(h)
-        return CausalLMOutputs(logits=logits_normalize(output.float()), hidden_states=h)
+        return CausalLMOutputs(logits=logits_normalize(output.float()), hidden_states=h.float())
 
     def flush(self):
         """ Clean cache in `Attention` module """
@@ -276,7 +276,7 @@ class AbstractLoraLlama(AbstractLlama):
             h = layer(h, start_pos, freqs_cis, mask, use_cache)
         h = self.norm(h)
         output = self.output(h) + self.lora_b_output(self.lora_a_output(h.float())).to(h.dtype)
-        return CausalLMOutputs(logits=logits_normalize(output.float()), hidden_states=h)
+        return CausalLMOutputs(logits=logits_normalize(output.float()), hidden_states=h.float())
 
     def _freeze(self):
         """ Freeze all parameters but lora ones. """

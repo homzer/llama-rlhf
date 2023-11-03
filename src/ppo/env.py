@@ -12,10 +12,8 @@ class LlamaRewardEnv:
         self.tokenizer = tokenizer
         self.generator = GeneratorForVerifier(verifier, tokenizer, max_seq_len)
 
-    def step(self, obs: List[str], actions: np.array, action_masks: np.array) -> List[List[float]]:
+    def step(self, obs: List[str], actions: np.ndarray, action_masks: np.ndarray) -> List[List[float]]:
         outputs = []
         for action, action_mask in zip(actions, action_masks):
-            outputs.append(self.tokenizer.decode(action[action_mask].tolist()))
-        # TODO
-        print(outputs[0])
+            outputs.append(action[action_mask].tolist())
         return self.generator.forward(obs, outputs).tokens_rewards

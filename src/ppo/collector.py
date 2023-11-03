@@ -72,9 +72,8 @@ class EnvBufferCollector:
 
     def forward(self, rollout_data: PolicyRolloutBufferSample) -> EnvRolloutBuffer:
         action_rewards = self.env.step(
-            obs=rollout_data.instructions,
+            obs=rollout_data.instructions.tolist(),
             actions=rollout_data.actions,
             action_masks=rollout_data.action_masks
         )
         return EnvRolloutBuffer(action_rewards, rollout_data.action_masks)
-

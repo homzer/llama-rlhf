@@ -1,5 +1,5 @@
 import collections
-from typing import List
+from typing import List, Union
 
 import torch
 
@@ -83,13 +83,29 @@ class GeneratorForVerifier:
             output_ids = output_ids[:-exceed_length]
         return instruction_ids, output_ids
 
-    def _prepare_for_generation(self, instructions: List[str], outputs: List[str]):
+    def _prepare_for_generation(
+            self,
+            instructions: Union[List[str], List[List[int]]],
+            outputs: Union[List[str], List[List[int]]]
+    ):
         bsz = len(instructions)
         tokens = torch.full((bsz, self.max_seq_len), self.tokenizer.pad_id).long()
         masks = torch.full((bsz, self.max_seq_len), False)
         for i, (instruction, output) in enumerate(zip(instructions, outputs)):
-            instruction_ids = self.tokenizer.encode(instruction, bos=True, eos=False)
-            output_ids = self.tokenizer.encode(output, bos=False, eos=True)
+            if type(instruction) is str:
+                instruction_ids = self.tokenizer.encode(instruction, bos=True, eos=False)
+            elif type(instruction) is list:
+                assert type(instruction[0]) is int, type(instruction[0])
+                instruction_ids = instruction
+            else:
+                raise TypeError(type(instruction))
+            if type(output) is str:
+                output_ids = self.tokenizer.encode(output, bos=False, eos=True)
+            elif type(output) is list:
+                assert type(output[0]) is int, type(output[0])
+                output_ids = output
+            else:
+                raise TypeError(type(output))
             instruction_ids, output_ids = self._truncating_strategy(instruction_ids, output_ids)
             instr_len, output_len = len(instruction_ids), len(output_ids)
             tokens[i, :instr_len + output_len] = torch.tensor(instruction_ids + output_ids).long()
@@ -97,15 +113,13 @@ class GeneratorForVerifier:
         Output = collections.namedtuple('Outputs', ['tokens', 'masks'])
         return Output(tokens=tokens, masks=masks)
 
-    def forward(self, instructions: List[str], outputs: List[str]):
+    def forward(self, instructions: Union[List[str], List[List[int]]], outputs: Union[List[str], List[List[int]]]):
         examples = self._prepare_for_generation(instructions, outputs)
         with torch.no_grad():
             tokens_rewards = self.model.forward(examples.tokens).cpu()
         result_tokens_rewards = []
         for i, tr in enumerate(tokens_rewards):
             result_tokens_rewards.append(torch.masked_select(tr, examples.masks[i]).tolist())
-        # TODO
-        print(self.tokenizer.decode(torch.masked_select(examples.tokens[0], examples.masks[0]).tolist()))
         rewards = masked_mean(tokens_rewards, examples.masks).tolist()
         Output = collections.namedtuple('Output', ['rewards', 'tokens_rewards'])
         return Output(rewards=rewards, tokens_rewards=result_tokens_rewards)

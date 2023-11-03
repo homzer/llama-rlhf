@@ -12,7 +12,7 @@ from src.ppo.buffer import PolicyRolloutBuffer, EnvRolloutBuffer, RolloutBuffer
 from src.ppo.collector import PolicyBufferCollector, EnvBufferCollector
 from src.ppo.env import LlamaRewardEnv
 from src.ppo.generator import PPOGeneratorForCausalLM
-from src.ppo.policy import ActorCriticPolicyForCausalLM, ParallelActorCriticPolicyForCausalLM
+from src.ppo.policy import ParallelActorCriticPolicyForCausalLM
 from src.ppo.trainer import ParallelPPOTrainerForCausalLM
 from src.tokenizer import LlamaTokenizer
 from src.utils import setup_model_parallel, set_barrier, Timer
@@ -28,8 +28,7 @@ def convert_solver_ckpt_to_policy_ckpt(solver_ckpt_dir: str, config_file: str, p
     ).from_json(config_file)
     solver = LoraLlama(args)
     solver.load(solver_ckpt_dir)
-    generator = None
-    policy = ParallelActorCriticPolicyForCausalLM(solver, generator, args.dim)
+    policy = ParallelActorCriticPolicyForCausalLM(solver, None, args.dim)
     policy.save(policy_save_dir)
 
 
@@ -45,7 +44,7 @@ def run(
         max_buffer_size: int = 96,
         max_seq_len: int = 512,
         epochs: int = 1,
-        inner_epochs: int = 4,
+        inner_epochs: int = 2,
         lr: float = 1e-5,
         tokenizer_path: str = None,
 ):
@@ -122,7 +121,8 @@ def run(
         )
 
         solver = LoraLlama(policy_args)
-        policy = ActorCriticPolicyForCausalLM(solver, generator, policy_args.dim)
+        generator = PPOGeneratorForCausalLM(solver, tokenizer, max_seq_len)
+        policy = ParallelActorCriticPolicyForCausalLM(solver, generator, policy_args.dim)
         optimizer = torch.optim.Adam(policy.parameters(), lr=lr)
         trainer = ParallelPPOTrainerForCausalLM(policy, optimizer)
         trainer.load(policy_ckpt_dir if epoch == 0 else save_dir)
@@ -135,14 +135,17 @@ def run(
                     print('Loss: ', outputs.loss)
                     print('Policy Loss: ', outputs.policy_loss)
                     print('Value Loss: ', outputs.value_loss)
-            trainer.save(save_dir)
+        trainer.save(save_dir)
 
         solver.cpu()
         policy.cpu()
         del solver
         del policy
+        del generator
         del optimizer
         del trainer
+        gc.collect()
+        set_barrier()
 
 
 if __name__ == '__main__':
