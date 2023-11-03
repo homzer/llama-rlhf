@@ -63,7 +63,7 @@ class PolicyBufferCollector:
         action_logits = policy_outputs.action_logits.cpu().numpy()
         action_masks = policy_outputs.action_masks.cpu().numpy()
 
-        return PolicyRolloutBuffer(obs, actions, values, action_logits, action_masks)
+        return PolicyRolloutBuffer(instructions, obs, actions, values, action_logits, action_masks)
 
 
 class EnvBufferCollector:

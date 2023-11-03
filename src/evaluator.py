@@ -5,7 +5,7 @@ from typing import List
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from src.dataset import JsonDataset, RewardDataset
+from src.dataset import JsonDataset, PairwiseDataset
 from src.generator import GeneratorForCausalLM, GeneratorForVerifier
 from src.modeling.llama_abstract import AbstractLoraLlamaVerifier
 from src.modeling.modeling import ModelForCausalLM
@@ -63,7 +63,7 @@ class VerifierEvaluator:
 
     def forward(self, label_file: str):
         print("Evaluating ...")
-        dataset = RewardDataset(label_file, randomize=False)
+        dataset = PairwiseDataset(label_file, randomize=False)
         dataloader = DataLoader(dataset, batch_size=self.batch_size)
         self.meter.reset()
         datalist = []

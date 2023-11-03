@@ -55,20 +55,16 @@ class ActorCriticPolicyForCausalLM(AbstractPolicyForCausalLM):
     def __init__(self, model: ModelForCausalLM, generator: PPOGeneratorForCausalLM, dim: int):
         super().__init__()
         self.model = model
-        self.ln = nn.LayerNorm(dim, elementwise_affine=False)
-        self.value = nn.Linear(dim, 1).float()
+        self.ln = nn.LayerNorm(dim, elementwise_affine=False).float()
+        self.value = nn.Linear(dim, 1, bias=False).float()
         self.generator = generator
 
     def forward(self, obs: List[str]) -> PolicyForwardOutputs:
         outputs = self.generator.forward(obs)
         values = self.value.forward(self.ln(outputs.hidden_states)).squeeze(-1)
-        # token shift left to get actions
-        actions = torch.zeros_like(outputs.tokens)
-        actions[:, :-1] = outputs.tokens[:, 1:]
-
         return PolicyForwardOutputs(
-            obs=outputs.tokens,  # [b, s]
-            actions=actions,  # [b, s]
+            obs=outputs.input_tokens,  # [b, s]
+            actions=outputs.output_tokens,  # [b, s]
             values=values,  # [b, s]
             action_logits=outputs.tokens_logits,
             action_masks=outputs.output_masks
@@ -95,27 +91,23 @@ class ActorCriticPolicyForCausalLM(AbstractPolicyForCausalLM):
 
     def predict_actions(self, prompts: List[str]) -> List[dict]:
         outputs = self.generator.forward(prompts)
-        return outputs.tokens
+        return outputs.input_tokens  # TODO
 
 
 class ParallelActorCriticPolicyForCausalLM(AbstractParallelPolicyForCausalLM):
     def __init__(self, model: ParallelModelForCausalLM, generator: PPOGeneratorForCausalLM, dim: int):
         super().__init__(model.local_rank, model.world_size)
         self.model = model
-        self.ln = nn.LayerNorm(dim, elementwise_affine=False)
-        self.value = nn.Linear(dim, 1).float()
+        self.ln = nn.LayerNorm(dim, elementwise_affine=False).float()
+        self.value = nn.Linear(dim, 1, bias=False).float()
         self.generator = generator
 
     def forward(self, obs: List[str]) -> PolicyForwardOutputs:
         outputs = self.generator.forward(obs)
         values = self.value.forward(self.ln(outputs.hidden_states)).squeeze(-1)
-        # token shift left to get actions
-        actions = torch.zeros_like(outputs.tokens)
-        actions[:, :-1] = outputs.tokens[:, 1:]
-
         return PolicyForwardOutputs(
-            obs=outputs.tokens,  # [b, s]
-            actions=actions,  # [b, s]
+            obs=outputs.input_tokens,  # [b, s]
+            actions=outputs.output_tokens,  # [b, s]
             values=values,  # [b, s]
             action_logits=outputs.tokens_logits,
             action_masks=outputs.output_masks
@@ -142,4 +134,4 @@ class ParallelActorCriticPolicyForCausalLM(AbstractParallelPolicyForCausalLM):
 
     def predict_actions(self, prompts: List[str]) -> List[dict]:
         outputs = self.generator.forward(prompts)
-        return outputs.tokens
+        return outputs.input_tokens  # TODO

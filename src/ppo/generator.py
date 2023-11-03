@@ -7,7 +7,7 @@ from src.modeling.modeling import ModelForCausalLM, ParallelModelForCausalLM
 from src.tokenizer import Tokenizer
 
 GeneratorOutputs = collections.namedtuple("GeneratorOutputs", [
-    'logits', 'hidden_states', 'output_masks', 'tokens', 'responses', 'tokens_logits'
+    'logits', 'hidden_states', 'output_masks', 'input_tokens', 'outputs', 'tokens_logits', 'output_tokens'
 ])
 
 
@@ -71,15 +71,11 @@ class PPOGeneratorForCausalLM:
             logits[:, prev_pos: cur_pos, :] = outputs.logits
             next_tokens = torch.argmax(outputs.logits, dim=-1)
             tokens_logits[:, prev_pos: cur_pos] = torch.gather(
-                outputs.logits,
-                dim=-1,
-                index=next_tokens.unsqueeze(-1)
+                outputs.logits, dim=-1, index=next_tokens.unsqueeze(-1)
             ).squeeze(-1)
             next_token = next_tokens[:, -1].reshape(-1)
             next_token = torch.where(
-                input_masks[:, cur_pos],
-                tokens[:, cur_pos],
-                next_token
+                input_masks[:, cur_pos], tokens[:, cur_pos], next_token
             )
             tokens[:, cur_pos] = next_token
             prev_pos = cur_pos
@@ -108,7 +104,6 @@ class PPOGeneratorForCausalLM:
 
     def _decode_response(self, tokens, output_masks):
         responses = []
-        # output_masks = torch.cat([output_masks[:, 1:], output_masks])
         # shift right
         shifted_output_masks = torch.full_like(output_masks, fill_value=False)
         shifted_output_masks[:, 1:] = output_masks[:, :-1]
@@ -122,10 +117,14 @@ class PPOGeneratorForCausalLM:
 
         prompt_lengths = torch.sum(prepare_outputs.input_masks, dim=-1)
         output_masks = self._get_output_masks(forward_outputs.tokens, prompt_lengths)
-        responses = self._decode_response(forward_outputs.tokens, output_masks)
+        outputs = self._decode_response(forward_outputs.tokens, output_masks)
+        # input tokens shift left to get output tokens
+        output_tokens = torch.zeros_like(forward_outputs.tokens)
+        output_tokens[:, :-1] = forward_outputs.tokens[:, 1:]
         return GeneratorOutputs(
-            responses=responses,
-            tokens=forward_outputs.tokens,
+            outputs=outputs,
+            input_tokens=forward_outputs.tokens,
+            output_tokens=output_tokens,
             logits=forward_outputs.logits,
             hidden_states=forward_outputs.hidden_states,
             output_masks=output_masks,

@@ -23,8 +23,8 @@ class GeneratorForCausalLM:
             prompt_tokens.append(x[: self.max_seq_len])
         min_prompt_size = min([len(t) for t in prompt_tokens])
         tokens = torch.full((bsz, self.max_seq_len), self.tokenizer.pad_id).cuda().long()
-        for k, token in enumerate(prompt_tokens):
-            tokens[k, : len(token)] = torch.tensor(token).long()
+        for k, tks in enumerate(prompt_tokens):
+            tokens[k, : len(tks)] = torch.tensor(tks).long()
         input_text_mask = tokens != self.tokenizer.pad_id
         start_pos = min_prompt_size
         prev_pos = 0
@@ -48,18 +48,16 @@ class GeneratorForCausalLM:
             if unfinished_sequences.max() == 0:
                 break
         decoded = []
-        for i, token in enumerate(tokens.tolist()):
+        for i, tks in enumerate(tokens.tolist()):
             prompt_length = len(prompt_tokens[i])
             # cut to max gen len
-            token = token[: self.max_seq_len]
+            tks = tks[: self.max_seq_len]
             # cut to eos tok if any
-            try:
-                token = token[: token.index(self.tokenizer.eos_id)]
-            except ValueError:
-                pass
+            if self.tokenizer.eos_id in tks[1:]:
+                tks = tks[: tks.index(self.tokenizer.eos_id, 1)]
             decoded.append(dict(
-                instruction=self.tokenizer.decode(token[:prompt_length]),
-                output=self.tokenizer.decode(token[prompt_length:])
+                instruction=self.tokenizer.decode(tks[:prompt_length]),
+                output=self.tokenizer.decode(tks[prompt_length:])
             ))
         self.model.flush()
         return decoded
@@ -106,28 +104,8 @@ class GeneratorForVerifier:
         result_tokens_rewards = []
         for i, tr in enumerate(tokens_rewards):
             result_tokens_rewards.append(torch.masked_select(tr, examples.masks[i]).tolist())
+        # TODO
+        print(self.tokenizer.decode(torch.masked_select(examples.tokens[0], examples.masks[0]).tolist()))
         rewards = masked_mean(tokens_rewards, examples.masks).tolist()
         Output = collections.namedtuple('Output', ['rewards', 'tokens_rewards'])
         return Output(rewards=rewards, tokens_rewards=result_tokens_rewards)
-
-    # def forward(self, instructions: List[str], chosen: List[str], rejected: List[str]):
-    #     c_examples = self._prepare_for_generation(instructions, chosen)
-    #     r_examples = self._prepare_for_generation(instructions, rejected)
-    #     with torch.no_grad():
-    #         c_tokens_rewards = self.model.forward(c_examples.tokens).cpu()
-    #         r_tokens_rewards = self.model.forward(r_examples.tokens).cpu()
-    #     chosen_tokens_rewards = []
-    #     rejected_tokens_rewards = []
-    #     for i, (ctr, rtr) in enumerate(zip(c_tokens_rewards, r_tokens_rewards)):
-    #         chosen_tokens_rewards.append(torch.masked_select(ctr, c_examples.masks[i]).tolist())
-    #         rejected_tokens_rewards.append(torch.masked_select(rtr, r_examples.masks[i]).tolist())
-    #     c_rewards = masked_mean(c_tokens_rewards, c_examples.masks).tolist()
-    #     r_rewards = masked_mean(r_tokens_rewards, r_examples.masks).tolist()
-    #     Output = collections.namedtuple('Output', [
-    #         'chosen_rewards', 'rejected_rewards', 'chosen_tokens_rewards', 'rejected_tokens_rewards'])
-    #     return Output(
-    #         chosen_rewards=c_rewards,
-    #         rejected_rewards=r_rewards,
-    #         chosen_tokens_rewards=chosen_tokens_rewards,
-    #         rejected_tokens_rewards=rejected_tokens_rewards
-    #     )

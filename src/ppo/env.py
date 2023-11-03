@@ -16,4 +16,6 @@ class LlamaRewardEnv:
         outputs = []
         for action, action_mask in zip(actions, action_masks):
             outputs.append(self.tokenizer.decode(action[action_mask].tolist()))
+        # TODO
+        print(outputs[0])
         return self.generator.forward(obs, outputs).tokens_rewards

@@ -204,6 +204,9 @@ class PolicyRolloutBuffer:
         if obs is not None:
             self._set(instructions, obs, actions, values, action_logits, action_masks)
 
+    def __len__(self):
+        return 0 if self.instructions is None else len(self.instructions)
+
     def _set(self, instructions, obs, actions, values, action_logits, action_masks):
         buffer_size = obs.shape[0]
         max_seq_len = obs.shape[1]

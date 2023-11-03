@@ -5,7 +5,7 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from src.dataset import RewardDataset
+from src.dataset import PairwiseDataset
 from src.evaluator import VerifierEvaluator
 from src.modeling.llama_lora import LoraLlamaVerifier
 from src.modeling.modeling_args import LoraLlamaArgs
@@ -46,7 +46,7 @@ def main(
     ).from_json(config_file)
 
     model = LoraLlamaVerifier(params)
-    dataset = RewardDataset(filename=train_file)
+    dataset = PairwiseDataset(filename=train_file)
     dataloader = DataLoader(dataset, batch_size=max_batch_size)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     tokenizer = LlamaTokenizer(tokenizer_path)

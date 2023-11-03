@@ -24,7 +24,7 @@ class JsonDataset(TorchDataset):
         return dataset
 
 
-class SolutionDataset(JsonDataset):
+class MultiOutputsDataset(JsonDataset):
     def __init__(self, filename):
         super().__init__(filename)
         assert "output" in self.datalist[0].keys()
@@ -36,7 +36,7 @@ class SolutionDataset(JsonDataset):
         return data
 
 
-class RewardDataset(JsonDataset):
+class PairwiseDataset(JsonDataset):
     def __init__(self, filename, randomize: bool = True):
         super().__init__(filename)
         assert "chosen" in self.datalist[0].keys()
