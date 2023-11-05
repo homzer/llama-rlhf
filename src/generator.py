@@ -114,6 +114,7 @@ class GeneratorForVerifier:
         return Output(tokens=tokens, masks=masks)
 
     def forward(self, instructions: Union[List[str], List[List[int]]], outputs: Union[List[str], List[List[int]]]):
+        self.model.eval()
         examples = self._prepare_for_generation(instructions, outputs)
         with torch.no_grad():
             tokens_rewards = self.model.forward(examples.tokens).cpu()

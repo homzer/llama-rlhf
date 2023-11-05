@@ -321,8 +321,8 @@ class AbstractLoraLlamaVerifier(ParallelModule):
         for layer in self.layers:
             h = layer(h, start_pos, freqs_cis, mask, use_cache)
         h = self.norm(h).float()
-        rewards = self.v_head(h).squeeze(-1)  # [b, s]
-        return rewards
+        scores = self.v_head(h).squeeze(-1)  # [b, s]
+        return scores
 
     def _freeze(self):
         """ Freeze all parameters but lora ones. """

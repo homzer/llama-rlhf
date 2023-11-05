@@ -1,17 +1,20 @@
 import collections
 from typing import List, Union
 
+import numpy as np
 import torch
 
+from src.generator import GeneratorForVerifier
+from src.modeling.llama_lora import LoraLlamaVerifier
 from src.modeling.modeling import ModelForCausalLM, ParallelModelForCausalLM
-from src.tokenizer import Tokenizer
+from src.tokenizer import Tokenizer, LlamaTokenizer
 
-GeneratorOutputs = collections.namedtuple("GeneratorOutputs", [
-    'logits', 'hidden_states', 'output_masks', 'input_tokens', 'outputs', 'tokens_logits', 'output_tokens'
+ActionGeneratorOutputs = collections.namedtuple("ActionGeneratorOutputs", [
+    'outputs', 'logits', 'hidden_states', 'obs', 'actions', 'action_logits', 'action_masks'
 ])
 
 
-class PPOGeneratorForCausalLM:
+class ActionGeneratorForCausalLM:
     def __init__(
             self,
             model: Union[ModelForCausalLM, ParallelModelForCausalLM],
@@ -108,8 +111,9 @@ class PPOGeneratorForCausalLM:
             responses.append(self.tokenizer.decode(t[m].tolist()))
         return responses
 
-    def forward(self, prompts: List[str]) -> GeneratorOutputs:
-        prepare_outputs = self._prepare_for_generation(prompts)
+    def forward(self, instructions: List[str]) -> ActionGeneratorOutputs:
+        self.model.eval()
+        prepare_outputs = self._prepare_for_generation(instructions)
         forward_outputs = self._model_forward(prepare_outputs)
 
         prompt_lengths = torch.sum(prepare_outputs.input_masks, dim=-1)
@@ -118,12 +122,24 @@ class PPOGeneratorForCausalLM:
         # input tokens shift left to get output tokens
         output_tokens = torch.zeros_like(forward_outputs.tokens)
         output_tokens[:, :-1] = forward_outputs.tokens[:, 1:]
-        return GeneratorOutputs(
+        return ActionGeneratorOutputs(
             outputs=outputs,
-            input_tokens=forward_outputs.tokens,
-            output_tokens=output_tokens,
             logits=forward_outputs.logits,
             hidden_states=forward_outputs.hidden_states,
-            output_masks=output_masks,
-            tokens_logits=forward_outputs.tokens_logits
+            obs=forward_outputs.tokens,
+            actions=output_tokens,
+            action_logits=forward_outputs.tokens_logits,
+            action_masks=output_masks,
         )
+
+
+class CriticismGeneratorForCausalLM:
+    def __init__(self, verifier: LoraLlamaVerifier, tokenizer: LlamaTokenizer, max_seq_len: int):
+        self.tokenizer = tokenizer
+        self.generator = GeneratorForVerifier(verifier, tokenizer, max_seq_len)
+
+    def forward(self, obs: List[str], actions: np.ndarray, action_masks: np.ndarray) -> List[List[float]]:
+        outputs = []
+        for action, action_mask in zip(actions, action_masks):
+            outputs.append(action[action_mask].tolist())
+        return self.generator.forward(obs, outputs).tokens_rewards

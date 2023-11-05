@@ -5,13 +5,19 @@ import torch
 import torch.nn as nn
 
 from src.modeling.modeling import ModelForCausalLM, Module, ParallelModule, ParallelModelForCausalLM
-from src.ppo.generator import PPOGeneratorForCausalLM
+from src.ppo.generator import ActionGeneratorForCausalLM
 
 PolicyForwardOutputs = collections.namedtuple(
     "PolicyForwardOutputs", ["obs", "actions", "values", "action_logits", "action_masks"]
 )
 PolicyEvaluateOutputs = collections.namedtuple(
     "PolicyEvaluateOutputs", ["values", "action_logits"]
+)
+ActorForwardOutputs = collections.namedtuple(
+    "ActorForwardOutputs", ["obs", "actions", "action_logits", "action_masks"]
+)
+CriticForwardOutputs = collections.namedtuple(
+    "CriticForwardOutputs", ["values"]
 )
 
 
@@ -52,7 +58,7 @@ class AbstractParallelPolicyForCausalLM(ParallelModule):
 
 
 class ActorCriticPolicyForCausalLM(AbstractPolicyForCausalLM):
-    def __init__(self, model: ModelForCausalLM, generator: PPOGeneratorForCausalLM, dim: int):
+    def __init__(self, model: ModelForCausalLM, generator: ActionGeneratorForCausalLM, dim: int):
         super().__init__()
         self.model = model
         self.ln = nn.LayerNorm(dim, elementwise_affine=False).float()
@@ -95,7 +101,7 @@ class ActorCriticPolicyForCausalLM(AbstractPolicyForCausalLM):
 
 
 class ParallelActorCriticPolicyForCausalLM(AbstractParallelPolicyForCausalLM):
-    def __init__(self, model: ParallelModelForCausalLM, generator: PPOGeneratorForCausalLM, dim: int):
+    def __init__(self, model: ParallelModelForCausalLM, generator: ActionGeneratorForCausalLM, dim: int):
         super().__init__(model.local_rank, model.world_size)
         self.model = model
         self.ln = nn.LayerNorm(dim, elementwise_affine=False).float()
@@ -135,3 +141,38 @@ class ParallelActorCriticPolicyForCausalLM(AbstractParallelPolicyForCausalLM):
     def predict_actions(self, prompts: List[str]) -> List[dict]:
         outputs = self.generator.forward(prompts)
         return outputs.input_tokens  # TODO
+
+
+# class ParallelActorForCausalLM(ParallelModule):
+#     def __init__(self, model: ParallelModelForCausalLM, generator: ActionGeneratorForCausalLM):
+#         super().__init__(model.local_rank, model.world_size)
+#         self.model = model
+#         self.generator = generator
+#
+#     def forward(self, obs: List[str]) -> ActorForwardOutputs:
+#         outputs = self.generator.forward(obs)
+#         return ActorForwardOutputs(
+#             obs=outputs.input_tokens,  # [b, s]
+#             actions=outputs.output_tokens,  # [b, s]
+#             action_logits=outputs.tokens_logits,
+#             action_masks=outputs.output_masks
+#         )
+#
+#     def evaluate_actions(self, obs: torch.Tensor, actions: torch.Tensor):
+#         outputs = self.model.forward(obs)
+#         actions_logits = torch.gather(
+#             outputs.logits,
+#             dim=-1,
+#             index=actions.unsqueeze(-1)
+#         ).squeeze(-1)
+#         return actions_logits
+#
+#
+# class ParallelCriticForCausalLM(ParallelModule):
+#     def __init__(self, model: ParallelModelForCausalLM, generator: CriticismGeneratorForCausalLM):
+#         super().__init__(model.local_rank, model.world_size)
+#         self.model = model
+#         self.generator = generator
+#
+#     def forward(self) -> CriticForwardOutputs:
+#         outputs = self.generator.forward()
