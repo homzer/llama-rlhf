@@ -4,6 +4,8 @@ from typing import Generator, List, Union
 import numpy as np
 import torch
 
+from src.utils import masked_normalize
+
 RolloutBufferSample = collections.namedtuple(
     "RolloutBufferSample", [
         "observations",
@@ -71,6 +73,9 @@ class RolloutBuffer:
 
         self.compute_returns_and_advantage()
 
+    def __len__(self):
+        return 0 if self.obs is None else self.obs.shape[0]
+
     def _set(self, obs, actions, rewards, values, action_logits, action_masks):
         self.obs = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.int64)
         self.actions = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.int64)
@@ -86,6 +91,10 @@ class RolloutBuffer:
         self.values[:, :] = values.copy()
         self.action_logits[:, :] = action_logits.copy()
         self.action_masks[:, :] = action_masks.copy()
+
+        # Normalize
+        self.rewards = masked_normalize(self.rewards, self.action_masks)
+        self.values = masked_normalize(self.values, self.action_masks)
 
         assert np.sum(self.rewards[~ self.action_masks]) == 0  # Check rewards correctness
 

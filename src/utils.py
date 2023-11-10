@@ -5,7 +5,7 @@ import random
 import sys
 import time
 from pathlib import Path
-from typing import Tuple, List
+from typing import Tuple, List, Union
 
 import numpy as np
 import torch
@@ -341,3 +341,25 @@ class Timer:
         self.ticktock = 0
         self.last = None
         self.avg_time = 0
+
+
+def masked_normalize(x: Union[torch.Tensor, np.ndarray], masks: Union[torch.Tensor, np.ndarray] = None):
+    """ mean to be 0, std to be 1 """
+    if type(x) is torch.Tensor:
+        bzs = x.shape[0]
+        if masks is None:
+            masks = torch.full_like(x, fill_value=True, dtype=torch.bool)
+        for i in range(bzs):
+            data = x[i][masks[i]]
+            x[i][masks[i]] = (data - data.mean()) / (data.std() + 1e-8)
+        return x
+    elif type(x) is np.ndarray:
+        bzs = x.shape[0]
+        if masks is None:
+            masks = np.full_like(x, fill_value=True, dtype=np.bool_)
+        for i in range(bzs):
+            data = x[i][masks[i]]
+            x[i][masks[i]] = (data - data.mean()) / (data.std() + 1e-8)
+        return x
+    else:
+        raise TypeError('Unknown type: ', type(x))

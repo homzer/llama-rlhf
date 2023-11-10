@@ -1,4 +1,5 @@
 import gc
+import os
 
 import fire
 import torch
@@ -6,13 +7,14 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from src.dataset import JsonDataset
+from src.evaluator import SolverEvaluator
 from src.modeling.llama_lora import LoraLlamaVerifier, LoraLlama
 from src.modeling.modeling_args import LoraLlamaArgs
 from src.ppo.buffer import CriticRolloutBuffer, RolloutBuffer, ActorRolloutBuffer
 from src.ppo.collector import CriticBufferCollector, ActorBufferCollector
 from src.ppo.trainer import ParallelActorTrainerForCausalLM, ParallelCriticTrainerForCausalLM
 from src.tokenizer import LlamaTokenizer
-from src.utils import setup_model_parallel, set_barrier, Timer
+from src.utils import setup_model_parallel, set_barrier, Timer, json_dump
 
 
 def run(
@@ -24,7 +26,10 @@ def run(
         critic_save_dir: str,
         reward_model_ckpt_dir: str,
         reward_model_config_file: str,
+        task: str,
         train_file: str,
+        label_file: str,
+        log_dir: str,
         lora_rank: int = 16,
         max_batch_size: int = 4,
         max_buffer_size: int = 96,
@@ -62,7 +67,7 @@ def run(
 
     for epoch in range(epochs):
         actor = LoraLlama(actor_args)
-        actor.load(actor_ckpt_dir if epoch == 0 else actor_save_dir)
+        actor.load(actor_ckpt_dir if epoch == 0 else os.path.join(actor_save_dir, f"epoch-{epoch}"))
         actor_buffer_collector = ActorBufferCollector(actor, tokenizer, max_seq_len)
         actor_rollout_buffer = ActorRolloutBuffer()
         print('Actor buffer collecting ...')
@@ -72,9 +77,8 @@ def run(
             actor_rollout_buffer.extend(
                 actor_buffer_collector.forward(data['instruction'])
             )
-
-        # TODO test
-        print(tokenizer.decode(actor_rollout_buffer.actions[0][actor_rollout_buffer.action_masks[0]].tolist()))
+            print(data['instruction'][-1])
+            print(tokenizer.decode(actor_rollout_buffer.actions[-1][actor_rollout_buffer.action_masks[-1]].tolist()))
 
         actor.cpu()
         del actor
@@ -83,13 +87,11 @@ def run(
         set_barrier()
 
         critic = LoraLlamaVerifier(critic_args)
-        critic.load(critic_ckpt_dir if epoch == 0 else critic_save_dir)
+        critic.load(critic_ckpt_dir if epoch == 0 else os.path.join(critic_save_dir, f"epoch-{epoch}"))
         critic_buffer_collector = CriticBufferCollector(critic, tokenizer, max_seq_len)
         critic_rollout_buffer = CriticRolloutBuffer()
         print('Critic buffer collecting ...')
-        timer = Timer(len(actor_rollout_buffer) // max_buffer_size)
         for data in actor_rollout_buffer.get(max_buffer_size):
-            timer.step()
             critic_rollout_buffer.extend(
                 critic_buffer_collector.forward(
                     data.instructions, data.actions, data.action_masks
@@ -107,9 +109,7 @@ def run(
         reward_buffer_collector = CriticBufferCollector(reward_model, tokenizer, max_seq_len)
         reward_rollout_buffer = CriticRolloutBuffer()
         print('Reward buffer collecting ...')
-        timer = Timer(len(actor_rollout_buffer) // max_buffer_size)
         for data in actor_rollout_buffer.get(max_buffer_size):
-            timer.step()
             reward_rollout_buffer.extend(
                 reward_buffer_collector.forward(
                     data.instructions, data.actions, data.action_masks
@@ -134,35 +134,49 @@ def run(
         actor = LoraLlama(actor_args)
         actor_optimizer = torch.optim.Adam(actor.parameters(), lr=lr)
         actor_trainer = ParallelActorTrainerForCausalLM(actor, actor_optimizer)
-        actor_trainer.load(actor_ckpt_dir if epoch == 0 else actor_save_dir)
+        actor_trainer.load_model(actor_ckpt_dir) if (
+                epoch == 0
+        ) else actor_trainer.load(os.path.join(actor_save_dir, f"epoch-{epoch}"))
         print('Actor training ...')
         for inner_epoch in range(inner_epochs):
             for data in rollout_buffer.get(max_batch_size):
                 outputs = actor_trainer.forward(data)
                 if actor_trainer.step % 100 == 0:
-                    print(f'---------------------- STEP {actor_trainer.step} -----------------------')
+                    print(f'--------- STEP {actor_trainer.step} OF {len(rollout_buffer) // max_batch_size} ---------')
                     print('Loss: ', outputs.loss)
-        actor_trainer.save(actor_save_dir)
+        actor_trainer.save(os.path.join(actor_save_dir, f"epoch-{epoch + 1}"))
+
+        # Evaluation
+        actor_evaluator = SolverEvaluator(actor, tokenizer, max_buffer_size, max_seq_len)
+        eval_outputs = actor_evaluator.forward(task, label_file)
+        print("Evaluate Accuracy: ", eval_outputs.acc, "Missing: ", eval_outputs.missing)
+        os.makedirs(log_dir, exist_ok=True)
+        json_dump(eval_outputs.datalist, os.path.join(
+            log_dir, f'results-epoch-{epoch + 1}-{round(eval_outputs.acc, 4)}.json'
+        ), indent=4)
 
         actor.cpu()
         del actor
         del actor_optimizer
         del actor_trainer
+        del actor_evaluator
         gc.collect()
         set_barrier()
 
         critic = LoraLlamaVerifier(critic_args)
         critic_optimizer = torch.optim.Adam(critic.parameters(), lr=lr)
         critic_trainer = ParallelCriticTrainerForCausalLM(critic, critic_optimizer)
-        critic_trainer.load(critic_ckpt_dir if epoch == 0 else critic_save_dir)
+        critic_trainer.load_model(critic_ckpt_dir) if (
+                epoch == 0
+        ) else critic_trainer.load(os.path.join(critic_save_dir, f"epoch-{epoch}"))
         print('Critic training ...')
         for inner_epoch in range(inner_epochs):
             for data in rollout_buffer.get(max_batch_size):
                 outputs = critic_trainer.forward(data)
                 if critic_trainer.step % 100 == 0:
-                    print(f'---------------------- STEP {critic_trainer.step} -----------------------')
+                    print(f'--------- STEP {critic_trainer.step} OF {len(rollout_buffer) // max_batch_size} ---------')
                     print('Loss: ', outputs.loss)
-        critic_trainer.save(critic_save_dir)
+        critic_trainer.save(os.path.join(critic_save_dir, f"epoch-{epoch + 1}"))
 
         critic.cpu()
         del critic
