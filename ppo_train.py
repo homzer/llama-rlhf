@@ -68,6 +68,16 @@ def run(
     for epoch in range(epochs):
         actor = LoraLlama(actor_args)
         actor.load(actor_ckpt_dir if epoch == 0 else os.path.join(actor_save_dir, f"epoch-{epoch}"))
+
+        # Evaluation
+        actor_evaluator = SolverEvaluator(actor, tokenizer, max_buffer_size, max_seq_len)
+        eval_outputs = actor_evaluator.forward(task, label_file)
+        print("Evaluate Accuracy: ", eval_outputs.acc, "Missing: ", eval_outputs.missing)
+        os.makedirs(log_dir, exist_ok=True)
+        json_dump(eval_outputs.datalist, os.path.join(
+            log_dir, f'results-epoch-{epoch}-{round(eval_outputs.acc, 4)}.json'
+        ), indent=4)
+
         actor_buffer_collector = ActorBufferCollector(actor, tokenizer, max_seq_len)
         actor_rollout_buffer = ActorRolloutBuffer()
         print('Actor buffer collecting ...')
@@ -131,8 +141,18 @@ def run(
             action_masks=actor_rollout_buffer.action_masks
         )
 
+        torch.save({
+            'obs': rollout_buffer.obs[: max_buffer_size],
+            'actions': rollout_buffer.actions[: max_buffer_size],
+            'values': rollout_buffer.values[: max_buffer_size],
+            'rewards': rollout_buffer.rewards[: max_buffer_size],
+            'action_masks': rollout_buffer.action_masks[: max_buffer_size],
+            'advantages': rollout_buffer.advantages[: max_buffer_size],
+            'returns': rollout_buffer.returns[: max_buffer_size]
+        }, f'buffer_{epoch}.bin')
+
         actor = LoraLlama(actor_args)
-        actor_optimizer = torch.optim.Adam(actor.parameters(), lr=lr)
+        actor_optimizer = torch.optim.Adam(actor.parameters(), lr=0.1 * lr if epoch == 0 else lr)
         actor_trainer = ParallelActorTrainerForCausalLM(actor, actor_optimizer)
         actor_trainer.load_model(actor_ckpt_dir) if (
                 epoch == 0
@@ -146,20 +166,10 @@ def run(
                     print('Loss: ', outputs.loss)
         actor_trainer.save(os.path.join(actor_save_dir, f"epoch-{epoch + 1}"))
 
-        # Evaluation
-        actor_evaluator = SolverEvaluator(actor, tokenizer, max_buffer_size, max_seq_len)
-        eval_outputs = actor_evaluator.forward(task, label_file)
-        print("Evaluate Accuracy: ", eval_outputs.acc, "Missing: ", eval_outputs.missing)
-        os.makedirs(log_dir, exist_ok=True)
-        json_dump(eval_outputs.datalist, os.path.join(
-            log_dir, f'results-epoch-{epoch + 1}-{round(eval_outputs.acc, 4)}.json'
-        ), indent=4)
-
         actor.cpu()
         del actor
         del actor_optimizer
         del actor_trainer
-        del actor_evaluator
         gc.collect()
         set_barrier()
 

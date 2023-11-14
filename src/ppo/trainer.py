@@ -8,7 +8,6 @@ from src.modeling.modeling import ParallelModelForCausalLM
 from src.ppo.buffer import RolloutBufferSample
 from src.ppo.policy import AbstractPolicyForCausalLM, AbstractParallelPolicyForCausalLM
 from src.trainer import ParallelTrainer, Trainer
-from src.utils import masked_normalize
 
 
 class PPOTrainerForCausalLM(Trainer):
@@ -139,8 +138,6 @@ class ParallelActorTrainerForCausalLM(ParallelTrainer):
         ).squeeze(-1)
 
         # Normalize advantage
-        # advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-        advantages = masked_normalize(advantages, action_masks)
         advantages = torch.masked_select(advantages.view(-1), action_masks.view(-1))
         # ratio between old and new policy, should be one at the first iteration
         ratio = torch.exp(action_logits - old_action_logits)
@@ -174,7 +171,6 @@ class ParallelCriticTrainerForCausalLM(ParallelTrainer):
         returns = rollout_data.returns.to(self.critic.device())
 
         values = self.critic.forward(obs)
-        values = masked_normalize(values, action_masks)
 
         loss = self.criterion.forward(values, returns, action_masks)
         self.optimizer.zero_grad()

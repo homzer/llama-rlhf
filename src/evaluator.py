@@ -10,6 +10,7 @@ from src.generator import GeneratorForCausalLM, GeneratorForVerifier
 from src.modeling.llama_abstract import AbstractLoraLlamaVerifier
 from src.modeling.modeling import ModelForCausalLM
 from src.tokenizer import Tokenizer, LlamaTokenizer
+from src.utils import Timer
 
 
 class SolverEvaluator:
@@ -33,7 +34,9 @@ class SolverEvaluator:
         evaluator = self.evaluators[task]()
 
         datalist = []
+        timer = Timer(len(dataloader))
         for data in tqdm(dataloader):
+            timer.step()
             outs = self.generator.forward(data['instruction'], t=t, p=p)
             for i, out in enumerate(outs):
                 datalist.append(dict(

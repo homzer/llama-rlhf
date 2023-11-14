@@ -4,8 +4,6 @@ from typing import Generator, List, Union
 import numpy as np
 import torch
 
-from src.utils import masked_normalize
-
 RolloutBufferSample = collections.namedtuple(
     "RolloutBufferSample", [
         "observations",
@@ -93,15 +91,14 @@ class RolloutBuffer:
         self.action_masks[:, :] = action_masks.copy()
 
         # Normalize
-        self.rewards = masked_normalize(self.rewards, self.action_masks)
-        self.values = masked_normalize(self.values, self.action_masks)
+        self.rewards = self.rewards / (np.std(self.rewards[self.action_masks]) + 1e-12)
 
         assert np.sum(self.rewards[~ self.action_masks]) == 0  # Check rewards correctness
 
     def compute_returns_and_advantage(self):
         last_gae_lam = 0
         for step in reversed(range(self.max_seq_len - 1)):
-            next_values = self.values[:, step + 1]
+            next_values = self.values[:, step + 1] * np.where(self.action_masks[:, step + 1], 1, 0)
             delta = self.rewards[:, step] + self.gamma * next_values - self.values[:, step]
             last_gae_lam = delta + self.gamma * self.gae_lambda * last_gae_lam * self.action_masks[:, step + 1]
             self.advantages[:, step] = last_gae_lam
