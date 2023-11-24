@@ -8,6 +8,7 @@ from src.modeling.modeling import ParallelModelForCausalLM
 from src.ppo.buffer import RolloutBufferSample
 from src.ppo.policy import AbstractPolicyForCausalLM, AbstractParallelPolicyForCausalLM
 from src.trainer import ParallelTrainer, Trainer
+from src.utils import masked_std
 
 
 class PPOTrainerForCausalLM(Trainer):
@@ -171,6 +172,7 @@ class ParallelCriticTrainerForCausalLM(ParallelTrainer):
         returns = rollout_data.returns.to(self.critic.device())
 
         values = self.critic.forward(obs)
+        values = values / (masked_std(values, action_masks, keepdim=True) + 1e-12)
 
         loss = self.criterion.forward(values, returns, action_masks)
         self.optimizer.zero_grad()

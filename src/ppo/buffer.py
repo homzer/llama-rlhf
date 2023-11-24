@@ -4,6 +4,8 @@ from typing import Generator, List, Union
 import numpy as np
 import torch
 
+from src.utils import masked_std
+
 RolloutBufferSample = collections.namedtuple(
     "RolloutBufferSample", [
         "observations",
@@ -92,6 +94,7 @@ class RolloutBuffer:
 
         # Normalize
         self.rewards = self.rewards / (np.std(self.rewards[self.action_masks]) + 1e-12)
+        self.values = self.values / (masked_std(self.values, self.action_masks, keepdim=True) + 1e-12)
 
         assert np.sum(self.rewards[~ self.action_masks]) == 0  # Check rewards correctness
 

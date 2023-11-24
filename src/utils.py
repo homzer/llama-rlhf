@@ -255,20 +255,54 @@ def powmax(tensor, exponent=1, dim=-1, eps=1e-12):
     return numerator / (denominator + eps)
 
 
-def masked_mean(
-        x: torch.Tensor,
-        mask: torch.Tensor = None,
-        dim: int = -1,
-        keepdim: bool = False,
-        eps: float = 1e-12
-):
-    if mask is None:
-        mask = torch.full_like(x, fill_value=True)
-    assert x.shape == mask.shape
-    mask = mask.to(x.dtype)
-    return torch.sum(
-        x * mask, dim=dim, keepdim=keepdim
-    ) / (torch.sum(mask, dim=dim, keepdim=keepdim) + eps)
+def masked_mean(x, mask=None, dim: int = -1, keepdim: bool = False, eps: float = 1e-12):
+    if type(x) is torch.Tensor:
+        if mask is None:
+            mask = torch.full_like(x, fill_value=True)
+        assert x.shape == mask.shape
+        mask = mask.to(x.dtype)
+        return torch.sum(
+            x * mask, dim=dim, keepdim=keepdim
+        ) / (torch.sum(mask, dim=dim, keepdim=keepdim) + eps)
+    elif type(x) is np.ndarray:
+        if mask is None:
+            mask = np.full_like(x, fill_value=True)
+        assert x.shape == mask.shape
+        mask = mask.astype(x.dtype)
+        return np.sum(
+            x * mask, axis=dim, keepdims=keepdim
+        ) / (np.sum(mask, axis=dim, keepdims=keepdim) + eps)
+    else:
+        raise TypeError
+
+
+def masked_std(x, mask=None, dim: int = -1, keepdim: bool = False, eps: float = 1e-12):
+    if type(x) is torch.Tensor:
+        if mask is None:
+            mask = torch.full_like(x, fill_value=True)
+        mu = masked_mean(x, mask, dim, keepdim=True, eps=eps)
+        x = (x - mu) ** 2
+        mask = mask.to(x.dtype)
+        std = torch.sqrt(
+            torch.sum(
+                x * mask, dim=dim, keepdim=keepdim
+            ) / (torch.sum(mask, dim=dim, keepdim=keepdim) + eps)
+        )
+        return std
+    elif type(x) is np.ndarray:
+        if mask is None:
+            mask = np.full_like(x, fill_value=True)
+        mu = masked_mean(x, mask, dim, keepdim=True, eps=eps)
+        x = (x - mu) ** 2
+        mask = mask.astype(x.dtype)
+        std = np.sqrt(
+            np.sum(
+                x * mask, axis=dim, keepdims=keepdim
+            ) / (np.sum(mask, axis=dim, keepdims=keepdim) + eps)
+        )
+        return std
+    else:
+        raise TypeError
 
 
 def logits_normalize(x: torch.Tensor, dim=-1):
