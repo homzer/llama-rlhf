@@ -16,7 +16,7 @@ class JsonDataset(TorchDataset):
         return len(self.datalist)
 
     def __getitem__(self, i):
-        return self.datalist[i]
+        return self.datalist[i].copy()
 
     def shuffle(self) -> TorchDataset:
         indices = torch.randperm(len(self))
@@ -72,6 +72,23 @@ class PairwiseDataset(JsonDataset):
         else:  # 90% the time using origin rejection
             data['rejected'] = random.sample(data['rejected'], 1)[0]
 
+        return data
+
+
+class RethinkingDataset(JsonDataset):
+    def __init__(self, filename: str):
+        super().__init__(filename)
+        assert "teacher_output" in self.datalist[0].keys()
+        assert type(self.datalist[0]['teacher_output']) is list
+        assert "student_output" in self.datalist[0].keys()
+        assert type(self.datalist[0]['student_output']) is list
+
+    def __getitem__(self, i):
+        data = self.datalist[i].copy()
+        assert len(data['student_output']) <= len(data['teacher_output'])
+        i = random.randint(0, len(data['teacher_output']) - 1)
+        data['student_output'] = data['student_output'][i] if i < len(data['student_output']) else ''
+        data['teacher_output'] = data['teacher_output'][i]
         return data
 
 
