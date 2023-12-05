@@ -32,8 +32,6 @@ def main(
         log_dir: str = None,
         seed: int = None
 ):
-    os.makedirs(save_dir, exist_ok=True)
-    os.makedirs(log_dir, exist_ok=True)
     tokenizer_path = 'config/tokenizer.model' if tokenizer_path is None else tokenizer_path
     config_file = f"config/{model_type}/params.json" if config_file is None else config_file
     local_rank, world_size = setup_model_parallel(
@@ -72,9 +70,10 @@ def main(
                 print(predict['instruction'] + predict['output'])
         outputs = evaluator.forward(task, label_file)
         print("Evaluate Accuracy: ", outputs.acc, "Missing: ", outputs.missing)
-        json_dump(outputs.datalist, os.path.join(
-            log_dir, f'results-epoch-{epoch + 1}-{round(outputs.acc, 4)}.json'), indent=4
-        )
+        if log_dir is not None:
+            json_dump(outputs.datalist, os.path.join(
+                log_dir, f'results-epoch-{epoch + 1}-{round(outputs.acc, 4)}.json'), indent=4
+            )
         trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))
 
 

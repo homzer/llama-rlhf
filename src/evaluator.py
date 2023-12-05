@@ -163,7 +163,7 @@ class GSM8KEvaluator:
                 final_results = results
 
         # evaluation
-        if len(final_results) != 0 and label is not None:
+        if label is not None:
             self.meter.forward(1 if self.format_label(label) in final_results[-1:] else 0)
 
         if len(final_results) == 0:

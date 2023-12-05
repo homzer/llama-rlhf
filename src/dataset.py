@@ -2,12 +2,12 @@ import random
 from typing import List
 
 import torch
-from torch.utils.data import Dataset as TorchDataset
+from torch.utils.data import Dataset
 
 from src.utils import json_load
 
 
-class JsonDataset(TorchDataset):
+class JsonDataset(Dataset):
     """ Load dataset from json file. """
     def __init__(self, filename):
         self.datalist = json_load(filename)
@@ -18,7 +18,7 @@ class JsonDataset(TorchDataset):
     def __getitem__(self, i):
         return self.datalist[i].copy()
 
-    def shuffle(self) -> TorchDataset:
+    def shuffle(self) -> Dataset:
         indices = torch.randperm(len(self))
         dataset = torch.utils.data.Subset(self, indices)
         return dataset

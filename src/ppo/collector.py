@@ -3,6 +3,8 @@ from typing import List, Union
 import numpy as np
 import torch
 
+from src.dataset import JsonDataset
+from src.evaluator import GSM8KEvaluator
 from src.modeling.llama_lora import LoraLlamaVerifier
 from src.modeling.modeling import ModelForCausalLM, ParallelModelForCausalLM
 from src.ppo.buffer import (
@@ -107,3 +109,31 @@ class CriticBufferCollector:
             action_masks=action_masks
         )
         return CriticRolloutBuffer(action_scores, action_masks)
+
+
+class LabelBufferCollector:
+    def __init__(self, task: str, dataset: JsonDataset, tokenizer: LlamaTokenizer, max_seq_len: int):
+        self.tokenizer = tokenizer
+        self.max_seq_len = max_seq_len
+        self.evaluator = {
+            "GSM8K": GSM8KEvaluator,
+        }[task]()
+        self.map = {}
+        assert "instruction" in dataset[0].keys()
+        assert "label" in dataset[0].keys()
+        for data in dataset:
+            self.map[data['instruction']] = data['label']
+
+    def forward(self, instructions: np.ndarray, actions: np.ndarray, action_masks: np.ndarray) -> CriticRolloutBuffer:
+        instructions = instructions.tolist()
+        outputs = []
+        for action, action_mask in zip(actions, action_masks):
+            outputs.append(self.tokenizer.decode(action[action_mask].tolist()))
+
+        scores = np.ones_like(action_masks)
+        for i, (instruction, output) in enumerate(zip(instructions, outputs)):
+            answers = self.evaluator.forward(output)
+            if self.evaluator.format_label(self.map[instruction]) not in answers[-1:]:
+                scores[i] *= 0
+
+        return CriticRolloutBuffer(scores, action_masks)

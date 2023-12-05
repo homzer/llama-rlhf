@@ -192,6 +192,7 @@ class ParallelSolverTrainer(ParallelTrainer):
 
     def forward(self, instructions: List[str], outputs: List[str]):
         """ Instruction tuning """
+        self.model.train()
         example = self.prepare_for_training(instructions=instructions, outputs=outputs)
         logits = self.model.forward(example.tokens).logits
         loss = self.criterion.forward(
