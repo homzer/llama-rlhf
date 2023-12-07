@@ -5,7 +5,7 @@ from typing import List
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from src.dataset import JsonDataset, PairwiseDataset
+from src.dataset import PairwiseDataset, JsonDataset
 from src.generator import GeneratorForCausalLM, GeneratorForVerifier
 from src.modeling.llama_abstract import AbstractLoraLlamaVerifier
 from src.modeling.modeling import ModelForCausalLM
@@ -27,9 +27,8 @@ class SolverEvaluator:
         }
         self.batch_size = batch_size
 
-    def forward(self, task: str, label_file: str, t: float = 0.0, p: float = 1.0):
+    def forward(self, task: str, dataset: JsonDataset, t: float = 0.0, p: float = 1.0):
         print(f"Evaluating {task}.........")
-        dataset = JsonDataset(label_file)
         dataloader = DataLoader(dataset, batch_size=self.batch_size)
         evaluator = self.evaluators[task]()
 
@@ -48,8 +47,8 @@ class SolverEvaluator:
         for data in datalist:
             data['predict'] = evaluator.forward(data['output'], data['label'])
 
-        Output = collections.namedtuple('Output', ['acc', 'datalist', 'missing'])
-        return Output(acc=evaluator.meter.acc, datalist=datalist, missing=evaluator.missing)
+        Output = collections.namedtuple('Output', ['acc', 'datalist', 'missing', 'correct'])
+        return Output(acc=evaluator.meter.avg, datalist=datalist, missing=evaluator.miss, correct=evaluator.correct)
 
 
 class VerifierEvaluator:
@@ -61,12 +60,12 @@ class VerifierEvaluator:
             max_seq_len: int
     ):
         self.generator = GeneratorForVerifier(model, tokenizer, max_seq_len)
-        self.meter = AccMeter()
+        self.meter = AvgMeter()
         self.batch_size = batch_size
 
-    def forward(self, label_file: str):
+    def forward(self, dataset: PairwiseDataset):
         print("Evaluating ...")
-        dataset = PairwiseDataset(label_file, randomize=False)
+        dataset.randomize = False
         dataloader = DataLoader(dataset, batch_size=self.batch_size)
         self.meter.reset()
         datalist = []
@@ -87,7 +86,7 @@ class VerifierEvaluator:
                 ))
                 self.meter.forward(1 if c_reward > r_reward else 0)
         Output = collections.namedtuple('Output', ['acc', 'datalist'])
-        return Output(acc=self.meter.acc, datalist=datalist)
+        return Output(acc=self.meter.avg, datalist=datalist)
 
 
 # ================================================================================ #
@@ -96,7 +95,7 @@ class VerifierEvaluator:
 class GSM8KEvaluator:
     def __init__(self):
         super().__init__()
-        self.meter = AccMeter()
+        self.meter = AvgMeter()
         self.float = r"(-?\d+)(,?\d+)?(\.\d+)?"
         self.patterns = [
             r'(?:Therefore|therefore)(.*)\n?',
@@ -117,11 +116,13 @@ class GSM8KEvaluator:
             "eleven": "11",
             "twelve": "12"
         }
-        self.missing = 0
+        self.miss = 0
+        self.correct = 0
 
     def reset(self):
         self.meter.reset()
-        self.missing = 0
+        self.miss = 0
+        self.correct = 0
 
     def words_to_numbers(self, text: str):
         """ replace `One`, `two` with `1`, `2` etc in a text. """
@@ -163,26 +164,29 @@ class GSM8KEvaluator:
                 final_results = results
 
         # evaluation
-        if label is not None:
-            self.meter.forward(1 if self.format_label(label) in final_results[-1:] else 0)
-
         if len(final_results) == 0:
-            self.missing += 1
+            self.miss += 1
+        elif label is not None:
+            if self.format_label(label) in final_results[-1:]:
+                self.meter.forward(1)
+                self.correct += 1
+            else:
+                self.meter.forward(0)
 
         return final_results
 
 
-class AccMeter:
+class AvgMeter:
     def __init__(self):
-        self.acc = 0
-        self.step = 1
+        self.avg = 0
+        self.step = 0
 
     def forward(self, x: int):
         """ Accumulate average computation """
-        self.acc = self.acc + 1 / self.step * (x - self.acc)
         self.step += 1
-        return self.acc
+        self.avg = self.avg + 1 / self.step * (x - self.avg)
+        return self.avg
 
     def reset(self):
-        self.acc = 0
-        self.step = 1
+        self.avg = 0
+        self.step = 0

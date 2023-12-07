@@ -5,7 +5,7 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from src.dataset import RethinkingDataset
+from src.dataset import ReviseDataset, JsonDataset
 from src.evaluator import SolverEvaluator
 from src.modeling.llama_lora import LoraLlama
 from src.modeling.modeling_args import LoraLlamaArgs
@@ -54,7 +54,7 @@ def main(
     ).from_json(config_file)
 
     model = LoraLlama(params)
-    dataset = RethinkingDataset(filename=train_file)
+    dataset = ReviseDataset(f=train_file)
     dataloader = DataLoader(dataset, batch_size=max_batch_size)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     tokenizer = LlamaTokenizer(tokenizer_path)
@@ -78,7 +78,7 @@ def main(
                 print(f'LOSS: ', outputs.loss.item())
                 predict = trainer.predict(outputs.logits, data['instruction'], data['output'])[0]
                 print(predict['instruction'] + predict['output'])
-        outputs = evaluator.forward(task, label_file)
+        outputs = evaluator.forward(task, JsonDataset(label_file))
         print("Evaluate Accuracy: ", outputs.acc, "Missing: ", outputs.missing)
         json_dump(outputs.datalist, os.path.join(
             log_dir, f'results-epoch-{epoch + 1}-{round(outputs.acc, 4)}.json'), indent=4

@@ -2,6 +2,7 @@ import os
 
 import fire
 
+from src.dataset import PairwiseDataset
 from src.evaluator import VerifierEvaluator
 from src.modeling.llama_lora import LoraLlamaVerifier
 from src.modeling.modeling_args import LoraLlamaArgs
@@ -36,7 +37,7 @@ def main(
     model = LoraLlamaVerifier(params)
     model.load(ckpt_dir)
     evaluator = VerifierEvaluator(model, LlamaTokenizer(tokenizer_path), max_batch_size, max_seq_len)
-    outputs = evaluator.forward(label_file)
+    outputs = evaluator.forward(PairwiseDataset(label_file))
     print('Evaluate Accuracy: ', outputs.acc)
     os.makedirs(log_dir, exist_ok=True)
     json_dump(outputs.datalist, os.path.join(

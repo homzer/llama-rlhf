@@ -189,7 +189,7 @@ def run(
                 print(f'LOSS: ', outputs.loss.item())
                 predict = trainer.predict(outputs.logits, data['instruction'], data['output'])[0]
                 print(predict['instruction'] + predict['output'])
-        outputs = evaluator.forward(task, label_file)
+        outputs = evaluator.forward(task, JsonDataset(label_file))
         print("Evaluate Accuracy: ", outputs.acc, "Missing: ", outputs.missing)
         if log_dir is not None:
             json_dump(outputs.datalist, os.path.join(

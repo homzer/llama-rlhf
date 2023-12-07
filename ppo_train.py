@@ -41,7 +41,7 @@ def run(
 ):
     assert actor_ckpt_dir != critic_save_dir
     tokenizer_path = tokenizer_path if tokenizer_path else 'config/tokenizer.model'
-    dataset = JsonDataset(filename=train_file)
+    dataset = JsonDataset(f=train_file)
     dataloader = DataLoader(dataset, batch_size=max_buffer_size)
 
     local_rank, world_size = setup_model_parallel()
@@ -71,7 +71,7 @@ def run(
 
         # Evaluation
         actor_evaluator = SolverEvaluator(actor, tokenizer, max_buffer_size, max_seq_len)
-        eval_outputs = actor_evaluator.forward(task, label_file)
+        eval_outputs = actor_evaluator.forward(task, JsonDataset(label_file))
         print("Evaluate Accuracy: ", eval_outputs.acc, "Missing: ", eval_outputs.missing)
         os.makedirs(log_dir, exist_ok=True)
         json_dump(eval_outputs.datalist, os.path.join(

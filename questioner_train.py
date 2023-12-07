@@ -56,7 +56,7 @@ def main(
     ).from_json(config_file)
     model = LoraLlama(params)
 
-    dataset = JsonDataset(filename=train_file)
+    dataset = JsonDataset(f=train_file)
     dataloader = DataLoader(dataset, batch_size=max_batch_size)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     trainer = ParallelSolverTrainer(

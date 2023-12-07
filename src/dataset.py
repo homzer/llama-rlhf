@@ -9,8 +9,11 @@ from src.utils import json_load
 
 class JsonDataset(Dataset):
     """ Load dataset from json file. """
-    def __init__(self, filename):
-        self.datalist = json_load(filename)
+    def __init__(self, f):
+        if type(f) is str:
+            self.datalist = json_load(f)
+        else:
+            self.datalist = f
 
     def __len__(self):
         return len(self.datalist)
@@ -25,8 +28,8 @@ class JsonDataset(Dataset):
 
 
 class MultiOutputsDataset(JsonDataset):
-    def __init__(self, filename):
-        super().__init__(filename)
+    def __init__(self, f):
+        super().__init__(f)
         assert "output" in self.datalist[0].keys()
         assert type(self.datalist[0]['output']) is list
 
@@ -37,8 +40,8 @@ class MultiOutputsDataset(JsonDataset):
 
 
 class PairwiseDataset(JsonDataset):
-    def __init__(self, filename, randomize: bool = True):
-        super().__init__(filename)
+    def __init__(self, f, randomize: bool = True):
+        super().__init__(f)
         assert "chosen" in self.datalist[0].keys()
         assert type(self.datalist[0]['chosen']) is list
         assert "rejected" in self.datalist[0].keys()
@@ -75,9 +78,9 @@ class PairwiseDataset(JsonDataset):
         return data
 
 
-class RethinkingDataset(JsonDataset):
-    def __init__(self, filename: str):
-        super().__init__(filename)
+class ReviseDataset(JsonDataset):
+    def __init__(self, f):
+        super().__init__(f)
         assert "teacher_output" in self.datalist[0].keys()
         assert type(self.datalist[0]['teacher_output']) is list
         assert "student_output" in self.datalist[0].keys()
@@ -120,8 +123,8 @@ class LogitsData(str):
 
 class DistillingDataset(JsonDataset):
     """ Dataset for collecting logits data. """
-    def __init__(self, filename):
-        super().__init__(filename)
+    def __init__(self, f):
+        super().__init__(f)
         assert "logits" in self.datalist[0].keys()
         for data in self.datalist:
             data["logits"] = [LogitsData(item) for item in data["logits"]]

@@ -46,7 +46,7 @@ def main(
     ).from_json(config_file)
 
     model = LoraLlamaVerifier(params)
-    dataset = PairwiseDataset(filename=train_file)
+    dataset = PairwiseDataset(f=train_file)
     dataloader = DataLoader(dataset, batch_size=max_batch_size)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     tokenizer = LlamaTokenizer(tokenizer_path)
@@ -67,7 +67,7 @@ def main(
             if trainer.step % 100 == 0:
                 print(f'step {trainer.step} of {len(dataloader)} -------------------------------')
                 print("LOSS: ", outputs.loss.item())
-        outputs = evaluator.forward(label_file)
+        outputs = evaluator.forward(PairwiseDataset(label_file))
         print('Evaluate Accuracy: ', outputs.acc)
         json_dump(outputs.datalist, os.path.join(
             log_dir, f'results-epoch-{epoch + 1}-{round(outputs.acc, 4)}.jsonl')

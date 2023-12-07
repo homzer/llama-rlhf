@@ -41,11 +41,34 @@ def main(
     model.load(ckpt_dir)
     evaluator = SolverEvaluator(model, LlamaTokenizer(tokenizer_path), max_batch_size, max_seq_len)
     outputs = evaluator.forward(task, JsonDataset(label_file), t=t, p=p)
-    print("Evaluate Accuracy: ", outputs.acc, "Missing: ", outputs.missing)
+
+    # Collect Error Instances
+    err_datalist = []
+    for data in outputs.datalist:
+        if data['label'] not in data['predict'][-1:]:
+            data = data.copy()
+            data.pop('predict')
+            data['instruction'] += data['output'] + '\n\n<|rethinking|>\n\n'
+            data['output'] = ''
+            err_datalist.append(data)
+
+    print('Revising ...')
+    revise_outputs = evaluator.forward(task, JsonDataset(err_datalist), t=t, p=p)
+    revise_acc = (outputs.correct + revise_outputs.correct) / (len(outputs.datalist) - outputs.missing)
+    print("Before Revise | Evaluate Accuracy: ", outputs.acc, "Missing: ", outputs.missing)
+    print("After Revise | Evaluate Accuracy: ", revise_acc, "Missing: ", revise_outputs.missing)
+
+    i = 0
+    datalist = []
+    for data in outputs.datalist:
+        if data['label'] not in data['predict'][-1:]:
+            datalist.append(revise_outputs.datalist[i])
+            i += 1
+        else:
+            datalist.append(data)
+
     os.makedirs(log_dir, exist_ok=True)
-    json_dump(outputs.datalist, os.path.join(
-        log_dir, f'results-{round(outputs.acc, 4)}.json'
-    ), indent=4)
+    json_dump(datalist, os.path.join(log_dir, f'results-{round(revise_acc, 4)}.json'), indent=4)
 
 
 if __name__ == '__main__':
