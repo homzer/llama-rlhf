@@ -32,6 +32,8 @@ def main(
         log_dir: str = None,
         seed: int = None
 ):
+    if log_dir is not None:
+        os.makedirs(log_dir, exist_ok=True)
     tokenizer_path = 'config/tokenizer.model' if tokenizer_path is None else tokenizer_path
     config_file = f"config/{model_type}/params.json" if config_file is None else config_file
     local_rank, world_size = setup_model_parallel(

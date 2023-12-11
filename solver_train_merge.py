@@ -5,20 +5,13 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from src.dataset import ReviseDataset, JsonDataset
+from src.dataset import MultiOutputsDataset, JsonDataset
 from src.evaluator import SolverEvaluator
 from src.modeling.llama_lora import LoraLlama
 from src.modeling.modeling_args import LoraLlamaArgs
 from src.tokenizer import LlamaTokenizer
 from src.trainer import ParallelSolverTrainer
 from src.utils import setup_model_parallel, json_dump
-
-
-def preprocess(data: dict):
-    new_data = dict(instruction=[], output=[])
-    new_data['instruction'] = data['instruction']
-    new_data['output'] = data['teacher_output']
-    return new_data
 
 
 def main(
@@ -39,8 +32,8 @@ def main(
         log_dir: str = None,
         seed: int = None
 ):
-    os.makedirs(save_dir, exist_ok=True)
-    os.makedirs(log_dir, exist_ok=True)
+    if log_dir is not None:
+        os.makedirs(log_dir, exist_ok=True)
     tokenizer_path = 'config/tokenizer.model' if tokenizer_path is None else tokenizer_path
     config_file = f"config/{model_type}/params.json" if config_file is None else config_file
     local_rank, world_size = setup_model_parallel(
@@ -54,21 +47,20 @@ def main(
     ).from_json(config_file)
 
     model = LoraLlama(params)
-    dataset = ReviseDataset(f=train_file)
+    dataset = MultiOutputsDataset(f=train_file)
     dataloader = DataLoader(dataset, batch_size=max_batch_size)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    model.load(ckpt_dir)
+
     tokenizer = LlamaTokenizer(tokenizer_path)
     trainer = ParallelSolverTrainer(
         model=model,
         tokenizer=tokenizer,
-        optimizer=optimizer,
+        optimizer=torch.optim.Adam(model.parameters(), lr=lr),
         max_seq_len=max_seq_len
     )
     evaluator = SolverEvaluator(model, tokenizer, eval_batch_size, max_seq_len)
-    trainer.load(ckpt_dir)
     for epoch in range(epochs):
         for data in tqdm(dataloader):
-            data = preprocess(data)
             outputs = trainer.forward(
                 instructions=data['instruction'],
                 outputs=data['output']
@@ -80,10 +72,19 @@ def main(
                 print(predict['instruction'] + predict['output'])
         outputs = evaluator.forward(task, JsonDataset(label_file))
         print("Evaluate Accuracy: ", outputs.acc, "Missing: ", outputs.missing)
-        json_dump(outputs.datalist, os.path.join(
-            log_dir, f'results-epoch-{epoch + 1}-{round(outputs.acc, 4)}.json'), indent=4
-        )
-        trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))
+        if log_dir is not None:
+            json_dump(outputs.datalist, os.path.join(
+                log_dir, f'results-epoch-{epoch + 1}-{round(outputs.acc, 4)}.json'), indent=4
+            )
+
+        if (epoch + 1) % 8 == 0:  # merging every 8 epochs
+            # merge lora weights
+            model.save_merge(os.path.join(save_dir, f"epoch-{epoch + 1}"))
+            model.load_merge(os.path.join(save_dir, f"epoch-{epoch + 1}"))
+            # reset optimizer
+            trainer.optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+        else:
+            model.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))
 
 
 if __name__ == '__main__':

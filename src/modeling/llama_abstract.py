@@ -1,4 +1,6 @@
 import math
+import os
+from pathlib import Path
 from typing import Optional
 
 import fairscale.nn.model_parallel.initialize as fs_init
@@ -123,7 +125,7 @@ class AbstractTransformerBlock(nn.Module):
 class AbstractLlama(ParallelModelForCausalLM):
     def __init__(self, args: LlamaArgs):
         super().__init__(args.local_rank, args.world_size)
-        self.params = args
+        self.args = args
         self.vocab_size = args.vocab_size
         self.n_layers = args.n_layers
 
@@ -134,7 +136,7 @@ class AbstractLlama(ParallelModelForCausalLM):
         self.output = None
 
         self.freqs_cis = precompute_freqs_cis(
-            self.params.dim // self.params.n_heads, self.params.max_seq_len * 2
+            self.args.dim // self.args.n_heads, self.args.max_seq_len * 2
         )
 
     def forward(self, tokens: torch.Tensor, start_pos=0, use_cache=False):
@@ -157,7 +159,7 @@ class AbstractLlama(ParallelModelForCausalLM):
 
     def flush(self):
         """ Clean cache in `Attention` module """
-        for i in range(self.params.n_layers):
+        for i in range(self.args.n_layers):
             self.layers[i].attention.flush()
         set_barrier()
 
@@ -257,6 +259,7 @@ class AbstractLoraTransformerBlock(AbstractTransformerBlock):
 class AbstractLoraLlama(AbstractLlama):
     def __init__(self, args: LoraLlamaArgs):
         super().__init__(args)
+        self.args = args
         self.lora_a_output = None
         self.lora_b_output = None
 
@@ -278,6 +281,7 @@ class AbstractLoraLlama(AbstractLlama):
         output = self.output(h) + self.lora_b_output(self.lora_a_output(h.float())).to(h.dtype)
         return CausalLMOutputs(logits=logits_normalize(output.float()), hidden_states=h.float())
 
+    # lora op
     def _freeze(self):
         """ Freeze all parameters but lora ones. """
         frozen_names = []
@@ -285,6 +289,34 @@ class AbstractLoraLlama(AbstractLlama):
             if 'lora' not in name:
                 param.requires_grad_(False)
                 frozen_names.append(name)
+
+    # lora op
+    def save_merge(self, save_path):
+        """ Save and merge lora weights """
+        state_dict = {}
+        with torch.no_grad():
+            for name, param in self.state_dict().items():
+                if 'lora' not in name:
+                    state_dict[name] = param.clone()
+                elif 'lora_a_' in name:
+                    origin = name.replace('lora_a_', '')
+                    w = self.state_dict()[origin]
+                    wa = self.state_dict()[name]
+                    wb = self.state_dict()[name.replace('lora_a_', 'lora_b_')]
+                    state_dict[origin] = (w + wb @ wa).clone().to(w.dtype)
+
+        if self.local_rank == 0:
+            os.makedirs(save_path, exist_ok=True)
+        print(f'Saving model to {save_path} ......')
+        set_barrier()
+        torch.save(state_dict, os.path.join(save_path, f'consolidated.0{self.local_rank}.pth'))
+        set_barrier()
+        print(f'Saving done !')
+
+    # lora op
+    def load_merge(self, ckpt_dir):
+        self.__init__(self.args)  # re-initialize lora weights
+        self.load(ckpt_dir)
 
 
 class AbstractLoraLlamaVerifier(ParallelModule):
