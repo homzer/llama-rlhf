@@ -130,10 +130,12 @@ class LabelBufferCollector:
         for action, action_mask in zip(actions, action_masks):
             outputs.append(self.tokenizer.decode(action[action_mask].tolist()))
 
-        scores = np.ones_like(action_masks)
+        scores = []
         for i, (instruction, output) in enumerate(zip(instructions, outputs)):
             answers = self.evaluator.forward(output)
             if self.evaluator.format_label(self.map[instruction]) not in answers[-1:]:
-                scores[i] *= 0
+                scores.append(0)
+            else:
+                scores.append(1)
 
         return CriticRolloutBuffer(scores, action_masks)

@@ -152,45 +152,6 @@ def cross_entropy(logits, labels, weights=None, keepdim=False):
     return loss
 
 
-def kl_div(source, target):
-    """ Compute Kullback-Leibler divergence Loss along last dim. """
-    result = source * torch.log(source) - source * torch.log(target)
-    return torch.sum(result, dim=-1)
-
-
-def kl_div_loss(p, q, weights=None):
-    """ Compute Kullback-Leibler divergence Loss """
-    p_loss = kl_div(p, q)
-    q_loss = kl_div(q, p)
-    if weights is not None:
-        weights = weights.to(p.device)
-        p_loss = p_loss * weights
-        q_loss = q_loss * weights
-        p_loss = p_loss.sum(dim=-1) / (weights.sum(dim=-1) + 1e-12)
-        q_loss = q_loss.sum(dim=-1) / (weights.sum(dim=-1) + 1e-12)
-    p_loss = p_loss.mean()
-    q_loss = q_loss.mean()
-    loss = (p_loss + q_loss) / 2
-    return loss
-
-
-def kl_div_loss_v2(p, q, weights=None):
-    """ Compute Kullback-Leibler divergence Loss """
-    p_loss = kl_div(p, q)
-    q_loss = kl_div(q, p)
-    if weights is None:
-        weights = torch.ones_like(p_loss)
-    weights = weights.to(p.device)
-    p_loss = p_loss * weights
-    q_loss = q_loss * weights
-    p_loss = p_loss.sum(dim=-1) / (weights.sum(dim=-1) + 1e-12)
-    q_loss = q_loss.sum(dim=-1) / (weights.sum(dim=-1) + 1e-12)
-    p_loss = p_loss.sum() / (torch.sign(weights.sum(dim=-1)).sum() + 1e-12)
-    q_loss = q_loss.sum() / (torch.sign(weights.sum(dim=-1)).sum() + 1e-12)
-    loss = (p_loss + q_loss) / 2
-    return loss
-
-
 def set_barrier():
     """ make sure that all other processes cannot continue until reach this op. """
     torch.distributed.barrier()
@@ -397,3 +358,20 @@ def masked_normalize(x: Union[torch.Tensor, np.ndarray], masks: Union[torch.Tens
         return x
     else:
         raise TypeError('Unknown type: ', type(x))
+
+
+def jaccard(_set1: set, _set2: set) -> float:
+    return len(_set1 & _set2) / len(_set1 | _set2)
+
+
+def deduplicate_texts(texts: list) -> list:
+    results = []
+    for i in range(len(texts)):
+        results.append(texts[i])
+        for j in range(i + 1, len(texts)):
+            sim = jaccard(set(texts[i]), set(texts[j]))
+            if sim > 0.99:
+                results.pop(-1)
+                break
+
+    return results

@@ -93,6 +93,7 @@ def run(
         actor.cpu()
         del actor
         del actor_buffer_collector
+        torch.cuda.empty_cache()
         gc.collect()
         set_barrier()
 
@@ -111,6 +112,7 @@ def run(
         critic.cpu()
         del critic
         del critic_buffer_collector
+        torch.cuda.empty_cache()
         gc.collect()
         set_barrier()
 
@@ -129,6 +131,7 @@ def run(
         reward_model.cpu()
         del reward_model
         del reward_buffer_collector
+        torch.cuda.empty_cache()
         gc.collect()
         set_barrier()
 
@@ -170,6 +173,7 @@ def run(
         del actor
         del actor_optimizer
         del actor_trainer
+        torch.cuda.empty_cache()
         gc.collect()
         set_barrier()
 
@@ -192,6 +196,7 @@ def run(
         del critic
         del critic_optimizer
         del critic_trainer
+        torch.cuda.empty_cache()
         gc.collect()
         set_barrier()
 

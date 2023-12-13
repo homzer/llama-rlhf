@@ -28,7 +28,10 @@ class ActionGeneratorForCausalLM:
 
     def _prepare_for_generation(self, prompts: List[str]):
         bsz = len(prompts)
-        prompt_tokens = [self.tokenizer.encode(x, bos=True, eos=False) for x in prompts]
+        prompt_tokens = []
+        for x in prompts:
+            x = self.tokenizer.encode(x, bos=True, eos=False)
+            prompt_tokens.append(x[: self.max_seq_len])
         min_prompt_size = min([len(t) for t in prompt_tokens])
         tokens = torch.full((bsz, self.max_seq_len), self.tokenizer.pad_id).long()
         for k, t in enumerate(prompt_tokens):

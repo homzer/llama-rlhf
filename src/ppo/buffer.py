@@ -280,10 +280,11 @@ class CriticRolloutBuffer:
 
     def _set(self, scores, action_masks=None):
         if action_masks is None:
-            assert type(scores) is np.ndarray
+            if isinstance(scores, list):
+                scores = np.array(scores)
+            assert isinstance(scores, np.ndarray)
             self.scores = scores.copy()
         else:
-            assert type(scores) is list
             buffer_size = action_masks.shape[0]
             max_seq_len = action_masks.shape[1]
             self.scores = np.zeros((buffer_size, max_seq_len), dtype=np.float32)
