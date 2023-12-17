@@ -28,12 +28,7 @@ def is_col_parallel(name):
            ('output.weight' in name or 'lm_head.wei' in name)
 
 
-def splitting(
-        ckpt_file: str = 'config/13B/consolidated.00.pth',
-        save_path: str = 'config/13B/4/',
-        n: int = 4
-):
-    state_dict = torch.load(ckpt_file, map_location="cpu")
+def __splitting(state_dict, n):
     new_state_dicts = [OrderedDict() for _ in range(n)]
     for name, param in state_dict.items():
         param = param.cpu()
@@ -56,10 +51,32 @@ def splitting(
         else:
             for i in range(n):
                 new_state_dicts[i][name] = param.clone()
+    return new_state_dicts
 
+
+def splitting(
+        ckpt_file: str = 'config/13B/consolidated.00.pth',
+        save_path: str = 'config/13B/4/',
+        n: int = 4
+):
+    state_dict = torch.load(ckpt_file, map_location="cpu")
+    new_state_dicts = __splitting(state_dict, n)
     os.makedirs(save_path, exist_ok=True)
     for i in range(n):
         torch.save(new_state_dicts[i], os.path.join(save_path, f'consolidated.0{i}.pth'))
+
+
+def auto_splitting_4_to_8(
+        ckpt_dir: str = 'config/13B/4/',
+        save_dir: str = 'config/13B/8/'
+):
+    state_dicts = []
+    for i in range(4):
+        state_dict = torch.load(os.path.join(ckpt_dir, f"consolidated.0{i}.pth"), map_location="cpu")
+        state_dicts.extend(__splitting(state_dict, 2))
+    os.makedirs(save_dir, exist_ok=True)
+    for i in range(8):
+        torch.save(state_dicts[i], os.path.join(save_dir, f'consolidated.0{i}.pth'))
 
 
 def merging(

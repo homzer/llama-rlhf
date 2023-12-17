@@ -19,15 +19,17 @@ class Module(nn.Module):
     def device(self):
         return next(self.parameters()).device
 
-    def load(self, ckpt_file):
-        print(f'Loading model from {ckpt_file} .....')
+    def load(self, ckpt_file: str, verbose: bool = True):
+        if verbose:
+            print(f'Loading model from {ckpt_file} .....')
         state_dict = torch.load(ckpt_file, map_location='cpu')
         outputs = self.load_state_dict(state_dict, strict=False)
-        for missing_key in outputs.missing_keys:
-            print(f"MISSING KEY: {missing_key}")
-        for unexpected_key in outputs.unexpected_keys:
-            print(f"UNEXPECTED KEY: {unexpected_key}")
-        print("Loading done!")
+        if verbose:
+            for missing_key in outputs.missing_keys:
+                print(f"MISSING KEY: {missing_key}")
+            for unexpected_key in outputs.unexpected_keys:
+                print(f"UNEXPECTED KEY: {unexpected_key}")
+            print("Loading done!")
         return self
 
     def save(self, save_dir):
@@ -88,8 +90,9 @@ class ParallelModule(Module):
         self.local_rank = local_rank
         self.world_size = world_size
 
-    def load(self, ckpt_dir: str):
-        print(f'Loading model from {ckpt_dir} .....')
+    def load(self, ckpt_dir: str, verbose: bool = True):
+        if verbose:
+            print(f'Loading model from {ckpt_dir} .....')
         checkpoints = sorted(Path(ckpt_dir).glob("*.pth"))
         assert self.world_size == len(
             checkpoints
@@ -97,13 +100,14 @@ class ParallelModule(Module):
         ckpt_path = checkpoints[self.local_rank]
         state_dict = torch.load(ckpt_path, map_location="cpu")
         outputs = self.load_state_dict(state_dict, strict=False)
-        for missing_key in outputs.missing_keys:
-            print(f"MISSING KEY: {missing_key}")
-        for unexpected_key in outputs.unexpected_keys:
-            print(f"UNEXPECTED KEY: {unexpected_key}")
         self.cuda(self.local_rank)
         set_barrier()
-        print(f'Loading done !')
+        if verbose:
+            for missing_key in outputs.missing_keys:
+                print(f"MISSING KEY: {missing_key}")
+            for unexpected_key in outputs.unexpected_keys:
+                print(f"UNEXPECTED KEY: {unexpected_key}")
+            print(f'Loading done !')
 
     def save(self, save_path):
         if self.local_rank == 0:

@@ -38,6 +38,16 @@ ActorRolloutBufferSample = collections.namedtuple(
     ]
 )
 
+
+SolverRolloutBufferSample = collections.namedtuple(
+    "SolverRolloutBufferSample", [
+        "instructions",
+        "actions",
+        "action_masks"
+    ]
+)
+
+
 CriticRolloutBufferSample = collections.namedtuple(
     "RewardRolloutBufferSample", [
         "scores",
@@ -197,6 +207,62 @@ class PolicyRolloutBuffer:
                 actions=self.actions[batch_indices],
                 values=self.values[batch_indices],
                 action_logits=self.action_logits[batch_indices],
+                action_masks=self.action_masks[batch_indices]
+            )
+            start_idx += batch_size
+
+
+class SolverRolloutBuffer:
+    def __init__(
+            self,
+            instructions: List[str] = None,
+            actions: np.ndarray = None,
+            action_masks: np.ndarray = None
+    ):
+        self.instructions = None
+        self.actions = None
+        self.action_masks = None
+
+        if instructions is not None:
+            self._set(instructions, actions, action_masks)
+
+    def __len__(self):
+        return 0 if self.instructions is None else len(self.instructions)
+
+    def _set(self, instructions, actions, action_masks):
+        buffer_size = actions.shape[0]
+        max_seq_len = actions.shape[1]
+
+        self.actions = np.zeros((buffer_size, max_seq_len), dtype=np.int64)
+        self.action_masks = np.zeros((buffer_size, max_seq_len), dtype=bool)
+
+        self.instructions = np.array(instructions)
+        self.actions[:, :] = actions.copy()
+        self.action_masks[:, :] = action_masks.copy()
+
+    def extend(self, rollout_buffer):
+        if self.actions is None:
+            self._set(
+                rollout_buffer.instructions,
+                rollout_buffer.actions,
+                rollout_buffer.action_masks
+            )
+        else:
+            self.instructions = np.concatenate([self.instructions, rollout_buffer.instructions], axis=0)
+            self.actions = np.concatenate([self.actions, rollout_buffer.actions], axis=0)
+            self.action_masks = np.concatenate([self.action_masks, rollout_buffer.action_masks], axis=0)
+
+        return self
+
+    def get(self, batch_size: int) -> Generator[SolverRolloutBufferSample, None, None]:
+        size = self.actions.shape[0]
+        indices = np.arange(size)
+        start_idx = 0
+        while start_idx < size:
+            batch_indices = indices[start_idx: start_idx + batch_size]
+            yield SolverRolloutBufferSample(
+                instructions=self.instructions[batch_indices],
+                actions=self.actions[batch_indices],
                 action_masks=self.action_masks[batch_indices]
             )
             start_idx += batch_size

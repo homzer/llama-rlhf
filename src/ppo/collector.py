@@ -5,15 +5,16 @@ import torch
 
 from src.dataset import JsonDataset
 from src.evaluator import GSM8KEvaluator
+from src.generator import GeneratorForCausalLM
 from src.modeling.llama_lora import LoraLlamaVerifier
 from src.modeling.modeling import ModelForCausalLM, ParallelModelForCausalLM
 from src.ppo.buffer import (
     RolloutBuffer,
     PolicyRolloutBuffer,
     CriticRolloutBuffer,
-    ActorRolloutBuffer
-)
-from src.ppo.generator import CriticismGeneratorForCausalLM, ActionGeneratorForCausalLM
+    ActorRolloutBuffer,
+    SolverRolloutBuffer)
+from src.ppo.generator import CriticGeneratorForCausalLM, ActorGeneratorForCausalLM, SolverGeneratorForCausalLM
 from src.ppo.policy import AbstractPolicyForCausalLM, AbstractParallelPolicyForCausalLM
 from src.tokenizer import Tokenizer, LlamaTokenizer
 
@@ -21,7 +22,7 @@ from src.tokenizer import Tokenizer, LlamaTokenizer
 class BufferCollector:
     def __init__(
             self,
-            generator: CriticismGeneratorForCausalLM,
+            generator: CriticGeneratorForCausalLM,
             policy: Union[AbstractPolicyForCausalLM, AbstractParallelPolicyForCausalLM],
             buffer_size: int,
             max_seq_len: int,
@@ -76,6 +77,24 @@ class PolicyBufferCollector:
         return PolicyRolloutBuffer(instructions, obs, actions, values, action_logits, action_masks)
 
 
+class SolverBufferCollector:
+    def __init__(
+            self,
+            solver: Union[ModelForCausalLM, ParallelModelForCausalLM],
+            tokenizer: Tokenizer,
+            max_seq_len: int
+    ):
+        self.generator = SolverGeneratorForCausalLM(
+            model=solver, tokenizer=tokenizer, max_seq_len=max_seq_len
+        )
+
+    def forward(self, instructions: List[str], t: float = 0.0, p: float = 0.8) -> SolverRolloutBuffer:
+        outputs = self.generator.forward(instructions, t=t, p=p)
+        actions = outputs.actions.cpu().numpy()
+        action_masks = outputs.action_masks.cpu().numpy()
+        return SolverRolloutBuffer(instructions, actions, action_masks)
+
+
 class ActorBufferCollector:
     def __init__(
             self,
@@ -83,12 +102,12 @@ class ActorBufferCollector:
             tokenizer: Tokenizer,
             max_seq_len: int
     ):
-        self.generator = ActionGeneratorForCausalLM(
+        self.generator = ActorGeneratorForCausalLM(
             model=actor, tokenizer=tokenizer, max_seq_len=max_seq_len
         )
 
-    def forward(self, instructions: List[str]) -> ActorRolloutBuffer:
-        outputs = self.generator.forward(instructions)
+    def forward(self, instructions: List[str], t: float = 0.0, p: float = 0.8) -> ActorRolloutBuffer:
+        outputs = self.generator.forward(instructions, t=t, p=p)
         obs = outputs.obs.cpu().numpy()
         actions = outputs.actions.cpu().numpy()
         action_logits = outputs.action_logits.cpu().numpy()
@@ -98,7 +117,7 @@ class ActorBufferCollector:
 
 class CriticBufferCollector:
     def __init__(self, critic: LoraLlamaVerifier, tokenizer: LlamaTokenizer, max_seq_len: int):
-        self.generator = CriticismGeneratorForCausalLM(
+        self.generator = CriticGeneratorForCausalLM(
             verifier=critic, tokenizer=tokenizer, max_seq_len=max_seq_len
         )
 

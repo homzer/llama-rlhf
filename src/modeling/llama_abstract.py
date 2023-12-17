@@ -1,6 +1,5 @@
 import math
 import os
-from pathlib import Path
 from typing import Optional
 
 import fairscale.nn.model_parallel.initialize as fs_init

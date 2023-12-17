@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 
 from src.modeling.modeling import ModelForCausalLM, Module, ParallelModule, ParallelModelForCausalLM
-from src.ppo.generator import ActionGeneratorForCausalLM
+from src.ppo.generator import ActorGeneratorForCausalLM
 
 PolicyForwardOutputs = collections.namedtuple(
     "PolicyForwardOutputs", ["obs", "actions", "values", "action_logits", "action_masks"]
@@ -58,7 +58,7 @@ class AbstractParallelPolicyForCausalLM(ParallelModule):
 
 
 class ActorCriticPolicyForCausalLM(AbstractPolicyForCausalLM):
-    def __init__(self, model: ModelForCausalLM, generator: ActionGeneratorForCausalLM, dim: int):
+    def __init__(self, model: ModelForCausalLM, generator: ActorGeneratorForCausalLM, dim: int):
         super().__init__()
         self.model = model
         self.ln = nn.LayerNorm(dim, elementwise_affine=False).float()
@@ -101,7 +101,7 @@ class ActorCriticPolicyForCausalLM(AbstractPolicyForCausalLM):
 
 
 class ParallelActorCriticPolicyForCausalLM(AbstractParallelPolicyForCausalLM):
-    def __init__(self, model: ParallelModelForCausalLM, generator: ActionGeneratorForCausalLM, dim: int):
+    def __init__(self, model: ParallelModelForCausalLM, generator: ActorGeneratorForCausalLM, dim: int):
         super().__init__(model.local_rank, model.world_size)
         self.model = model
         self.ln = nn.LayerNorm(dim, elementwise_affine=False).float()
@@ -144,7 +144,7 @@ class ParallelActorCriticPolicyForCausalLM(AbstractParallelPolicyForCausalLM):
 
 
 # class ParallelActorForCausalLM(ParallelModule):
-#     def __init__(self, model: ParallelModelForCausalLM, generator: ActionGeneratorForCausalLM):
+#     def __init__(self, model: ParallelModelForCausalLM, generator: ActorGeneratorForCausalLM):
 #         super().__init__(model.local_rank, model.world_size)
 #         self.model = model
 #         self.generator = generator
@@ -169,7 +169,7 @@ class ParallelActorCriticPolicyForCausalLM(AbstractParallelPolicyForCausalLM):
 #
 #
 # class ParallelCriticForCausalLM(ParallelModule):
-#     def __init__(self, model: ParallelModelForCausalLM, generator: CriticismGeneratorForCausalLM):
+#     def __init__(self, model: ParallelModelForCausalLM, generator: CriticGeneratorForCausalLM):
 #         super().__init__(model.local_rank, model.world_size)
 #         self.model = model
 #         self.generator = generator

@@ -271,6 +271,21 @@ def logits_normalize(x: torch.Tensor, dim=-1):
     return x - torch.max(x, dim=dim, keepdim=True)[0]
 
 
+def merge_lora_state_dict(state_dict: dict) -> dict:
+    res_state_dict = {}
+    with torch.no_grad():
+        for name, param in state_dict.items():
+            if 'lora' not in name:
+                res_state_dict[name] = param.clone()
+            elif 'lora_a_' in name:
+                origin = name.replace('lora_a_', '')
+                w = state_dict[origin]
+                wa = state_dict[name]
+                wb = state_dict[name.replace('lora_a_', 'lora_b_')]
+                res_state_dict[origin] = (w + wb @ wa).clone().to(w.dtype)
+    return res_state_dict
+
+
 def merge_lora_checkpoints(
         ckpt_dir,
         world_size=8,

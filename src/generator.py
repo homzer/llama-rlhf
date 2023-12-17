@@ -15,7 +15,7 @@ class GeneratorForCausalLM:
         self.max_seq_len = max_seq_len
         self.tokenizer = tokenizer
 
-    def forward(self, instructions: List[str], t: float = 0.0, p: float = 1.0) -> List[dict]:
+    def forward(self, instructions: List[str], t: float = 0.0, p: float = 0.5) -> List[dict]:
         bsz = len(instructions)
         prompt_tokens = []
         for x in instructions:
