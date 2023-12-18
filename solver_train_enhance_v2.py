@@ -1,13 +1,12 @@
 import gc
 import os
-import random
 
 import fire
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from src.dataset import JsonDataset, MultiOutputsDataset
+from src.dataset import JsonDataset, EvoMultiOutputsDataset, ReviseDataset
 from src.evaluator import SolverEvaluator
 from src.modeling.llama import Llama
 from src.modeling.llama_lora import LoraLlama
@@ -16,45 +15,81 @@ from src.ppo.buffer import CriticRolloutBuffer, SolverRolloutBuffer
 from src.ppo.collector import SolverBufferCollector, LabelBufferCollector
 from src.tokenizer import LlamaTokenizer
 from src.trainer import ParallelSolverTrainer
-from src.utils import setup_model_parallel, Timer, json_dump, set_barrier, deduplicate_texts
+from src.utils import setup_model_parallel, Timer, json_dump, set_barrier
 
 RETHINKING = '\n\n<|rethinking|>\n\n'
 
 
-class EnhanceDataset(MultiOutputsDataset):
-    def __init__(self, train_file):
-        super().__init__(train_file)
-        self.map = {}
-        for i, data in enumerate(self.datalist):
-            self.map[data['instruction']] = i
-        assert len(list(self.map.keys())) == len(self.datalist)
+def revise(
+        error_rollout_buffer: SolverRolloutBuffer,
+        reviser_buffer_collector: SolverBufferCollector,
+        reward_buffer_collector: LabelBufferCollector,
+        tokenizer: LlamaTokenizer,
+        batch_size: int,
+        revising_turns: int
+) -> (SolverRolloutBuffer, list):
+    error_rollout_buffer = error_rollout_buffer.copy()
+    correct_rollout_buffer = SolverRolloutBuffer()
+    reviser_datalist = []
+    for turn in range(revising_turns):
+        print(f"Revising {turn+1}/{revising_turns} ...")
+        reviser_rollout_buffer = SolverRolloutBuffer()
+        timer = Timer(len(error_rollout_buffer) // batch_size)
+        for data in error_rollout_buffer.get(batch_size):
+            timer.step()
+            instructions = []
+            for instruction, action, action_mask in zip(
+                    data.instructions, data.actions, data.action_masks
+            ):
+                output = tokenizer.decode(action[action_mask].tolist())
+                instructions.append(instruction + output + RETHINKING)
+            reviser_rollout_buffer.extend(
+                reviser_buffer_collector.forward(instructions, t=1.0)
+            )
 
-    def enhance(self, datalist: list) -> int:
-        cnt = self.statistic()
-        for data in datalist:
-            assert data['instruction'] in self.map.keys()
-            i = self.map[data['instruction']]
-            self.datalist[i]['output'].append(data['output'])
-            self.datalist[i]['output'] = deduplicate_texts(self.datalist[i]['output'])
-        return self.statistic() - cnt
+        # Reward Model Re-scoring
+        reward_rollout_buffer = CriticRolloutBuffer()
+        for error_data, revise_data in zip(error_rollout_buffer.get(1), reviser_rollout_buffer.get(1)):
+            reward_rollout_buffer.extend(
+                reward_buffer_collector.forward(
+                    error_data.instructions, revise_data.actions, revise_data.action_masks
+                )
+            )
 
-    def __getitem__(self, i):
-        data = self.datalist[i].copy()
-        outputs = []
-        b = len(data['output'])
-        for a in range(b):  # Bigger chances for later outputs
-            if random.randint(a + 1, b) == b:
-                outputs.append(data['output'][a])
-        assert len(outputs) != 0
-        data['output'] = random.sample(outputs, 1)[0]
-        return data
+        # Filtering for Correct
+        error_rollout_buffer_ = SolverRolloutBuffer()
+        for error_data, revise_data, reward_data in zip(
+                error_rollout_buffer.get(1), reviser_rollout_buffer.get(1), reward_rollout_buffer.get(1)
+        ):
+            if reward_data.scores.mean() > 0:  # correct
+                correct_rollout_buffer.extend(
+                    SolverRolloutBuffer(
+                        instructions=error_data.instructions,
+                        actions=revise_data.actions,
+                        action_masks=revise_data.action_masks
+                    )
+                )
+                for instruction, student_action, student_action_mask, teacher_action, teacher_action_mask in zip(
+                        error_data.instructions, error_data.actions, error_data.action_masks,
+                        revise_data.actions, revise_data.action_masks
+                ):
+                    reviser_datalist.append(dict(
+                        instruction=str(instruction),
+                        teacher_output=[tokenizer.decode(teacher_action[teacher_action_mask].tolist())],
+                        student_output=[tokenizer.decode(student_action[student_action_mask].tolist())]
+                    ))
+            else:
+                error_rollout_buffer_.extend(
+                    SolverRolloutBuffer(
+                        instructions=error_data.instructions,
+                        actions=error_data.actions,
+                        action_masks=error_data.action_masks
+                    )
+                )
+        error_rollout_buffer = error_rollout_buffer_
+        print(f"Successfully Revised {len(correct_rollout_buffer)} Instances!")
 
-    def statistic(self) -> int:
-        """ Return the total number of outputs. """
-        cnt = 0
-        for data in self.datalist:
-            cnt += len(data['output'])
-        return cnt
+    return correct_rollout_buffer, reviser_datalist
 
 
 def run(
@@ -68,20 +103,24 @@ def run(
         reviser_lora_rank: int,
         train_file: str,
         label_file: str,
+        revise_file: str = 'data/GSM8K/revise.json',  # TODO
         log_dir: str = None,
+        revising_turns: int = 1,
         max_batch_size: int = 4,
         eval_batch_size: int = 96,
         max_seq_len: int = 512,
+        reviser_max_seq_len: int = 768,
         epochs: int = 1,
         inner_epochs: int = 1,
-        lr: float = 1e-5,
+        lr: float = 1e-6,
         tokenizer_path: str = None,
 ):
     tokenizer_path = tokenizer_path if tokenizer_path else 'config/tokenizer.model'
     local_rank, world_size = setup_model_parallel()
     if log_dir is not None and local_rank == 0:
         os.makedirs(log_dir, exist_ok=True)
-    dataset = EnhanceDataset(train_file)
+    dataset = EvoMultiOutputsDataset(train_file)
+    revise_dataset = ReviseDataset(revise_file)
     train_dataloader = DataLoader(dataset, batch_size=max_batch_size)
     eval_dataloader = DataLoader(dataset, batch_size=eval_batch_size)
 
@@ -93,20 +132,22 @@ def run(
         r=solver_lora_rank
     ).from_json(solver_config_file)
     reviser_args = LoraLlamaArgs(
-        max_seq_len=max_seq_len,
+        max_seq_len=reviser_max_seq_len,
         local_rank=local_rank,
         world_size=world_size,
         r=reviser_lora_rank
     ).from_json(reviser_config_file) if reviser_lora_rank > 0 else LlamaArgs(
-        max_seq_len=max_seq_len,
+        max_seq_len=reviser_max_seq_len,
         local_rank=local_rank,
         world_size=world_size).from_json(reviser_config_file)
 
     for epoch in range(epochs):
 
         # Solver Model Collecting
-        solver_model = LoraLlama(solver_args)
-        solver_model.load(solver_ckpt_dir if epoch == 0 else os.path.join(solver_save_dir, f"epoch-{epoch}"))
+        solver_model = Llama(solver_args)
+        solver_model.load(solver_ckpt_dir if (
+                epoch == 0
+        ) else os.path.join(solver_save_dir, f"epoch-{epoch}"), merge_lora=True)
         solver_buffer_collector = SolverBufferCollector(solver_model, tokenizer, max_seq_len)
         solver_rollout_buffer = SolverRolloutBuffer()
         print('Solver buffer collecting ...')
@@ -148,24 +189,17 @@ def run(
         print("Error Rate on Training set: ", len(error_rollout_buffer) / len(solver_rollout_buffer))
 
         # Reviser Model Collecting
-        reviser_model = LoraLlama(reviser_args) if reviser_lora_rank > 0 else Llama(reviser_args)
-        reviser_model.load(reviser_ckpt_dir)
-        reviser_buffer_collector = SolverBufferCollector(reviser_model, tokenizer, max_seq_len)
-        reviser_rollout_buffer = SolverRolloutBuffer()
-        print("Revising ...")
-        timer = Timer(len(error_rollout_buffer) // eval_batch_size)
-        for data in error_rollout_buffer.get(eval_batch_size):
-            timer.step()
-            instructions = []
-            for instruction, action, action_mask in zip(
-                    data.instructions, data.actions, data.action_masks
-            ):
-                output = tokenizer.decode(action[action_mask].tolist())
-                instructions.append(instruction + output + RETHINKING)
-            reviser_rollout_buffer.extend(
-                reviser_buffer_collector.forward(instructions, t=0.2)
-            )
-
+        reviser_model = Llama(reviser_args)
+        reviser_model.load(reviser_ckpt_dir, merge_lora=reviser_lora_rank > 0)
+        reviser_buffer_collector = SolverBufferCollector(reviser_model, tokenizer, reviser_max_seq_len)
+        correct_rollout_buffer, reviser_datalist = revise(
+            error_rollout_buffer=error_rollout_buffer,
+            reviser_buffer_collector=reviser_buffer_collector,
+            reward_buffer_collector=reward_buffer_collector,
+            tokenizer=tokenizer,
+            batch_size=196,
+            revising_turns=revising_turns
+        )
         reviser_model.cpu()
         del reviser_model
         del reviser_buffer_collector
@@ -173,43 +207,21 @@ def run(
         gc.collect()
         set_barrier()
 
-        # Reward Model Re-scoring
-        reward_buffer_collector = LabelBufferCollector(task, dataset, tokenizer, max_seq_len)
-        reward_rollout_buffer = CriticRolloutBuffer()
-        for error_data, revise_data in zip(error_rollout_buffer.get(1), reviser_rollout_buffer.get(1)):
-            reward_rollout_buffer.extend(
-                reward_buffer_collector.forward(
-                    error_data.instructions, revise_data.actions, revise_data.action_masks
-                )
-            )
-
-        # Filtering for Correct
-        correct_rollout_buffer = SolverRolloutBuffer()
-        for error_data, revise_data, reward_data in zip(
-                error_rollout_buffer.get(1), reviser_rollout_buffer.get(1), reward_rollout_buffer.get(1)
-        ):
-            if reward_data.scores.mean() > 0:  # correct
-                correct_rollout_buffer.extend(
-                    SolverRolloutBuffer(
-                        instructions=error_data.instructions,
-                        actions=revise_data.actions,
-                        action_masks=revise_data.action_masks
-                    )
-                )
-
         # Add to Dataset
         datalist = []
         for data in correct_rollout_buffer.get(1):
             for instruction, action, action_mask in zip(data.instructions, data.actions, data.action_masks):
-                datalist.append(dict(instruction=instruction, output=tokenizer.decode(action[action_mask].tolist())))
-        print(f'Successfully revised {len(datalist)} instances! Increase {dataset.enhance(datalist)} instances.')
+                datalist.append(dict(instruction=instruction, output=[tokenizer.decode(action[action_mask].tolist())]))
+        print(f'Successfully revised {len(datalist)} of {len(error_rollout_buffer)} instances!')
+        print(f"Increasing {dataset.extend(EvoMultiOutputsDataset(datalist), deduplicate=True)} instances.")
+        revise_dataset.extend(ReviseDataset(reviser_datalist))
 
         # Training
         solver_model = LoraLlama(solver_args)
         optimizer = torch.optim.Adam(solver_model.parameters(), lr=lr)
         trainer = ParallelSolverTrainer(solver_model, tokenizer, optimizer, max_seq_len)
         evaluator = SolverEvaluator(solver_model, tokenizer, eval_batch_size, max_seq_len)
-        trainer.load_model(solver_ckpt_dir) if (
+        solver_model.load(solver_ckpt_dir, merge_lora=True) if (
                 epoch == 0
         ) else trainer.load(os.path.join(solver_save_dir, f"epoch-{epoch}"))
         print('Solver Training ...')
@@ -232,6 +244,9 @@ def run(
             ), indent=4)
             json_dump(dataset.datalist, os.path.join(
                 log_dir, 'teacher.json'
+            ), indent=4)
+            json_dump(revise_dataset.datalist, os.path.join(
+                log_dir, 'revise.json'
             ), indent=4)
         trainer.save(os.path.join(solver_save_dir, f"epoch-{epoch + 1}"))
 

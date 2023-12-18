@@ -1,5 +1,6 @@
 import math
 import os
+from pathlib import Path
 from typing import Optional
 
 import fairscale.nn.model_parallel.initialize as fs_init
@@ -9,7 +10,7 @@ import torch.nn.functional as F
 
 from src.modeling.modeling import ParallelModule, ParallelModelForCausalLM, CausalLMOutputs
 from src.modeling.modeling_args import LlamaArgs, LoraLlamaArgs
-from src.utils import apply_rotary_emb, precompute_freqs_cis, set_barrier, logits_normalize
+from src.utils import apply_rotary_emb, precompute_freqs_cis, set_barrier, logits_normalize, merge_lora_state_dict
 
 
 class AbstractAttention(nn.Module):
@@ -155,6 +156,27 @@ class AbstractLlama(ParallelModelForCausalLM):
         h = self.norm(h)
         output = self.output(h)
         return CausalLMOutputs(logits=logits_normalize(output.float()), hidden_states=h.float())
+
+    def load(self, ckpt_dir: str, verbose: bool = True, merge_lora: bool = False, **kwargs):
+        if verbose:
+            print(f'Loading model from {ckpt_dir} .....')
+        checkpoints = sorted(Path(ckpt_dir).glob("*.pth"))
+        assert self.world_size == len(
+            checkpoints
+        ), f"Loading a checkpoint for MP={len(checkpoints)} but world size is {self.world_size}"
+        ckpt_path = checkpoints[self.local_rank]
+        state_dict = torch.load(ckpt_path, map_location="cpu")
+        if merge_lora:  # load and merge from lora checkpoint
+            state_dict = merge_lora_state_dict(state_dict)
+        outputs = self.load_state_dict(state_dict, strict=False)
+        self.cuda(self.local_rank)
+        set_barrier()
+        if verbose:
+            for missing_key in outputs.missing_keys:
+                print(f"MISSING KEY: {missing_key}")
+            for unexpected_key in outputs.unexpected_keys:
+                print(f"UNEXPECTED KEY: {unexpected_key}")
+            print(f'Loading done !')
 
     def flush(self):
         """ Clean cache in `Attention` module """

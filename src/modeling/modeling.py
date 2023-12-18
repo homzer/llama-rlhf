@@ -19,7 +19,7 @@ class Module(nn.Module):
     def device(self):
         return next(self.parameters()).device
 
-    def load(self, ckpt_file: str, verbose: bool = True):
+    def load(self, ckpt_file: str, verbose: bool = True, **kwargs):
         if verbose:
             print(f'Loading model from {ckpt_file} .....')
         state_dict = torch.load(ckpt_file, map_location='cpu')
@@ -90,7 +90,7 @@ class ParallelModule(Module):
         self.local_rank = local_rank
         self.world_size = world_size
 
-    def load(self, ckpt_dir: str, verbose: bool = True):
+    def load(self, ckpt_dir: str, verbose: bool = True, **kwargs):
         if verbose:
             print(f'Loading model from {ckpt_dir} .....')
         checkpoints = sorted(Path(ckpt_dir).glob("*.pth"))

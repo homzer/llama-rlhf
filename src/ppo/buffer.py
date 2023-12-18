@@ -1,4 +1,5 @@
 import collections
+import copy
 from typing import Generator, List, Union
 
 import numpy as np
@@ -215,7 +216,7 @@ class PolicyRolloutBuffer:
 class SolverRolloutBuffer:
     def __init__(
             self,
-            instructions: List[str] = None,
+            instructions: Union[List[str], np.ndarray] = None,
             actions: np.ndarray = None,
             action_masks: np.ndarray = None
     ):
@@ -224,24 +225,46 @@ class SolverRolloutBuffer:
         self.action_masks = None
 
         if instructions is not None:
+            assert actions is not None
+            assert action_masks is not None
             self._set(instructions, actions, action_masks)
 
     def __len__(self):
         return 0 if self.instructions is None else len(self.instructions)
 
+    def copy(self):
+        return copy.deepcopy(self)
+
+    def pop(self, index: int) -> SolverRolloutBufferSample:
+        if index >= len(self):
+            raise IndexError(f"pop index {index} out of range {len(self)}")
+        buffer_sample = SolverRolloutBufferSample(
+            instructions=self.instructions[index: index+1],
+            actions=self.actions[index: index+1],
+            action_masks=self.action_masks[index: index+1]
+        )
+        self.instructions = np.concatenate([self.instructions[: index], self.instructions[index+1:]], axis=0)
+        self.actions = np.concatenate([self.actions[: index], self.actions[index+1:]], axis=0)
+        self.action_masks = np.concatenate([self.action_masks[: index], self.action_masks[index+1:]], axis=0)
+        return buffer_sample
+
     def _set(self, instructions, actions, action_masks):
+        assert len(instructions) == len(actions)
+        assert len(instructions) == len(action_masks)
         buffer_size = actions.shape[0]
         max_seq_len = actions.shape[1]
 
         self.actions = np.zeros((buffer_size, max_seq_len), dtype=np.int64)
         self.action_masks = np.zeros((buffer_size, max_seq_len), dtype=bool)
 
+        if not isinstance(instructions, np.ndarray):
+            instructions = np.array(instructions)
         self.instructions = np.array(instructions)
         self.actions[:, :] = actions.copy()
         self.action_masks[:, :] = action_masks.copy()
 
     def extend(self, rollout_buffer):
-        if self.actions is None:
+        if len(self) == 0:
             self._set(
                 rollout_buffer.instructions,
                 rollout_buffer.actions,

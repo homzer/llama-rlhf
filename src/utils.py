@@ -5,7 +5,7 @@ import random
 import sys
 import time
 from pathlib import Path
-from typing import Tuple, List, Union
+from typing import Tuple, List, Union, Callable
 
 import numpy as np
 import torch
@@ -379,13 +379,16 @@ def jaccard(_set1: set, _set2: set) -> float:
     return len(_set1 & _set2) / len(_set1 | _set2)
 
 
-def deduplicate_texts(texts: list) -> list:
+def deduplicate_texts(iterable: list, threshold: float = 0.8, key: Callable = None) -> list:
     results = []
-    for i in range(len(texts)):
-        results.append(texts[i])
-        for j in range(i + 1, len(texts)):
-            sim = jaccard(set(texts[i]), set(texts[j]))
-            if sim > 0.99:
+    if key is None:
+        def key(x):
+            return x
+    for i in range(len(iterable)):
+        results.append(iterable[i])
+        for j in range(i + 1, len(iterable)):
+            sim = jaccard(set(key(iterable[i]).split(' ')), set(key(iterable[j]).split(' ')))
+            if sim > threshold:
                 results.pop(-1)
                 break
 

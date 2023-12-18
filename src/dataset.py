@@ -4,7 +4,7 @@ from typing import List
 import torch
 from torch.utils.data import Dataset
 
-from src.utils import json_load
+from src.utils import json_load, deduplicate_texts
 
 
 class JsonDataset(Dataset):
@@ -37,6 +37,48 @@ class MultiOutputsDataset(JsonDataset):
         data = self.datalist[i].copy()
         data['output'] = random.sample(data['output'], 1)[0]
         return data
+
+
+class EvoMultiOutputsDataset(MultiOutputsDataset):
+    def __init__(self, f):
+        super().__init__(f)
+        self.map = {}
+        for i, data in enumerate(self.datalist):
+            self.map[data['instruction']] = i
+        assert len(list(self.map.keys())) == len(self.datalist)
+
+    def extend(self, dataset, deduplicate: bool = False) -> int:
+        cnt = self.num_outputs()
+        for data in dataset.datalist:
+            assert data['instruction'] in self.map.keys()
+            i = self.map[data['instruction']]
+            self.datalist[i]['output'].extend(data['output'])
+            if 'output_extend' not in self.datalist[i].keys():
+                self.datalist[i]['output_extend'] = []
+            self.datalist[i]['output_extend'].extend(data['output'])
+            if deduplicate:
+                self.datalist[i]['output'] = deduplicate_texts(self.datalist[i]['output'])
+        return self.num_outputs() - cnt
+
+    def __getitem__(self, i):
+        data = self.datalist[i].copy()
+        if 'output_extend' in data.keys():
+            data.pop('output_extend')
+        outputs = []
+        b = len(data['output'])
+        for a in range(b):  # Bigger chances for later outputs
+            if random.randint(a + 1, b) == b:
+                outputs.append(data['output'][a])
+        assert len(outputs) != 0
+        data['output'] = random.sample(outputs, 1)[0]
+        return data
+
+    def num_outputs(self) -> int:
+        """ Return the total number of outputs. """
+        cnt = 0
+        for data in self.datalist:
+            cnt += len(data['output'])
+        return cnt
 
 
 class PairwiseDataset(JsonDataset):
@@ -85,12 +127,35 @@ class ReviseDataset(JsonDataset):
         assert type(self.datalist[0]['teacher_output']) is list
         assert "student_output" in self.datalist[0].keys()
         assert type(self.datalist[0]['student_output']) is list
+        self.map = {}
+        for i, data in enumerate(self.datalist):
+            self.map[data['instruction']] = i
+        assert len(list(self.map.keys())) == len(self.datalist)
+
+    def extend(self, dataset):
+        for data in dataset.datalist:
+            assert data['instruction'] in self.map.keys()
+            i = self.map[data['instruction']]
+            self.datalist[i]['student_output'].extend(data['student_output'])
+            if 'student_output_extend' not in self.datalist[i].keys():
+                self.datalist[i]['student_output_extend'] = []
+            self.datalist[i]['student_output_extend'].extend(data['student_output'])
+
+            self.datalist[i]['teacher_output'].extend(data['teacher_output'])
+            if 'teacher_output_extend' not in self.datalist[i].keys():
+                self.datalist[i]['teacher_output_extend'] = []
+            self.datalist[i]['teacher_output_extend'].extend(data['teacher_output'])
 
     def __getitem__(self, i):
         data = self.datalist[i].copy()
-        assert len(data['student_output']) <= len(data['teacher_output'])
+        if 'student_output_extend' in data.keys():
+            data.pop('student_output_extend')
+        if 'teacher_output_extend' in data.keys():
+            data.pop('teacher_output_extend')
+        # TODO:
+        assert len(data['student_output']) == len(data['teacher_output']) > 0
         i = random.randint(0, len(data['teacher_output']) - 1)
-        data['student_output'] = data['student_output'][i] if i < len(data['student_output']) else ''
+        data['student_output'] = data['student_output'][i]
         data['teacher_output'] = data['teacher_output'][i]
         return data
 
