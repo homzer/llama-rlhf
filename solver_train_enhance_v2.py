@@ -20,6 +20,14 @@ from src.utils import setup_model_parallel, Timer, json_dump, set_barrier
 RETHINKING = '\n\n<|rethinking|>\n\n'
 
 
+def training_dataset(dataset: EvoMultiOutputsDataset) -> EvoMultiOutputsDataset:
+    datalist = []
+    for data in dataset.datalist:
+        if len(data['output']) > 0:  #
+            datalist.append(data)
+    return EvoMultiOutputsDataset(datalist)
+
+
 def revise(
         error_rollout_buffer: SolverRolloutBuffer,
         reviser_buffer_collector: SolverBufferCollector,
@@ -103,27 +111,24 @@ def run(
         reviser_lora_rank: int,
         train_file: str,
         label_file: str,
-        revise_file: str = 'data/GSM8K/revise.json',  # TODO
         log_dir: str = None,
-        revising_turns: int = 1,
-        max_batch_size: int = 4,
-        eval_batch_size: int = 96,
+        revising_turns: int = 3,
+        max_batch_size: int = 6,
+        eval_batch_size: int = 384,
         max_seq_len: int = 512,
         reviser_max_seq_len: int = 768,
         epochs: int = 1,
         inner_epochs: int = 1,
-        lr: float = 1e-6,
+        lr: float = 2e-6,
         tokenizer_path: str = None,
 ):
     tokenizer_path = tokenizer_path if tokenizer_path else 'config/tokenizer.model'
     local_rank, world_size = setup_model_parallel()
     if log_dir is not None and local_rank == 0:
         os.makedirs(log_dir, exist_ok=True)
-    dataset = EvoMultiOutputsDataset(train_file)
-    revise_dataset = ReviseDataset(revise_file)
-    train_dataloader = DataLoader(dataset, batch_size=max_batch_size)
-    eval_dataloader = DataLoader(dataset, batch_size=eval_batch_size)
 
+    dataset = EvoMultiOutputsDataset(train_file)
+    revise_dataset = ReviseDataset(train_file)
     tokenizer = LlamaTokenizer(tokenizer_path)
     solver_args = LoraLlamaArgs(
         max_seq_len=max_seq_len,
@@ -151,6 +156,7 @@ def run(
         solver_buffer_collector = SolverBufferCollector(solver_model, tokenizer, max_seq_len)
         solver_rollout_buffer = SolverRolloutBuffer()
         print('Solver buffer collecting ...')
+        eval_dataloader = DataLoader(dataset, batch_size=eval_batch_size)
         timer = Timer(len(eval_dataloader))
         for data in tqdm(eval_dataloader):
             timer.step()
@@ -176,10 +182,19 @@ def run(
             )
 
         # Filtering for Error
+        correct_rollout_buffer = SolverRolloutBuffer()
         error_rollout_buffer = SolverRolloutBuffer()
         for solver_data, reward_data in zip(solver_rollout_buffer.get(1), reward_rollout_buffer.get(1)):
             if reward_data.scores.mean() == 0:  # incorrect
                 error_rollout_buffer.extend(
+                    SolverRolloutBuffer(
+                        instructions=solver_data.instructions,
+                        actions=solver_data.actions,
+                        action_masks=solver_data.action_masks
+                    )
+                )
+            else:  # correct
+                correct_rollout_buffer.extend(
                     SolverRolloutBuffer(
                         instructions=solver_data.instructions,
                         actions=solver_data.actions,
@@ -192,7 +207,7 @@ def run(
         reviser_model = Llama(reviser_args)
         reviser_model.load(reviser_ckpt_dir, merge_lora=reviser_lora_rank > 0)
         reviser_buffer_collector = SolverBufferCollector(reviser_model, tokenizer, reviser_max_seq_len)
-        correct_rollout_buffer, reviser_datalist = revise(
+        revise_correct_rollout_buffer, reviser_datalist = revise(
             error_rollout_buffer=error_rollout_buffer,
             reviser_buffer_collector=reviser_buffer_collector,
             reward_buffer_collector=reward_buffer_collector,
@@ -209,10 +224,13 @@ def run(
 
         # Add to Dataset
         datalist = []
-        for data in correct_rollout_buffer.get(1):
+        for data in revise_correct_rollout_buffer.get(1):
             for instruction, action, action_mask in zip(data.instructions, data.actions, data.action_masks):
                 datalist.append(dict(instruction=instruction, output=[tokenizer.decode(action[action_mask].tolist())]))
         print(f'Successfully revised {len(datalist)} of {len(error_rollout_buffer)} instances!')
+        for data in correct_rollout_buffer.get(1):
+            for instruction, action, action_mask in zip(data.instructions, data.actions, data.action_masks):
+                datalist.append(dict(instruction=instruction, output=[tokenizer.decode(action[action_mask].tolist())]))
         print(f"Increasing {dataset.extend(EvoMultiOutputsDataset(datalist), deduplicate=True)} instances.")
         revise_dataset.extend(ReviseDataset(reviser_datalist))
 
@@ -225,6 +243,7 @@ def run(
                 epoch == 0
         ) else trainer.load(os.path.join(solver_save_dir, f"epoch-{epoch}"))
         print('Solver Training ...')
+        train_dataloader = DataLoader(training_dataset(dataset), batch_size=max_batch_size)
         for inner_epoch in range(inner_epochs):
             for data in tqdm(train_dataloader):
                 outputs = trainer.forward(

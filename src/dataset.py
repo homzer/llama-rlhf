@@ -69,7 +69,8 @@ class EvoMultiOutputsDataset(MultiOutputsDataset):
         for a in range(b):  # Bigger chances for later outputs
             if random.randint(a + 1, b) == b:
                 outputs.append(data['output'][a])
-        assert len(outputs) != 0
+        if len(outputs) == 0:  # TODO
+            outputs = ['']
         data['output'] = random.sample(outputs, 1)[0]
         return data
 
@@ -123,10 +124,11 @@ class PairwiseDataset(JsonDataset):
 class ReviseDataset(JsonDataset):
     def __init__(self, f):
         super().__init__(f)
-        assert "teacher_output" in self.datalist[0].keys()
-        assert type(self.datalist[0]['teacher_output']) is list
-        assert "student_output" in self.datalist[0].keys()
-        assert type(self.datalist[0]['student_output']) is list
+        for i in range(len(self.datalist)):
+            if "teacher_output" not in self.datalist[i].keys():
+                self.datalist[i]["teacher_output"] = []
+            if "student_output" not in self.datalist[i].keys():
+                self.datalist[i]["student_output"] = []
         self.map = {}
         for i, data in enumerate(self.datalist):
             self.map[data['instruction']] = i
