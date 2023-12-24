@@ -6,11 +6,11 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from src.dataset import PairwiseDataset, JsonDataset
+from src.entities import Timer
 from src.generator import GeneratorForCausalLM, GeneratorForVerifier
 from src.modeling.llama_abstract import AbstractLoraLlamaVerifier
 from src.modeling.modeling import ModelForCausalLM
 from src.tokenizer import Tokenizer, LlamaTokenizer
-from src.utils import Timer
 
 
 class SolverEvaluator:

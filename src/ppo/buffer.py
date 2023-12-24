@@ -58,6 +58,7 @@ CriticRolloutBufferSample = collections.namedtuple(
 
 LogitsRolloutBufferSample = collections.namedtuple(
     "LogitsRolloutBufferSample", [
+        "instructions",
         "logits"
     ]
 )
@@ -221,16 +222,33 @@ class PolicyRolloutBuffer:
 
 
 class LogitsRolloutBuffer:
-    def __init__(self, logits: torch.Tensor = None):
-        self.logits = None if logits is None else SlimLogits(logits=logits)
+    def __init__(self, instructions: Union[List[str], np.ndarray] = None, logits: torch.Tensor = None):
+        self.logits = None
+        self.instructions = None
+
+        if instructions is not None:
+            assert logits is not None
+            self._set(instructions, SlimLogits(logits=logits))
 
     def __len__(self):
-        return 0 if self.logits is None else len(self.logits)
+        if self.instructions is not None:
+            assert len(self.instructions) == len(self.logits)
+            return len(self.logits)
+        return 0
+
+    def _set(self, instructions, logits: SlimLogits):
+        assert len(instructions) == len(logits)
+        if not isinstance(instructions, np.ndarray):
+            instructions = np.array(instructions)
+        self.instructions = instructions
+        self.logits = logits
 
     def extend(self, rollout_buffer):
-        if self.logits is None:
-            self.logits = SlimLogits()
-        self.logits.extend(rollout_buffer.logits)
+        if len(self) == 0:
+            self._set(rollout_buffer.instructions, rollout_buffer.logits)
+        else:
+            self.instructions = np.concatenate([self.instructions, rollout_buffer.instructions], axis=0)
+            self.logits.extend(rollout_buffer.logits)
         return self
 
     def get(self, batch_size: int) -> Generator[LogitsRolloutBufferSample, None, None]:
@@ -239,10 +257,15 @@ class LogitsRolloutBuffer:
         start_idx = 0
         while start_idx < size:
             batch_indices = indices[start_idx: start_idx + batch_size]
-            logits = torch.zeros((batch_size, self.logits.max_seq_len, self.logits.vocab_size), dtype=torch.float32)
+            logits = torch.zeros(
+                (len(batch_indices), self.logits.max_seq_len, self.logits.vocab_size), dtype=torch.float32
+            )
             for i, bi in enumerate(batch_indices):
                 logits[i, :, :] = self.logits.fetch(bi)
-            yield LogitsRolloutBufferSample(logits=logits)
+            yield LogitsRolloutBufferSample(
+                instructions=self.instructions[batch_indices],
+                logits=logits
+            )
             start_idx += batch_size
 
 
@@ -292,7 +315,7 @@ class SolverRolloutBuffer:
 
         if not isinstance(instructions, np.ndarray):
             instructions = np.array(instructions)
-        self.instructions = np.array(instructions)
+        self.instructions = instructions
         self.actions[:, :] = actions.copy()
         self.action_masks[:, :] = action_masks.copy()
 

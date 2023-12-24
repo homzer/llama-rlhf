@@ -5,12 +5,13 @@ import random
 import fire
 
 from src.dataset import JsonDataset
+from src.entities import Timer
 from src.generator import GeneratorForCausalLM
 from src.modeling.llama import Llama
 from src.modeling.llama_lora import LoraLlama
 from src.modeling.modeling_args import LoraLlamaArgs, LlamaArgs
 from src.tokenizer import LlamaTokenizer
-from src.utils import setup_model_parallel, set_barrier, Timer
+from src.utils import setup_model_parallel, set_barrier
 
 
 def create_questioner_batch_data(batch_size: int, dataset: JsonDataset, num_shots: int = 3):

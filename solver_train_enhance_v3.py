@@ -7,6 +7,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from src.dataset import JsonDataset, MultiOutputsDataset
+from src.entities import Timer
 from src.evaluator import SolverEvaluator
 from src.modeling.llama import Llama
 from src.modeling.llama_lora import LoraLlama
@@ -15,7 +16,7 @@ from src.ppo.buffer import SolverRolloutBuffer, LogitsRolloutBuffer
 from src.ppo.collector import SolverBufferCollector, LogitsBufferCollector
 from src.tokenizer import LlamaTokenizer
 from src.trainer import ParallelSolverDistillTrainer
-from src.utils import setup_model_parallel, Timer, json_dump, set_barrier, json_load
+from src.utils import setup_model_parallel, json_dump, set_barrier, json_load
 
 
 def run(
@@ -95,12 +96,12 @@ def run(
         reviser_model.load(reviser_ckpt_dir, merge_lora=reviser_lora_rank > 0)
         reviser_buffer_collector = LogitsBufferCollector(reviser_model, tokenizer, max_seq_len)
         reviser_rollout_buffer = LogitsRolloutBuffer()
-        timer = Timer(len(solver_rollout_buffer) // reviser_eval_batch_size)
+        timer = Timer(len(solver_rollout_buffer) // reviser_eval_batch_size, episode=20)
         for data in solver_rollout_buffer.get(reviser_eval_batch_size):
             timer.step()
             instructions = []
             for instruction, action, action_mask in zip(data.instructions, data.actions, data.action_masks):
-                instructions.append(instruction + tokenizer.decode(action[action_mask].tolist()))
+                instructions.append(instruction + " " + tokenizer.decode(action[action_mask].tolist()))
             reviser_rollout_buffer.extend(
                 reviser_buffer_collector.forward(instructions)
             )
@@ -128,16 +129,13 @@ def run(
             outputs = []
             for action, action_mask in zip(solver_data.actions, solver_data.action_masks):
                 outputs.append(tokenizer.decode(action[action_mask].tolist()))
-            assert len(solver_data.instructions) == len(outputs), f"{len(solver_data.instructions)} {len(outputs)}"
-            assert len(outputs) == len(reviser_data.logits), f"{len(outputs)} {len(reviser_data.logits)}"
+            assert len(outputs) == len(reviser_data.logits), f"{len(outputs)} {len(reviser_data.logits)}"  # 1, 6
             trainer_outputs = trainer.distill(
                 instructions=solver_data.instructions,
                 outputs=outputs,
                 target_logits=reviser_data.logits
             )
-            if trainer.step % 10 == 0:
-                print(solver_data.instructions[0])
-                print(outputs[0])
+            if trainer.step % 100 == 0:
                 print(f'step {trainer.step} of {len(solver_rollout_buffer) // max_batch_size} ---------------')
                 print(f'LOSS: ', trainer_outputs.loss.item())
                 predict = trainer.predict(trainer_outputs.logits, solver_data.instructions, outputs)[0]

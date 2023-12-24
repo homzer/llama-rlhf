@@ -7,6 +7,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from src.dataset import JsonDataset
+from src.entities import Timer
 from src.evaluator import SolverEvaluator
 from src.modeling.llama_lora import LoraLlamaVerifier, LoraLlama
 from src.modeling.modeling_args import LoraLlamaArgs
@@ -14,7 +15,7 @@ from src.ppo.buffer import CriticRolloutBuffer, RolloutBuffer, ActorRolloutBuffe
 from src.ppo.collector import CriticBufferCollector, ActorBufferCollector
 from src.ppo.trainer import ParallelActorTrainerForCausalLM, ParallelCriticTrainerForCausalLM
 from src.tokenizer import LlamaTokenizer
-from src.utils import setup_model_parallel, set_barrier, Timer, json_dump
+from src.utils import setup_model_parallel, set_barrier, json_dump
 
 
 def run(

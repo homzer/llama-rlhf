@@ -174,4 +174,4 @@ class LogitsBufferCollector:
 
     def forward(self, instructions: List[str]) -> LogitsRolloutBuffer:
         outputs = self.generator.forward(instructions)
-        return LogitsRolloutBuffer(logits=outputs.logits)
+        return LogitsRolloutBuffer(instructions=instructions, logits=outputs.logits)

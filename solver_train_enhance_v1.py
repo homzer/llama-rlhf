@@ -7,6 +7,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from src.dataset import JsonDataset
+from src.entities import Timer
 from src.evaluator import SolverEvaluator
 from src.modeling.llama_lora import LoraLlama
 from src.modeling.modeling_args import LoraLlamaArgs
@@ -14,7 +15,7 @@ from src.ppo.buffer import CriticRolloutBuffer, ActorRolloutBuffer
 from src.ppo.collector import ActorBufferCollector, LabelBufferCollector
 from src.tokenizer import LlamaTokenizer
 from src.trainer import ParallelSolverTrainer
-from src.utils import setup_model_parallel, Timer, json_dump, json_load, deduplicate_texts
+from src.utils import setup_model_parallel, json_dump, json_load, deduplicate_texts
 
 RETHINKING = '\n\n<|rethinking|>\n\n'
 

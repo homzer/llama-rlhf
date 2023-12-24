@@ -1,8 +1,10 @@
+import time
+
 import torch
 
 
 class SlimLogits:
-    def __init__(self, n=5, logits: torch.Tensor = None):
+    def __init__(self, logits: torch.Tensor = None, n=5):
         self.n = n
         self.vocab_size = None
         self.batch_size = None
@@ -10,6 +12,7 @@ class SlimLogits:
         self.values = None
         self.indices = None
         if logits is not None:
+            assert len(logits.shape) == 3
             self.batch_size = logits.shape[0]
             self.max_seq_len = logits.shape[1]
             self.vocab_size = logits.shape[2]
@@ -62,7 +65,42 @@ class SlimLogits:
         assert 0 <= i < len(self), "Index out of range error"
         value = self.values[i]  # [s, n]
         index = self.indices[i]  # [s, n]
-        logits = torch.full((self.max_seq_len, self.vocab_size), fill_value=1e-5, dtype=torch.float32)
+        logits = torch.full((self.max_seq_len, self.vocab_size), fill_value=-1e5, dtype=torch.float32)
         for j in range(self.max_seq_len):
             logits[j, index[j]] = value[j]
         return logits  # [s, v]
+
+
+class Timer:
+    def __init__(self, total: int, episode: int = 1):
+        self.total = total
+        self.ticktock = 0
+        self.last = None
+        self.avg_time = 0
+        self.episode = episode
+
+    @staticmethod
+    def format_clock(period):
+        hour, minute, second = period // 3600, (period % 3600) // 60, period % 60
+        return int(hour), int(minute), int(second)
+
+    def step(self):
+        if self.last is not None:
+            period = time.time() - self.last
+            self.avg_time = (self.avg_time * (self.ticktock - 1) + period) / self.ticktock
+            h1, m1, s1 = self.format_clock(self.avg_time * (self.ticktock + 1))
+            h2, m2, s2 = self.format_clock(self.avg_time * (self.total - self.ticktock))
+            if self.ticktock % self.episode == 0:
+                print(
+                    f"STEP {self.ticktock}/{self.total} | USED: %02d:%02d:%02d | VAG %.2f s/it | "
+                    f"ETA: %02d:%02d:%02d" % (h1, m1, s1, self.avg_time, h2, m2, s2)
+                )
+        self.last = time.time()
+        self.ticktock += 1
+        if self.ticktock == self.total:
+            self.reset()
+
+    def reset(self):
+        self.ticktock = 0
+        self.last = None
+        self.avg_time = 0
