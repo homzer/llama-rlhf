@@ -13,8 +13,9 @@ from src.ppo.buffer import (
     PolicyRolloutBuffer,
     CriticRolloutBuffer,
     ActorRolloutBuffer,
-    SolverRolloutBuffer)
-from src.ppo.generator import CriticGeneratorForCausalLM, ActorGeneratorForCausalLM, SolverGeneratorForCausalLM
+    SolverRolloutBuffer, LogitsRolloutBuffer)
+from src.ppo.generator import CriticGeneratorForCausalLM, ActorGeneratorForCausalLM, SolverGeneratorForCausalLM, \
+    LogitsGeneratorForCausalLM
 from src.ppo.policy import AbstractPolicyForCausalLM, AbstractParallelPolicyForCausalLM
 from src.tokenizer import Tokenizer, LlamaTokenizer
 
@@ -158,3 +159,19 @@ class LabelBufferCollector:
                 scores.append(1)
 
         return CriticRolloutBuffer(scores, action_masks)
+
+
+class LogitsBufferCollector:
+    def __init__(
+            self,
+            model: Union[ModelForCausalLM, ParallelModelForCausalLM],
+            tokenizer: Tokenizer,
+            max_seq_len: int
+    ):
+        self.generator = LogitsGeneratorForCausalLM(
+            model=model, tokenizer=tokenizer, max_seq_len=max_seq_len
+        )
+
+    def forward(self, instructions: List[str]) -> LogitsRolloutBuffer:
+        outputs = self.generator.forward(instructions)
+        return LogitsRolloutBuffer(logits=outputs.logits)

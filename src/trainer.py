@@ -6,7 +6,7 @@ from typing import List
 import torch
 import torch.nn as nn
 
-from src.criterion import RewardLoss
+from src.criterion import RewardLoss, KLDivLoss
 from src.modeling.llama_lora import LoraLlamaVerifier
 from src.modeling.modeling import ParallelModule, ParallelModelForCausalLM, Module
 from src.tokenizer import LlamaTokenizer
@@ -175,8 +175,9 @@ class ParallelSolverTrainer(ParallelTrainer):
             instr_len, output_len = len(instruction_ids), len(output_ids)
             tokens[i, :instr_len + output_len] = torch.tensor(instruction_ids + output_ids).long()
             labels[i, instr_len - 1: instr_len - 1 + output_len] = torch.tensor(output_ids).long()
-        Output = collections.namedtuple('Outputs', ['tokens', 'labels'])
-        return Output(tokens=tokens, labels=labels)
+        masks = (labels != -100)
+        Output = collections.namedtuple('Outputs', ['tokens', 'labels', 'masks'])
+        return Output(tokens=tokens, labels=labels, masks=masks)
 
     def predict(self, logits, instructions: List[str], outputs: List[str]) -> List[dict]:
         bzs = int(logits.shape[0])
@@ -198,6 +199,38 @@ class ParallelSolverTrainer(ParallelTrainer):
         loss = self.criterion.forward(
             input=logits.view(-1, logits.size(-1)),
             target=example.labels.view(-1).to(logits.device)
+        )
+        self._back_propagation(loss)
+        Output = collections.namedtuple('Output', ['loss', 'logits'])
+        return Output(logits=logits, loss=loss)
+
+
+class ParallelSolverDistillTrainer(ParallelSolverTrainer):
+    def __init__(
+            self,
+            model: ParallelModelForCausalLM,
+            tokenizer: LlamaTokenizer,
+            optimizer: torch.optim.Optimizer,
+            max_seq_len: int,
+            accumulation_steps: int = 1
+    ):
+        super().__init__(
+            model=model,
+            tokenizer=tokenizer,
+            optimizer=optimizer,
+            max_seq_len=max_seq_len,
+            accumulation_steps=accumulation_steps
+        )
+        self.criterion = KLDivLoss()
+
+    def distill(self, instructions: List[str], outputs: List[str], target_logits: torch.Tensor):
+        self.model.train()
+        example = self.prepare_for_training(instructions=instructions, outputs=outputs)
+        logits = self.model.forward(example.tokens).logits
+        loss = self.criterion.forward(
+            logits=logits,
+            targets=torch.softmax(target_logits, dim=-1).to(logits.device),
+            masks=example.masks.to(logits.device)
         )
         self._back_propagation(loss)
         Output = collections.namedtuple('Output', ['loss', 'logits'])

@@ -5,6 +5,7 @@ from typing import Generator, List, Union
 import numpy as np
 import torch
 
+from src.entities import SlimLogits
 from src.utils import masked_std
 
 RolloutBufferSample = collections.namedtuple(
@@ -52,6 +53,12 @@ SolverRolloutBufferSample = collections.namedtuple(
 CriticRolloutBufferSample = collections.namedtuple(
     "RewardRolloutBufferSample", [
         "scores",
+    ]
+)
+
+LogitsRolloutBufferSample = collections.namedtuple(
+    "LogitsRolloutBufferSample", [
+        "logits"
     ]
 )
 
@@ -210,6 +217,32 @@ class PolicyRolloutBuffer:
                 action_logits=self.action_logits[batch_indices],
                 action_masks=self.action_masks[batch_indices]
             )
+            start_idx += batch_size
+
+
+class LogitsRolloutBuffer:
+    def __init__(self, logits: torch.Tensor = None):
+        self.logits = None if logits is None else SlimLogits(logits=logits)
+
+    def __len__(self):
+        return 0 if self.logits is None else len(self.logits)
+
+    def extend(self, rollout_buffer):
+        if self.logits is None:
+            self.logits = SlimLogits()
+        self.logits.extend(rollout_buffer.logits)
+        return self
+
+    def get(self, batch_size: int) -> Generator[LogitsRolloutBufferSample, None, None]:
+        size = len(self)
+        indices = np.arange(size)
+        start_idx = 0
+        while start_idx < size:
+            batch_indices = indices[start_idx: start_idx + batch_size]
+            logits = torch.zeros((batch_size, self.logits.max_seq_len, self.logits.vocab_size), dtype=torch.float32)
+            for i, bi in enumerate(batch_indices):
+                logits[i, :, :] = self.logits.fetch(bi)
+            yield LogitsRolloutBufferSample(logits=logits)
             start_idx += batch_size
 
 

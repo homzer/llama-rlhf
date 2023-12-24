@@ -18,6 +18,10 @@ SolverGeneratorOutputs = collections.namedtuple("SolverGeneratorOutputs", [
     'outputs', 'actions', 'action_masks'
 ])
 
+LogitsGeneratorOutputs = collections.namedtuple("LogitsGeneratorOutputs", [
+    'logits'
+])
+
 
 def sampling_strategy(logits: torch.Tensor, t: float, p: float):
     assert len(logits.shape) == 3
@@ -45,11 +49,11 @@ class SolverGeneratorForCausalLM:
         self.max_seq_len = max_seq_len
         self.tokenizer = tokenizer
 
-    def _prepare_for_generation(self, prompts: List[str]):
+    def _prepare_for_generation(self, prompts: List[str], eos: bool = False):
         bsz = len(prompts)
         prompt_tokens = []
         for x in prompts:
-            x = self.tokenizer.encode(x, bos=True, eos=False)
+            x = self.tokenizer.encode(x, bos=True, eos=eos)
             prompt_tokens.append(x[: self.max_seq_len])
         min_prompt_size = min([len(t) for t in prompt_tokens])
         tokens = torch.full((bsz, self.max_seq_len), self.tokenizer.pad_id).long()
@@ -65,7 +69,7 @@ class SolverGeneratorForCausalLM:
             start_pos=min_prompt_size,
         )
 
-    def _model_forward(self, tokens, input_masks, start_pos, t=0.0, p=0.8):
+    def _model_forward(self, tokens, input_masks=None, start_pos=None, t=0.0, p=0.8):
         bsz = tokens.shape[0]
         prev_pos = 0
         tokens = tokens.clone()
@@ -140,6 +144,30 @@ class SolverGeneratorForCausalLM:
         )
 
 
+class LogitsGeneratorForCausalLM(SolverGeneratorForCausalLM):
+    def __init__(
+            self,
+            model: Union[ModelForCausalLM, ParallelModelForCausalLM],
+            tokenizer: Tokenizer,
+            max_seq_len: int,
+    ):
+        super().__init__(model=model, tokenizer=tokenizer, max_seq_len=max_seq_len)
+
+    def _model_forward(self, tokens, input_masks=None, start_pos=None, t=0.0, p=0.8):
+        tokens = tokens.clone()
+        with torch.no_grad():
+            outputs = self.model.forward(tokens)
+
+        Outputs = collections.namedtuple('Outputs', ['logits'])
+        return Outputs(logits=outputs.logits)
+
+    def forward(self, instructions: List[str], t: float = 0.0, p: float = 0.8) -> LogitsGeneratorOutputs:
+        self.model.eval()
+        prep_outputs = self._prepare_for_generation(instructions, eos=True)
+        forward_outputs = self._model_forward(prep_outputs.tokens)
+        return LogitsGeneratorOutputs(forward_outputs.logits)
+
+
 class ActorGeneratorForCausalLM(SolverGeneratorForCausalLM):
     def __init__(
             self,
@@ -149,7 +177,7 @@ class ActorGeneratorForCausalLM(SolverGeneratorForCausalLM):
     ):
         super().__init__(model=model, tokenizer=tokenizer, max_seq_len=max_seq_len)
 
-    def _model_forward(self, tokens, input_masks, start_pos, t=0.0, p=0.8):
+    def _model_forward(self, tokens, input_masks=None, start_pos=None, t=0.0, p=0.8):
         bsz = tokens.shape[0]
         prev_pos = 0
         tokens = tokens.clone()
