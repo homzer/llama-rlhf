@@ -81,7 +81,7 @@ def run(
         for data in tqdm(eval_dataloader):
             timer.step()
             solver_rollout_buffer.extend(
-                solver_buffer_collector.forward(data['instruction'], t=1.0)
+                solver_buffer_collector.forward(data['instruction'], t=1.2)
             )
 
         solver_model.cpu()

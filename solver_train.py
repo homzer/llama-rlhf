@@ -6,6 +6,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from src.dataset import MultiOutputsDataset, JsonDataset
+from src.entities import Timer
 from src.evaluator import SolverEvaluator
 from src.modeling.llama_lora import LoraLlama
 from src.modeling.modeling_args import LoraLlamaArgs
@@ -30,14 +31,15 @@ def main(
         label_file: str = None,
         eval_batch_size: int = None,
         log_dir: str = None,
-        seed: int = None
+        seed: int = None,
+        use_float16: bool = True
 ):
     if log_dir is not None:
         os.makedirs(log_dir, exist_ok=True)
     tokenizer_path = 'config/tokenizer.model' if tokenizer_path is None else tokenizer_path
     config_file = f"config/{model_type}/params.json" if config_file is None else config_file
     local_rank, world_size = setup_model_parallel(
-        use_float16=True, seed=seed
+        use_float16=use_float16, seed=seed
     )
     params = LoraLlamaArgs(
         max_seq_len=max_seq_len,
@@ -60,11 +62,13 @@ def main(
     evaluator = SolverEvaluator(model, tokenizer, eval_batch_size, max_seq_len)
     trainer.load(ckpt_dir)
     for epoch in range(epochs):
+        timer = Timer(total=len(dataloader), episode=100)
         for data in tqdm(dataloader):
             outputs = trainer.forward(
                 instructions=data['instruction'],
                 outputs=data['output']
             )
+            timer.step()
             if trainer.step % 100 == 0:
                 print(f'step {trainer.step} of {len(dataloader)} -------------------------------')
                 print(f'LOSS: ', outputs.loss.item())
