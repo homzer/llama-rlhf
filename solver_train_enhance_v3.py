@@ -38,10 +38,11 @@ def run(
         epochs: int = 1,
         lr: float = 1e-5,
         tokenizer_path: str = None,
+        use_float16: bool = True,
         offset: int = 0
 ):
     tokenizer_path = tokenizer_path if tokenizer_path else 'config/tokenizer.model'
-    local_rank, world_size = setup_model_parallel()
+    local_rank, world_size = setup_model_parallel(use_float16=use_float16)
     if log_dir is not None and local_rank == 0:
         os.makedirs(log_dir, exist_ok=True)
 
@@ -73,6 +74,7 @@ def run(
         solver_model.load(solver_ckpt_dir if (
             epoch == 0
         ) else os.path.join(solver_save_dir, f"epoch-{epoch}"), merge_lora=True)
+        solver_model.half()
         solver_buffer_collector = SolverBufferCollector(solver_model, tokenizer, max_seq_len)
         solver_rollout_buffer = SolverRolloutBuffer()
         print('Solver buffer collecting ...')
@@ -94,6 +96,7 @@ def run(
         # Reviser Model Collection
         reviser_model = Llama(reviser_args)
         reviser_model.load(reviser_ckpt_dir, merge_lora=reviser_lora_rank > 0)
+        reviser_model.half()
         reviser_buffer_collector = LogitsBufferCollector(reviser_model, tokenizer, max_seq_len)
         reviser_rollout_buffer = LogitsRolloutBuffer()
         timer = Timer(len(solver_rollout_buffer) // reviser_eval_batch_size, episode=20)
@@ -116,7 +119,6 @@ def run(
         solver_model = LoraLlama(solver_args)
         optimizer = torch.optim.Adam(solver_model.parameters(), lr=lr)
         trainer = ParallelSolverDistillTrainer(solver_model, tokenizer, optimizer, max_seq_len)
-        evaluator = SolverEvaluator(solver_model, tokenizer, solver_eval_batch_size, max_seq_len)
         solver_model.load(solver_ckpt_dir, merge_lora=True) if (
                 epoch == 0
         ) else trainer.load(os.path.join(solver_save_dir, f"epoch-{epoch}"))
@@ -140,6 +142,8 @@ def run(
                 print(f'LOSS: ', trainer_outputs.loss.item())
                 predict = trainer.predict(trainer_outputs.logits, solver_data.instructions, outputs)[0]
                 print(predict['instruction'] + predict['output'])
+        solver_model.half()
+        evaluator = SolverEvaluator(solver_model, tokenizer, solver_eval_batch_size, max_seq_len)
         outputs = evaluator.forward(task, JsonDataset(label_file))
         print("Evaluate Accuracy: ", outputs.acc, "Missing: ", outputs.missing)
         if log_dir is not None:

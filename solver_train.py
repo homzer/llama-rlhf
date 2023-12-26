@@ -9,6 +9,7 @@ from src.dataset import MultiOutputsDataset, JsonDataset
 from src.entities import Timer
 from src.evaluator import SolverEvaluator
 from src.modeling.llama_lora import LoraLlama
+from src.modeling.llama_lora_30b import LoraLlama30B
 from src.modeling.modeling_args import LoraLlamaArgs
 from src.tokenizer import LlamaTokenizer
 from src.trainer import ParallelSolverTrainer
@@ -20,7 +21,7 @@ def main(
         ckpt_dir: str,
         save_dir: str,
         train_file: str,
-        model_type: str = "7B",
+        model_type: str = "llama-1-7b",
         max_seq_len: int = 512,
         max_batch_size: int = 1,
         lr: float = 1e-5,
@@ -48,7 +49,7 @@ def main(
         r=lora_rank
     ).from_json(config_file)
 
-    model = LoraLlama(params)
+    model = LoraLlama(params) if '30' not in model_type else LoraLlama30B(params)
     dataset = MultiOutputsDataset(f=train_file)
     dataloader = DataLoader(dataset, batch_size=max_batch_size)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
