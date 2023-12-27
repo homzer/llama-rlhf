@@ -69,12 +69,20 @@ def run(
         ).from_json(reviser_config_file)
 
     for epoch in range(epochs):
-        # Solver Model Collection
         solver_model = Llama(solver_args)
         solver_model.load(solver_ckpt_dir if (
             epoch == 0
         ) else os.path.join(solver_save_dir, f"epoch-{epoch}"), merge_lora=True)
         solver_model.half()
+        # Solver Model Evaluation
+        evaluator = SolverEvaluator(solver_model, tokenizer, solver_eval_batch_size, max_seq_len)
+        outputs = evaluator.forward(task, JsonDataset(label_file))
+        print("Evaluate Accuracy: ", outputs.acc, "Missing: ", outputs.missing)
+        if log_dir is not None:
+            json_dump(outputs.datalist, os.path.join(
+                log_dir, f'results-epoch-{epoch}-{round(outputs.acc, 4)}.json'
+            ), indent=4)
+        # Solver Model Collection
         solver_buffer_collector = SolverBufferCollector(solver_model, tokenizer, max_seq_len)
         solver_rollout_buffer = SolverRolloutBuffer()
         print('Solver buffer collecting ...')
@@ -142,14 +150,7 @@ def run(
                 print(f'LOSS: ', trainer_outputs.loss.item())
                 predict = trainer.predict(trainer_outputs.logits, solver_data.instructions, outputs)[0]
                 print(predict['instruction'] + predict['output'])
-        solver_model.half()
-        evaluator = SolverEvaluator(solver_model, tokenizer, solver_eval_batch_size, max_seq_len)
-        outputs = evaluator.forward(task, JsonDataset(label_file))
-        print("Evaluate Accuracy: ", outputs.acc, "Missing: ", outputs.missing)
-        if log_dir is not None:
-            json_dump(outputs.datalist, os.path.join(
-                log_dir, f'results-epoch-{epoch + 1}-{round(outputs.acc, 4)}.json'
-            ), indent=4)
+
         trainer.save(os.path.join(solver_save_dir, f"epoch-{epoch + 1}"))
 
         solver_model.cpu()
