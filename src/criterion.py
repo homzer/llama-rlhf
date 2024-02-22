@@ -13,7 +13,7 @@ class Loss(nn.Module):
 
 
 class KLDivLoss(Loss):
-    def __init__(self, eps=1e-12):
+    def __init__(self, eps=7e-5):
         super().__init__()
         self.eps = eps
 
@@ -34,12 +34,12 @@ class KLDivLoss(Loss):
         :return: scalar loss.
         """
         logits = logits.view(-1, logits.size(-1))
-        estimates = torch.softmax(logits / T, dim=-1)
+        targets = targets.view(-1, targets.size(-1))
+        estimates = torch.softmax(logits.float() / T, dim=-1).type_as(logits)
         estimates = powmax(estimates + self.eps)
-        targets = targets.view(-1, targets.size(-1)).float()
         targets = powmax(targets + self.eps)
 
-        loss = targets * torch.log(targets / estimates)
+        loss = targets * (torch.log(targets) - torch.log(estimates))
         loss = torch.sum(loss, dim=-1)
         if masks is not None:
             masks = masks.view(-1)

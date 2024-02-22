@@ -1,8 +1,11 @@
 import os
+import re
 from collections import OrderedDict
 from pathlib import Path
+from typing import Union
 
 import fire
+import safetensors
 import torch
 from tqdm import tqdm
 
@@ -28,9 +31,15 @@ def is_col_parallel(name):
            ('output.weight' in name or 'lm_head.wei' in name)
 
 
-def __splitting(state_dict, n):
+def get_layer_id(name):
+    matches = re.findall(r'layers\.(\d+)\.', name)
+    return matches[0]
+
+
+def __splitting(state_dict, n) -> list:
     new_state_dicts = [OrderedDict() for _ in range(n)]
     for name, param in state_dict.items():
+        assert 'lora' not in name, 'can not split a lora checkpoint, merge it first'
         param = param.cpu()
         if is_parallel(name):
             params = []
@@ -54,19 +63,63 @@ def __splitting(state_dict, n):
     return new_state_dicts
 
 
+def __splitting_with_added_tokens(state_dict, n) -> list:
+    if 'output.weight' in state_dict:
+        name = 'output.weight'
+    elif 'lm_head.weight' in state_dict:
+        name = 'lm_head.weight'
+    else:
+        raise KeyError()
+    param = state_dict.pop(name)
+
+    state_dicts = __splitting(state_dict, n)
+
+    # row parallel
+    params = []
+    dim1 = param.shape[1]
+    assert dim1 % n == 0
+    split = dim1 // n
+    for i in range(n):
+        params.append(param[:, i * split: (i + 1) * split])
+
+    for i in range(n):
+        state_dicts[i][name] = params[i].clone()
+
+    return state_dicts
+
+
 def splitting(
-        ckpt_file: str = 'config/13B/consolidated.00.pth',
+        ckpt_file: Union[str, list] = 'config/13B/consolidated.00.pth',
         save_path: str = 'config/13B/4/',
-        n: int = 4
+        n: int = 4,
+        num_added_tokens: int = 0
 ):
-    state_dict = torch.load(ckpt_file, map_location="cpu")
-    new_state_dicts = __splitting(state_dict, n)
+    assert isinstance(ckpt_file, str) or isinstance(ckpt_file, list)
+    if isinstance(ckpt_file, str):
+        state_dict = torch.load(ckpt_file, map_location="cpu")
+    else:
+        state_dict = OrderedDict()
+        for f in ckpt_file:
+            f = str(f)
+            if f.endswith(".safetensors"):
+                with safetensors.safe_open(f, "pt", device="cpu") as reader:
+                    for k in reader.keys():
+                        state_dict[k] = reader.get_tensor(k)
+            else:
+                reader = torch.load(f, map_location="cpu")
+                for k in reader.keys():
+                    state_dict[k] = reader[k]
+
+    if num_added_tokens == 0:
+        new_state_dicts = __splitting(state_dict, n)
+    else:
+        new_state_dicts = __splitting_with_added_tokens(state_dict, n)
     os.makedirs(save_path, exist_ok=True)
     for i in range(n):
         torch.save(new_state_dicts[i], os.path.join(save_path, f'consolidated.0{i}.pth'))
 
 
-def auto_splitting_4_to_8(
+def auto_split_4_to_8(
         ckpt_dir: str = 'config/13B/4/',
         save_dir: str = 'config/13B/8/'
 ):
@@ -79,13 +132,7 @@ def auto_splitting_4_to_8(
         torch.save(state_dicts[i], os.path.join(save_dir, f'consolidated.0{i}.pth'))
 
 
-def merging(
-        ckpt_file1: str = 'config/13B/consolidated.00.pth',
-        ckpt_file2: str = 'config/13B/consolidated.01.pth',
-        save_file: str = 'consolidated.pth'
-):
-    state_dict1 = torch.load(ckpt_file1, map_location='cpu')
-    state_dict2 = torch.load(ckpt_file2, map_location='cpu')
+def __merging(state_dict1, state_dict2) -> dict:
     new_state_dicts = OrderedDict()
 
     for name in state_dict1.keys():
@@ -100,6 +147,34 @@ def merging(
             new_state_dicts[name] = param.clone()
         else:
             new_state_dicts[name] = state_dict1[name].clone()
+
+    return new_state_dicts
+
+
+def auto_merge_8_to_4(
+        ckpt_dir: str = 'config/13B/8/',
+        save_dir: str = 'config/13B/4/'
+):
+    state_dicts = []
+    for i in [0, 2, 4, 6]:
+        state_dict1 = torch.load(os.path.join(ckpt_dir, f"consolidated.0{i}.pth"), map_location="cpu")
+        state_dict2 = torch.load(os.path.join(ckpt_dir, f"consolidated.0{i+1}.pth"), map_location="cpu")
+        state_dicts.append(__merging(state_dict1, state_dict2))
+    os.makedirs(save_dir, exist_ok=True)
+    assert len(state_dicts) == 4
+    for i in range(4):
+        torch.save(state_dicts[i], os.path.join(save_dir, f'consolidated.0{i}.pth'))
+
+
+def merging(
+        ckpt_file1: str = 'config/13B/consolidated.00.pth',
+        ckpt_file2: str = 'config/13B/consolidated.01.pth',
+        save_file: str = 'consolidated.pth'
+):
+    state_dict1 = torch.load(ckpt_file1, map_location='cpu')
+    state_dict2 = torch.load(ckpt_file2, map_location='cpu')
+
+    new_state_dicts = __merging(state_dict1, state_dict2)
 
     for name, param in new_state_dicts.items():
         print(name, param.shape)
@@ -153,6 +228,58 @@ def rename_hf_ckpt_to_llama(
         print(key, value.shape)
 
 
+def auto_split_4_to_8_for_30b(
+        ckpt_dir: str = "config/30B/4/",
+        save_dir: str = "config/30B/8/"
+):
+    os.makedirs(save_dir, exist_ok=True)
+    for mp in range(4):
+        n = 2
+        state_dict = torch.load(os.path.join(ckpt_dir, f"consolidated.0{mp}.pth"), map_location="cpu")
+        new_state_dicts = [OrderedDict() for _ in range(n)]
+        for name, param in state_dict.items():
+            param = param.cpu()
+            if is_parallel(name):
+                params = []
+                if is_col_parallel(name):
+                    if 'wq' in name or 'wk' in name or 'wv' in name:
+                        layer_id = int(get_layer_id(name))
+                        if layer_id < 30:
+                            params.append(param[:896])
+                            params.append(param[896:])
+                        else:
+                            params.append(param[:768])
+                            params.append(param[768:])
+                    else:
+                        dim0 = param.shape[0]
+                        assert dim0 % n == 0
+                        split = dim0 // n
+                        for i in range(n):
+                            params.append(param[i * split: (i + 1) * split])
+                else:  # row parallel
+                    if 'wo' in name:
+                        layer_id = int(get_layer_id(name))
+                        if layer_id < 30:
+                            params.append(param[:, :896])
+                            params.append(param[:, 896:])
+                        else:
+                            params.append(param[:, :768])
+                            params.append(param[:, 768:])
+                    else:
+                        dim1 = param.shape[1]
+                        assert dim1 % n == 0
+                        split = dim1 // n
+                        for i in range(n):
+                            params.append(param[:, i * split: (i + 1) * split])
+                for i in range(n):
+                    new_state_dicts[i][name] = params[i].clone()
+            else:
+                for i in range(n):
+                    new_state_dicts[i][name] = param.clone()
+        for i in range(n):
+            torch.save(new_state_dicts[i], os.path.join(save_dir, f'consolidated.0{(mp*2)+i}.pth'))
+
+
 def show(
         ckpt_file: str = "config/orca-1-13b/pytorch_model.bin"
 ):
@@ -171,6 +298,31 @@ def remove_added_tokens(
     torch.save(state_dict, ckpt_file.replace(".bin", "_removed.bin"))
     for key, value in state_dict.items():
         print(key, value.shape)
+
+
+def merge_lora(
+        ckpt_dir: str = 'config/13B/8/',
+        save_dir: str = 'config/13B/8/merge'
+):
+    result_dicts = []
+    checkpoints = sorted(Path(ckpt_dir).glob("*.pth"))
+    for ckpt_file in checkpoints:
+        result_dict = {}
+        state_dict = torch.load(ckpt_file, map_location="cpu")
+        for name, param in state_dict.items():
+            if 'lora' not in name:
+                result_dict[name] = param.clone()
+            elif 'lora_a_' in name:
+                origin = name.replace('lora_a_', '')
+                w = state_dict[origin]
+                wa = state_dict[name]
+                wb = state_dict[name.replace('lora_a_', 'lora_b_')]
+                result_dict[origin] = (w + wb @ wa).clone().to(w.dtype)
+        result_dicts.append(result_dict)
+
+    os.makedirs(save_dir, exist_ok=True)
+    for i, result_dict in enumerate(result_dicts):
+        torch.save(result_dict, os.path.join(save_dir, f'consolidated.0{i}.pth'))
 
 
 def convert_dtype(
@@ -193,4 +345,4 @@ def convert_dtype(
 
 
 if __name__ == '__main__':
-    fire.Fire(convert_dtype)
+    fire.Fire(merge_lora)

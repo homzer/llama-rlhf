@@ -9,12 +9,11 @@ from tqdm import tqdm
 from src.dataset import JsonDataset, EvoMultiOutputsDataset, ReviseDataset
 from src.entities import Timer
 from src.evaluator import SolverEvaluator
-from src.modeling.llama import Llama
-from src.modeling.llama_lora import LoraLlama
-from src.modeling.modeling_args import LoraLlamaArgs, LlamaArgs
+from src.models.llama import Llama, LoraLlama
+from src.models.modeling_args import LoraLlamaArgs, LlamaArgs
 from src.ppo.buffer import CriticRolloutBuffer, SolverRolloutBuffer
 from src.ppo.collector import SolverBufferCollector, LabelBufferCollector
-from src.tokenizer import LlamaTokenizer
+from src.tokenizers import LlamaTokenizer
 from src.trainer import ParallelSolverTrainer
 from src.utils import setup_model_parallel, json_dump, set_barrier
 
@@ -151,6 +150,7 @@ def run(
 
         # Solver Model Collecting
         solver_model = Llama(solver_args)
+        solver_model.init_weights()
         solver_model.load(solver_ckpt_dir if (
                 epoch == 0
         ) else os.path.join(solver_save_dir, f"epoch-{epoch}"), merge_lora=True)
@@ -206,6 +206,7 @@ def run(
 
         # Reviser Model Collecting
         reviser_model = Llama(reviser_args)
+        reviser_model.init_weights()
         reviser_model.load(reviser_ckpt_dir, merge_lora=reviser_lora_rank > 0)
         reviser_buffer_collector = SolverBufferCollector(reviser_model, tokenizer, reviser_max_seq_len)
         revise_correct_rollout_buffer, reviser_datalist = revise(
@@ -237,6 +238,7 @@ def run(
 
         # Training
         solver_model = LoraLlama(solver_args)
+        solver_model.init_weights()
         optimizer = torch.optim.Adam(solver_model.parameters(), lr=lr)
         trainer = ParallelSolverTrainer(solver_model, tokenizer, optimizer, max_seq_len)
         evaluator = SolverEvaluator(solver_model, tokenizer, eval_batch_size, max_seq_len)

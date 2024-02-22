@@ -7,9 +7,8 @@ import torch
 import torch.nn as nn
 
 from src.criterion import RewardLoss, KLDivLoss
-from src.modeling.llama_lora import LoraLlamaVerifier
-from src.modeling.modeling import ParallelModule, ParallelModelForCausalLM, Module
-from src.tokenizer import LlamaTokenizer
+from src.models.modeling import Module, ParallelModule, ParallelModelForCausalLM, ParallelVerifier
+from src.tokenizers import Tokenizer
 from src.utils import set_barrier
 
 
@@ -17,6 +16,13 @@ class Trainer:
     def __init__(self, model: Module, optimizer: torch.optim.Optimizer):
         self.model = model
         self.optimizer = optimizer
+        # To avoid overflowing
+        # if "eps" in self.optimizer.defaults:
+        #     dtype = torch.get_default_dtype()
+        #     if dtype == torch.float16:
+        #         self.optimizer.defaults["eps"] = torch.finfo(dtype).tiny
+        #         for group in self.optimizer.param_groups:
+        #             group["eps"] = torch.finfo(dtype).tiny
 
     def forward(self, *args, **kwargs):
         raise NotImplementedError
@@ -58,16 +64,15 @@ class Trainer:
         self.save_model(save_path)
 
 
-class ParallelTrainer:
+class ParallelTrainer(Trainer):
     def __init__(
             self,
             model: ParallelModule,
             optimizer: torch.optim.Optimizer
     ):
+        super().__init__(model, optimizer)
         self.local_rank = model.local_rank
         self.world_size = model.world_size
-        self.model = model
-        self.optimizer = optimizer
 
     def forward(self, *args, **kwargs):
         raise NotImplementedError
@@ -91,7 +96,7 @@ class ParallelTrainer:
             checkpoints
         ), f"Loading a optimizer for MP={len(checkpoints)} but world size is {self.world_size}"
         optim_file = checkpoints[self.local_rank]
-        state_dict = torch.load(optim_file)
+        state_dict = torch.load(str(optim_file))
         self.optimizer.load_state_dict(state_dict)
         for state in self.optimizer.state.values():
             for k, v in state.items():
@@ -100,32 +105,12 @@ class ParallelTrainer:
         set_barrier()
         print(f'Loading done !')
 
-    def save_model(self, save_path: str):
-        self.model.save(save_path)
-
-    def load_model(self, save_path: str):
-        self.model.load(save_path)
-
-    def load(self, save_path: str):
-        if save_path is None or save_path.lower() == "none":
-            print("WARNING: Not loading model because `save_path` is None")
-            return
-        self.load_optimizer(save_path)
-        self.load_model(save_path)
-
-    def save(self, save_path: str):
-        if save_path is None or save_path.lower() == "none":
-            print("WARNING: Not saving model because `save_path` is None")
-            return
-        self.save_optimizer(save_path)
-        self.save_model(save_path)
-
 
 class ParallelSolverTrainer(ParallelTrainer):
     def __init__(
             self,
             model: ParallelModelForCausalLM,
-            tokenizer: LlamaTokenizer,
+            tokenizer: Tokenizer,
             optimizer: torch.optim.Optimizer,
             max_seq_len: int,
             accumulation_steps: int = 1
@@ -183,8 +168,8 @@ class ParallelSolverTrainer(ParallelTrainer):
         bzs = int(logits.shape[0])
         datalist = []
         for i in range(bzs):
-            instruction_ids = self.tokenizer.tokenize(instructions[i], bos=True)
-            output_ids = self.tokenizer.tokenize(outputs[i], eos=True)
+            instruction_ids = self.tokenizer.encode(instructions[i], bos=True)
+            output_ids = self.tokenizer.encode(outputs[i], eos=True)
             instruction_ids, output_ids = self._truncating_strategy(instruction_ids, output_ids)
             instr_len, output_len = len(instruction_ids), len(output_ids)
             predict_ids = torch.argmax(logits[i], dim=-1)[instr_len - 1: instr_len - 1 + output_len].tolist()
@@ -209,7 +194,7 @@ class ParallelSolverDistillTrainer(ParallelSolverTrainer):
     def __init__(
             self,
             model: ParallelModelForCausalLM,
-            tokenizer: LlamaTokenizer,
+            tokenizer: Tokenizer,
             optimizer: torch.optim.Optimizer,
             max_seq_len: int,
             accumulation_steps: int = 1
@@ -221,27 +206,72 @@ class ParallelSolverDistillTrainer(ParallelSolverTrainer):
             max_seq_len=max_seq_len,
             accumulation_steps=accumulation_steps
         )
-        self.criterion = KLDivLoss()
+        self.criterion_ce = nn.CrossEntropyLoss(ignore_index=-100)
+        self.criterion_kl = KLDivLoss()
 
-    def distill(self, instructions: List[str], outputs: List[str], target_logits: torch.Tensor):
+    def distill(
+            self,
+            instructions: List[str],
+            outputs: List[str],
+            target_logits: torch.Tensor,
+            alpha: float = 1.0
+    ):
         self.model.train()
         example = self.prepare_for_training(instructions=instructions, outputs=outputs)
         logits = self.model.forward(example.tokens).logits
-        loss = self.criterion.forward(
+
+        loss_ce = self.criterion_ce.forward(
+            input=logits.view(-1, logits.size(-1)),
+            target=example.labels.view(-1).to(logits.device)
+        )
+        loss_kl = self.criterion_kl.forward(
             logits=logits,
-            targets=torch.softmax(target_logits, dim=-1).to(logits.device),
+            targets=torch.softmax(target_logits.float(), dim=-1).to(logits),
             masks=example.masks.to(logits.device)
         )
+        loss = loss_ce + alpha * loss_kl
         self._back_propagation(loss)
-        Output = collections.namedtuple('Output', ['loss', 'logits'])
-        return Output(logits=logits, loss=loss)
+        Output = collections.namedtuple('Output', ['loss', 'logits', 'loss_kl', 'loss_ce'])
+        return Output(logits=logits, loss=loss, loss_kl=loss_kl, loss_ce=loss_ce)
+
+    def distill_(
+            self,
+            instructions: List[str],
+            outputs: List[str],
+            target_logits: torch.Tensor,
+            target_logits_: torch.Tensor,
+            alpha: float = 1.0,
+            beta: float = 1.0
+    ):
+        self.model.train()
+        example = self.prepare_for_training(instructions=instructions, outputs=outputs)
+        logits = self.model.forward(example.tokens).logits
+
+        loss_ce = self.criterion_ce.forward(
+            input=logits.view(-1, logits.size(-1)),
+            target=example.labels.view(-1).to(logits.device)
+        )
+        loss_kl = self.criterion_kl.forward(
+            logits=logits,
+            targets=torch.softmax(target_logits.float(), dim=-1).to(logits),
+            masks=example.masks.to(logits.device)
+        )
+        loss_kl_ = self.criterion_kl.forward(
+            logits=logits,
+            targets=torch.softmax(target_logits_.float(), dim=-1).to(logits),
+            masks=example.masks.to(logits.device)
+        )
+        loss = loss_ce + alpha * loss_kl + beta * loss_kl_
+        self._back_propagation(loss)
+        Output = collections.namedtuple('Output', ['loss', 'logits', 'loss_kl', 'loss_ce', 'loss_kl_'])
+        return Output(logits=logits, loss=loss, loss_kl=loss_kl, loss_ce=loss_ce, loss_kl_=loss_kl_)
 
 
 class ParallelVerifierTrainer(ParallelTrainer):
     def __init__(
             self,
-            model: LoraLlamaVerifier,
-            tokenizer: LlamaTokenizer,
+            model: ParallelVerifier,
+            tokenizer: Tokenizer,
             optimizer: torch.optim.Optimizer,
             accumulation_steps: int = 1
     ):
@@ -249,7 +279,7 @@ class ParallelVerifierTrainer(ParallelTrainer):
         self.model = model
         self.local_rank = model.local_rank
         self.world_size = model.world_size
-        self.max_seq_len = self.model.params.max_seq_len
+        self.max_seq_len = self.model.args.max_seq_len
         self.tokenizer = tokenizer
         self.optimizer = optimizer
         self.criterion = RewardLoss()

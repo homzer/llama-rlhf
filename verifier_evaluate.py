@@ -4,9 +4,9 @@ import fire
 
 from src.dataset import PairwiseDataset
 from src.evaluator import VerifierEvaluator
-from src.modeling.llama_lora import LoraLlamaVerifier
-from src.modeling.modeling_args import LoraLlamaArgs
-from src.tokenizer import LlamaTokenizer
+from src.models.llama import LoraLlamaVerifier
+from src.models.modeling_args import LoraLlamaArgs
+from src.tokenizers import LlamaTokenizer
 from src.utils import setup_model_parallel, json_dump
 
 
@@ -35,6 +35,7 @@ def main(
     ).from_json(config_file)
 
     model = LoraLlamaVerifier(params)
+    model.init_weights()
     model.load(ckpt_dir)
     evaluator = VerifierEvaluator(model, LlamaTokenizer(tokenizer_path), max_batch_size, max_seq_len)
     outputs = evaluator.forward(PairwiseDataset(label_file))

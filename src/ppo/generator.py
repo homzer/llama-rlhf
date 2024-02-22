@@ -5,9 +5,8 @@ import numpy as np
 import torch
 
 from src.generator import GeneratorForVerifier
-from src.modeling.llama_lora import LoraLlamaVerifier
-from src.modeling.modeling import ModelForCausalLM, ParallelModelForCausalLM
-from src.tokenizer import Tokenizer, LlamaTokenizer
+from src.models.modeling import ModelForCausalLM, ParallelModelForCausalLM, ParallelVerifier, Verifier
+from src.tokenizers import Tokenizer
 from src.utils import sample_top_p
 
 ActionGeneratorOutputs = collections.namedtuple("ActionGeneratorOutputs", [
@@ -83,9 +82,7 @@ class SolverGeneratorForCausalLM:
             if hidden_states is None:
                 hidden_states = torch.zeros(
                     (*tokens.shape, outputs.hidden_states.shape[-1]),
-                    dtype=torch.float32,
-                    device=self.model.device()
-                )
+                ).to(outputs.hidden_states)
             hidden_states[:, prev_pos: cur_pos, :] = outputs.hidden_states
             next_tokens = sampling_strategy(outputs.logits, t, p)  # [b, s]
             next_token = next_tokens[:, -1].reshape(-1)
@@ -183,8 +180,8 @@ class ActorGeneratorForCausalLM(SolverGeneratorForCausalLM):
         tokens = tokens.clone()
         hidden_states = None
         unfinished_sequences = torch.ones(size=[bsz], dtype=torch.long, device=self.model.device())
-        logits = torch.zeros((*tokens.shape, self.vocab_size), dtype=torch.float32, device=self.model.device())
-        tokens_logits = torch.zeros(tokens.shape, dtype=torch.float32, device=self.model.device())
+        logits = torch.zeros((*tokens.shape, self.vocab_size))
+        tokens_logits = torch.zeros(tokens.shape)
         for cur_pos in range(start_pos, self.max_seq_len):
             with torch.no_grad():
                 outputs = self.model.forward(
@@ -193,12 +190,13 @@ class ActorGeneratorForCausalLM(SolverGeneratorForCausalLM):
             if hidden_states is None:
                 hidden_states = torch.zeros(
                     (*tokens.shape, outputs.hidden_states.shape[-1]),
-                    dtype=torch.float32,
                     device=self.model.device()
                 )
             hidden_states[:, prev_pos: cur_pos, :] = outputs.hidden_states
+            logits = logits.to(outputs.logits)
             logits[:, prev_pos: cur_pos, :] = outputs.logits
             next_tokens = sampling_strategy(outputs.logits, t, p)
+            tokens_logits = tokens_logits.to(outputs.logits)
             tokens_logits[:, prev_pos: cur_pos] = torch.gather(
                 outputs.logits, dim=-1, index=next_tokens.unsqueeze(-1)
             ).squeeze(-1)
@@ -244,7 +242,7 @@ class ActorGeneratorForCausalLM(SolverGeneratorForCausalLM):
 
 
 class CriticGeneratorForCausalLM:
-    def __init__(self, verifier: LoraLlamaVerifier, tokenizer: LlamaTokenizer, max_seq_len: int):
+    def __init__(self, verifier: Union[Verifier, ParallelVerifier], tokenizer: Tokenizer, max_seq_len: int):
         self.tokenizer = tokenizer
         self.generator = GeneratorForVerifier(verifier, tokenizer, max_seq_len)
 
@@ -252,4 +250,4 @@ class CriticGeneratorForCausalLM:
         outputs = []
         for action, action_mask in zip(actions, action_masks):
             outputs.append(action[action_mask].tolist())
-        return self.generator.forward(obs, outputs).tokens_rewards
+        return self.generator.forward(obs, outputs).tokens_scores

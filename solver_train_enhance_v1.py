@@ -9,11 +9,11 @@ from tqdm import tqdm
 from src.dataset import JsonDataset
 from src.entities import Timer
 from src.evaluator import SolverEvaluator
-from src.modeling.llama_lora import LoraLlama
-from src.modeling.modeling_args import LoraLlamaArgs
+from src.models.llama import LoraLlama
+from src.models.modeling_args import LoraLlamaArgs
 from src.ppo.buffer import CriticRolloutBuffer, ActorRolloutBuffer
 from src.ppo.collector import ActorBufferCollector, LabelBufferCollector
-from src.tokenizer import LlamaTokenizer
+from src.tokenizers import LlamaTokenizer
 from src.trainer import ParallelSolverTrainer
 from src.utils import setup_model_parallel, json_dump, json_load, deduplicate_texts
 
@@ -87,6 +87,7 @@ def run(
         r=lora_rank
     ).from_json(solver_config_file)
     solver_model = LoraLlama(solver_args)
+    solver_model.init_weights()
     optimizer = torch.optim.Adam(solver_model.parameters(), lr=lr)
     trainer = ParallelSolverTrainer(solver_model, tokenizer, optimizer, max_seq_len)
     evaluator = SolverEvaluator(solver_model, tokenizer, eval_batch_size, max_seq_len)

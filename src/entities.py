@@ -22,23 +22,13 @@ class SlimLogits:
         (batch_size, seq_len, vocab_size) = logits.shape
         assert self.batch_size == batch_size
         assert self.vocab_size == vocab_size
+        if logits.device.type == "cpu":
+            logits = logits.float()  # topk is not implemented for half on cpu
         values, indices = torch.topk(logits, k=self.n)
-        self.values = values.cpu()
-        self.indices = indices.cpu()
+        self.values = values.detach().cpu()
+        self.indices = indices.detach().cpu()
 
-    # def add(self, logits: torch.Tensor):
-    #     """ add logits along 'max_seq_len' dim. """
-    #     assert not self.start < 0
-    #     (batch_size, seq_len, vocab_size) = logits.shape
-    #     assert self.batch_size == batch_size
-    #     assert self.vocab_size == vocab_size
-    #     assert self.max_seq_len - self.start >= seq_len
-    #     values, indices = torch.topk(logits, k=self.n)
-    #     self.values[:, self.start: self.start + seq_len, :] = values.cpu().numpy()
-    #     self.indices[:, self.start: self.start + seq_len, :] = indices.cpu().numpy()
-    #     self.start += seq_len
-
-    def extend(self, slim_logits):
+    def extend(self, slim_logits: "SlimLogits"):
         """ Batch extend. """
         if self.vocab_size is None:
             self.vocab_size = slim_logits.vocab_size
@@ -65,9 +55,9 @@ class SlimLogits:
         assert 0 <= i < len(self), "Index out of range error"
         value = self.values[i]  # [s, n]
         index = self.indices[i]  # [s, n]
-        logits = torch.full((self.max_seq_len, self.vocab_size), fill_value=-1e5, dtype=torch.float32)
+        logits = torch.full((self.max_seq_len, self.vocab_size), fill_value=-1e4)
         for j in range(self.max_seq_len):
-            logits[j, index[j]] = value[j]
+            logits[j, index[j]] = value[j].to(logits)
         return logits  # [s, v]
 
 
@@ -104,3 +94,19 @@ class Timer:
         self.ticktock = 0
         self.last = None
         self.avg_time = 0
+
+
+class AverageMeter:
+    def __init__(self):
+        self.avg = 0
+        self.step = 0
+
+    def forward(self, x: int):
+        """ Accumulate average computation """
+        self.step += 1
+        self.avg = self.avg + 1 / self.step * (x - self.avg)
+        return self.avg
+
+    def reset(self):
+        self.avg = 0
+        self.step = 0

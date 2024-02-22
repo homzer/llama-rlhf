@@ -3,8 +3,7 @@ import collections
 import torch
 
 from src.criterion import MSELoss
-from src.modeling.llama_lora import LoraLlamaVerifier
-from src.modeling.modeling import ParallelModelForCausalLM
+from src.models.modeling import ParallelModelForCausalLM, ParallelVerifier
 from src.ppo.buffer import RolloutBufferSample
 from src.ppo.policy import AbstractPolicyForCausalLM, AbstractParallelPolicyForCausalLM
 from src.trainer import ParallelTrainer, Trainer
@@ -157,7 +156,7 @@ class ParallelActorTrainerForCausalLM(ParallelTrainer):
 
 
 class ParallelCriticTrainerForCausalLM(ParallelTrainer):
-    def __init__(self, critic: LoraLlamaVerifier, optimizer: torch.optim.Optimizer):
+    def __init__(self, critic: ParallelVerifier, optimizer: torch.optim.Optimizer):
         super().__init__(critic, optimizer)
         self.critic = critic
         self.step = 0
@@ -171,7 +170,7 @@ class ParallelCriticTrainerForCausalLM(ParallelTrainer):
         action_masks = rollout_data.action_masks.to(self.critic.device())
         returns = rollout_data.returns.to(self.critic.device())
 
-        values = self.critic.forward(obs)
+        values = self.critic.forward(obs).scores
         values = values / (masked_std(values, action_masks, keepdim=True) + 1e-12)
 
         loss = self.criterion.forward(values, returns, action_masks)

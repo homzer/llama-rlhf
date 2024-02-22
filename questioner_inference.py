@@ -7,10 +7,10 @@ import fire
 from src.dataset import JsonDataset
 from src.entities import Timer
 from src.generator import GeneratorForCausalLM
-from src.modeling.llama import Llama
-from src.modeling.llama_lora import LoraLlama
-from src.modeling.modeling_args import LoraLlamaArgs, LlamaArgs
-from src.tokenizer import LlamaTokenizer
+from src.models.llama import Llama
+from src.models.llama import LoraLlama
+from src.models.modeling_args import LoraLlamaArgs, LlamaArgs
+from src.tokenizers import LlamaTokenizer
 from src.utils import setup_model_parallel, set_barrier
 
 
@@ -55,6 +55,7 @@ def main(
             world_size=world_size,
             r=lora_rank).from_json(config_file)
         model = LoraLlama(params)
+    model.init_weights()
     model.load(ckpt_dir)
     set_barrier()
     dataset = JsonDataset(train_file)

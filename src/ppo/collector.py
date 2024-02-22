@@ -5,19 +5,23 @@ import torch
 
 from src.dataset import JsonDataset
 from src.evaluator import GSM8KEvaluator
-from src.generator import GeneratorForCausalLM
-from src.modeling.llama_lora import LoraLlamaVerifier
-from src.modeling.modeling import ModelForCausalLM, ParallelModelForCausalLM
+from src.models.modeling import ModelForCausalLM, ParallelModelForCausalLM, Verifier, ParallelVerifier
 from src.ppo.buffer import (
     RolloutBuffer,
     PolicyRolloutBuffer,
     CriticRolloutBuffer,
     ActorRolloutBuffer,
-    SolverRolloutBuffer, LogitsRolloutBuffer)
-from src.ppo.generator import CriticGeneratorForCausalLM, ActorGeneratorForCausalLM, SolverGeneratorForCausalLM, \
+    SolverRolloutBuffer,
+    LogitsRolloutBuffer
+)
+from src.ppo.generator import (
+    CriticGeneratorForCausalLM,
+    ActorGeneratorForCausalLM,
+    SolverGeneratorForCausalLM,
     LogitsGeneratorForCausalLM
+)
 from src.ppo.policy import AbstractPolicyForCausalLM, AbstractParallelPolicyForCausalLM
-from src.tokenizer import Tokenizer, LlamaTokenizer
+from src.tokenizers.tokenizer import Tokenizer
 
 
 class BufferCollector:
@@ -117,7 +121,7 @@ class ActorBufferCollector:
 
 
 class CriticBufferCollector:
-    def __init__(self, critic: LoraLlamaVerifier, tokenizer: LlamaTokenizer, max_seq_len: int):
+    def __init__(self, critic: Union[Verifier, ParallelVerifier], tokenizer: Tokenizer, max_seq_len: int):
         self.generator = CriticGeneratorForCausalLM(
             verifier=critic, tokenizer=tokenizer, max_seq_len=max_seq_len
         )
@@ -132,7 +136,7 @@ class CriticBufferCollector:
 
 
 class LabelBufferCollector:
-    def __init__(self, task: str, dataset: JsonDataset, tokenizer: LlamaTokenizer, max_seq_len: int):
+    def __init__(self, task: str, dataset: JsonDataset, tokenizer: Tokenizer, max_seq_len: int):
         self.tokenizer = tokenizer
         self.max_seq_len = max_seq_len
         self.evaluator = {
@@ -166,12 +170,14 @@ class LogitsBufferCollector:
             self,
             model: Union[ModelForCausalLM, ParallelModelForCausalLM],
             tokenizer: Tokenizer,
-            max_seq_len: int
+            max_seq_len: int,
     ):
         self.generator = LogitsGeneratorForCausalLM(
             model=model, tokenizer=tokenizer, max_seq_len=max_seq_len
         )
 
-    def forward(self, instructions: List[str]) -> LogitsRolloutBuffer:
-        outputs = self.generator.forward(instructions)
-        return LogitsRolloutBuffer(instructions=instructions, logits=outputs.logits)
+    def forward(self, instructions: List[str], outputs: List[str]) -> LogitsRolloutBuffer:
+        assert len(instructions) == len(outputs)
+        tokens = [instruction + output for instruction, output in zip(instructions, outputs)]
+        generator_outputs = self.generator.forward(tokens)
+        return LogitsRolloutBuffer(instructions=instructions, outputs=outputs, logits=generator_outputs.logits)

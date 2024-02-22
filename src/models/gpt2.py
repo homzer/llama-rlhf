@@ -2,8 +2,8 @@ import torch
 import torch.nn as nn
 from transformers.activations import ACT2FN
 
-from src.modeling.modeling import ModelForCausalLM, CausalLMOutputs
-from src.modeling.modeling_args import GPT2Args
+from src.models.modeling import ModelForCausalLM, CausalLMOutputs
+from src.models.modeling_args import GPT2Args
 from src.utils import logits_normalize
 
 
@@ -166,6 +166,10 @@ class GPT2(ModelForCausalLM):
         self.h = nn.ModuleList([GPT2Block(args) for _ in range(args.n_layer)])
         self.ln_f = nn.LayerNorm(self.embed_dim, eps=args.layer_norm_epsilon)
         self.lm_head = None
+
+    def init_weights(self):
+        """ Obviate the need for GPT2. """
+        pass
 
     def _init_lm_head(self):
         if self.lm_head is None:

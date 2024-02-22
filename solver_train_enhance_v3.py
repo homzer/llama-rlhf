@@ -9,31 +9,32 @@ from tqdm import tqdm
 from src.dataset import JsonDataset, MultiOutputsDataset
 from src.entities import Timer
 from src.evaluator import SolverEvaluator
-from src.modeling.llama import Llama
-from src.modeling.llama_lora import LoraLlama
-from src.modeling.modeling_args import LoraLlamaArgs, LlamaArgs
+from src.models.llama import Llama, LoraLlama
+from src.models.llama_30b import Llama30B
+from src.models.llama_70b import Llama70B
+from src.models.modeling_args import LoraLlamaArgs, LlamaArgs
 from src.ppo.buffer import SolverRolloutBuffer, LogitsRolloutBuffer
 from src.ppo.collector import SolverBufferCollector, LogitsBufferCollector
-from src.tokenizer import LlamaTokenizer
+from src.tokenizers import LlamaTokenizer
 from src.trainer import ParallelSolverDistillTrainer
 from src.utils import setup_model_parallel, json_dump, set_barrier, json_load
 
 
 def run(
         task: str,
+        train_file: str,
+        label_file: str,
         solver_ckpt_dir: str,
         solver_config_file: str,
         solver_save_dir: str,
         solver_lora_rank: int,
         reviser_ckpt_dir: str,
         reviser_config_file: str,
-        reviser_lora_rank: int,
-        train_file: str,
-        label_file: str,
+        reviser_model_type: str = "llama-1-13b",
         log_dir: str = None,
         max_batch_size: int = 6,
         solver_eval_batch_size: int = 384,
-        reviser_eval_batch_size: int = 196,
+        reviser_eval_batch_size: int = 64,
         max_seq_len: int = 512,
         epochs: int = 1,
         lr: float = 1e-5,
@@ -54,22 +55,16 @@ def run(
         world_size=world_size,
         r=solver_lora_rank
     ).from_json(solver_config_file)
-    if reviser_lora_rank > 0:
-        reviser_args = LoraLlamaArgs(
-            max_seq_len=max_seq_len,
-            local_rank=local_rank,
-            world_size=world_size,
-            r=reviser_lora_rank
-        ).from_json(reviser_config_file)
-    else:
-        reviser_args = LlamaArgs(
-            max_seq_len=max_seq_len,
-            local_rank=local_rank,
-            world_size=world_size
-        ).from_json(reviser_config_file)
+
+    reviser_args = LlamaArgs(
+        max_seq_len=max_seq_len,
+        local_rank=local_rank,
+        world_size=world_size
+    ).from_json(reviser_config_file)
 
     for epoch in range(epochs):
         solver_model = Llama(solver_args)
+        solver_model.init_weights()
         solver_model.load(solver_ckpt_dir if (
             epoch == 0
         ) else os.path.join(solver_save_dir, f"epoch-{epoch}"), merge_lora=True)
@@ -102,8 +97,15 @@ def run(
         set_barrier()
 
         # Reviser Model Collection
-        reviser_model = Llama(reviser_args)
-        reviser_model.load(reviser_ckpt_dir, merge_lora=reviser_lora_rank > 0)
+        if '30' in reviser_model_type:
+            reviser_model = Llama30B(reviser_args)
+        elif '70' in reviser_model_type:
+            reviser_model = Llama70B(reviser_args)
+        else:
+            reviser_model = Llama(reviser_args)
+        reviser_model.init_weights()
+        reviser_model.half()
+        reviser_model.load(reviser_ckpt_dir, merge_lora=True)
         reviser_model.half()
         reviser_buffer_collector = LogitsBufferCollector(reviser_model, tokenizer, max_seq_len)
         reviser_rollout_buffer = LogitsRolloutBuffer()
@@ -125,6 +127,7 @@ def run(
         set_barrier()
 
         solver_model = LoraLlama(solver_args)
+        solver_model.init_weights()
         optimizer = torch.optim.Adam(solver_model.parameters(), lr=lr)
         trainer = ParallelSolverDistillTrainer(solver_model, tokenizer, optimizer, max_seq_len)
         solver_model.load(solver_ckpt_dir, merge_lora=True) if (

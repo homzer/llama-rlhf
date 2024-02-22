@@ -4,9 +4,9 @@ import fire
 
 from src.dataset import JsonDataset
 from src.evaluator import SolverEvaluator
-from src.modeling.llama_lora import LoraLlama
-from src.modeling.modeling_args import LoraLlamaArgs
-from src.tokenizer import LlamaTokenizer
+from src.models.llama import LoraLlama
+from src.models.modeling_args import LoraLlamaArgs
+from src.tokenizers import LlamaTokenizer
 from src.utils import setup_model_parallel, json_dump, json_load
 
 
@@ -38,6 +38,7 @@ def main(
     ).from_json(config_file)
 
     model = LoraLlama(params)
+    model.init_weights()
     model.load(ckpt_dir)
     evaluator = SolverEvaluator(model, LlamaTokenizer(tokenizer_path), max_batch_size, max_seq_len)
 

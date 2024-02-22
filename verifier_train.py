@@ -7,9 +7,9 @@ from tqdm import tqdm
 
 from src.dataset import PairwiseDataset
 from src.evaluator import VerifierEvaluator
-from src.modeling.llama_lora import LoraLlamaVerifier
-from src.modeling.modeling_args import LoraLlamaArgs
-from src.tokenizer import LlamaTokenizer
+from src.models.llama import LoraLlamaVerifier
+from src.models.modeling_args import LoraLlamaArgs
+from src.tokenizers import LlamaTokenizer
 from src.trainer import ParallelVerifierTrainer
 from src.utils import setup_model_parallel, json_dump
 
@@ -46,6 +46,7 @@ def main(
     ).from_json(config_file)
 
     model = LoraLlamaVerifier(params)
+    model.init_weights()
     dataset = PairwiseDataset(f=train_file)
     dataloader = DataLoader(dataset, batch_size=max_batch_size)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)

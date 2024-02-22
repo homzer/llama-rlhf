@@ -3,19 +3,24 @@ from typing import List, Union
 
 import torch
 
-from src.modeling.llama_abstract import AbstractLoraLlamaVerifier
-from src.modeling.modeling import ModelForCausalLM
-from src.tokenizer import LlamaTokenizer, Tokenizer
+from src.models.modeling import ModelForCausalLM, ParallelModelForCausalLM, ParallelVerifier, Verifier
+from src.tokenizers.tokenizer import Tokenizer
 from src.utils import sample_top_p, masked_mean
 
 
 class GeneratorForCausalLM:
-    def __init__(self,  model: ModelForCausalLM,  tokenizer: Tokenizer, max_seq_len: int):
+    def __init__(
+            self,
+            model: Union[ModelForCausalLM, ParallelModelForCausalLM],
+            tokenizer: Tokenizer,
+            max_seq_len: int
+    ):
         self.model = model
         self.max_seq_len = max_seq_len
         self.tokenizer = tokenizer
 
     def forward(self, instructions: List[str], t: float = 0.0, p: float = 0.5) -> List[dict]:
+        self.model.eval()
         bsz = len(instructions)
         prompt_tokens = []
         for x in instructions:
@@ -49,25 +54,36 @@ class GeneratorForCausalLM:
                 break
         decoded = []
         for i, tks in enumerate(tokens.tolist()):
-            prompt_length = len(prompt_tokens[i])
             # cut to max gen len
             tks = tks[: self.max_seq_len]
+            prompt_length = len(prompt_tokens[i])
+            instruction = self.tokenizer.decode(tks[:prompt_length])
+            tks = tks[prompt_length:]
             # cut to eos tok if any
-            if self.tokenizer.eos_id in tks[1:]:
-                tks = tks[: tks.index(self.tokenizer.eos_id, 1)]
+            if self.tokenizer.eos_id in tks:
+                tks = tks[: tks.index(self.tokenizer.eos_id)]
+            output = self.tokenizer.decode(tks)
             decoded.append(dict(
-                instruction=self.tokenizer.decode(tks[:prompt_length]),
-                output=self.tokenizer.decode(tks[prompt_length:])
+                instruction=instruction,
+                output=output
             ))
         self.model.flush()
         return decoded
 
 
 class GeneratorForVerifier:
-    def __init__(self, model: AbstractLoraLlamaVerifier, tokenizer: LlamaTokenizer, max_seq_len: int):
+    def __init__(
+            self,
+            model: Union[Verifier, ParallelVerifier],
+            tokenizer: Tokenizer,
+            max_seq_len: int,
+            reduce: str = "mean"
+    ):
         self.model = model
         self.max_seq_len = max_seq_len
         self.tokenizer = tokenizer
+        self.reduce = reduce
+        assert self.reduce in ["mean", "last"]
 
     def _truncating_strategy(self, instruction_ids, output_ids):
         instruction_length = len(instruction_ids)
@@ -117,10 +133,16 @@ class GeneratorForVerifier:
         self.model.eval()
         examples = self._prepare_for_generation(instructions, outputs)
         with torch.no_grad():
-            tokens_rewards = self.model.forward(examples.tokens).cpu()
-        result_tokens_rewards = []
-        for i, tr in enumerate(tokens_rewards):
-            result_tokens_rewards.append(torch.masked_select(tr, examples.masks[i]).tolist())
-        rewards = masked_mean(tokens_rewards, examples.masks).tolist()
-        Output = collections.namedtuple('Output', ['rewards', 'tokens_rewards'])
-        return Output(rewards=rewards, tokens_rewards=result_tokens_rewards)
+            tokens_scores = self.model.forward(examples.tokens).scores
+        result_tokens_scores = []
+        for i, score in enumerate(tokens_scores):
+            result_tokens_scores.append(torch.masked_select(score, examples.masks[i]).tolist())
+        if self.reduce == "mean":
+            scores = masked_mean(tokens_scores, examples.masks).tolist()
+        else:  # "last"
+            scores = []
+            for i, score in enumerate(tokens_scores):
+                ids = examples.masks[i].nonzero()
+                scores.append(score[ids[-1].item() if len(ids) > 0 else -1].item())
+        Output = collections.namedtuple('Output', ['scores', 'tokens_scores'])
+        return Output(scores=scores, tokens_scores=result_tokens_scores)

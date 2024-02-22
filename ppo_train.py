@@ -9,12 +9,12 @@ from tqdm import tqdm
 from src.dataset import JsonDataset
 from src.entities import Timer
 from src.evaluator import SolverEvaluator
-from src.modeling.llama_lora import LoraLlamaVerifier, LoraLlama
-from src.modeling.modeling_args import LoraLlamaArgs
+from src.models.llama import LoraLlamaVerifier, LoraLlama
+from src.models.modeling_args import LoraLlamaArgs
 from src.ppo.buffer import CriticRolloutBuffer, RolloutBuffer, ActorRolloutBuffer
 from src.ppo.collector import CriticBufferCollector, ActorBufferCollector
 from src.ppo.trainer import ParallelActorTrainerForCausalLM, ParallelCriticTrainerForCausalLM
-from src.tokenizer import LlamaTokenizer
+from src.tokenizers import LlamaTokenizer
 from src.utils import setup_model_parallel, set_barrier, json_dump
 
 
@@ -68,6 +68,7 @@ def run(
 
     for epoch in range(epochs):
         actor = LoraLlama(actor_args)
+        actor.init_weights()
         actor.load(actor_ckpt_dir if epoch == 0 else os.path.join(actor_save_dir, f"epoch-{epoch}"))
 
         # Evaluation
@@ -99,6 +100,7 @@ def run(
         set_barrier()
 
         critic = LoraLlamaVerifier(critic_args)
+        critic.init_weights()
         critic.load(critic_ckpt_dir if epoch == 0 else os.path.join(critic_save_dir, f"epoch-{epoch}"))
         critic_buffer_collector = CriticBufferCollector(critic, tokenizer, max_seq_len)
         critic_rollout_buffer = CriticRolloutBuffer()
@@ -118,6 +120,7 @@ def run(
         set_barrier()
 
         reward_model = LoraLlamaVerifier(reward_model_args)
+        reward_model.init_weights()
         reward_model.load(reward_model_ckpt_dir)
         reward_buffer_collector = CriticBufferCollector(reward_model, tokenizer, max_seq_len)
         reward_rollout_buffer = CriticRolloutBuffer()
@@ -156,6 +159,7 @@ def run(
         }, f'buffer_{epoch}.bin')
 
         actor = LoraLlama(actor_args)
+        actor.init_weights()
         actor_optimizer = torch.optim.Adam(actor.parameters(), lr=0.1 * lr if epoch == 0 else lr)
         actor_trainer = ParallelActorTrainerForCausalLM(actor, actor_optimizer)
         actor_trainer.load_model(actor_ckpt_dir) if (
@@ -179,6 +183,7 @@ def run(
         set_barrier()
 
         critic = LoraLlamaVerifier(critic_args)
+        critic.init_weights()
         critic_optimizer = torch.optim.Adam(critic.parameters(), lr=lr)
         critic_trainer = ParallelCriticTrainerForCausalLM(critic, critic_optimizer)
         critic_trainer.load_model(critic_ckpt_dir) if (

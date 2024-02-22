@@ -2,7 +2,7 @@ import os
 
 import fire
 
-from src.dataset import JsonDataset
+from prompt_solver_forward import PromptDataset
 from src.evaluator import SolverEvaluator
 from src.models.modeling_utils import get_parallel_model
 from src.utils import setup_model_parallel, json_dump
@@ -38,13 +38,12 @@ def main(
     )
     model.load(ckpt_dir, merge_lora=not lora_rank > 0)
     evaluator = SolverEvaluator(model, tokenizer, max_batch_size, max_seq_len)
-    outputs = evaluator.forward(task, JsonDataset(label_file), t=t, p=p)
+    outputs = evaluator.forward(task, PromptDataset(label_file), t=t, p=p)
     print("Evaluate Accuracy: ", outputs.acc, "Missing: ", outputs.missing)
-    if local_rank == 0:
-        os.makedirs(log_dir, exist_ok=True)
-        json_dump(outputs.datalist, os.path.join(
-            log_dir, f'results-{round(outputs.acc, 4)}.json'
-        ), indent=4)
+    os.makedirs(log_dir, exist_ok=True)
+    json_dump(outputs.datalist, os.path.join(
+        log_dir, f'results-{round(outputs.acc, 4)}.json'
+    ), indent=4)
 
 
 if __name__ == '__main__':

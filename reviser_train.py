@@ -6,9 +6,9 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from src.dataset import ReviseDataset
-from src.modeling.llama_lora import LoraLlama
-from src.modeling.modeling_args import LoraLlamaArgs
-from src.tokenizer import LlamaTokenizer
+from src.models.llama import LoraLlama
+from src.models.modeling_args import LoraLlamaArgs
+from src.tokenizers import LlamaTokenizer
 from src.trainer import ParallelSolverTrainer
 from src.utils import setup_model_parallel
 
@@ -52,6 +52,7 @@ def main(
     ).from_json(config_file)
 
     model = LoraLlama(params)
+    model.init_weights()
     model.load(ckpt_dir)
     # model.save_merge(os.path.join(save_dir, f"epoch-0"))
     # model.load_merge(os.path.join(save_dir, f"epoch-0"))

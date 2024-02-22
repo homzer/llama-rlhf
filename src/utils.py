@@ -3,7 +3,6 @@ import os
 import pickle
 import random
 import sys
-import time
 from pathlib import Path
 from typing import Tuple, List, Union, Callable
 
@@ -189,7 +188,7 @@ def extract_logits(logits, p=0.8, max_n=10, min_n=5):
 
 def reconstruct_logits_from_dict(logits_dict: dict, vocab_size: int = 32000) -> torch.Tensor:
     # logits = torch.zeros(size=(vocab_size,))
-    logits = torch.full(size=(vocab_size,), fill_value=-1e5, dtype=torch.float32)
+    logits = torch.full(size=(vocab_size,), fill_value=-1e4, dtype=torch.float16)
     for index, lgt in logits_dict.items():
         index, lgt = int(index), float(lgt)
         logits[index] = lgt
@@ -209,7 +208,7 @@ def reconstruct_logits_from_dicts(
     return logits
 
 
-def powmax(tensor, exponent=1, dim=-1, eps=1e-12):
+def powmax(tensor, exponent=1, dim=-1, eps=7e-5):
     """ Similar to softmax, perform power max on vectors along one specific dimension. """
     numerator = torch.pow(tensor, exponent=exponent)
     denominator = torch.sum(numerator, dim=dim, keepdim=True)
@@ -279,10 +278,11 @@ def merge_lora_state_dict(state_dict: dict) -> dict:
                 res_state_dict[name] = param.clone()
             elif 'lora_a_' in name:
                 origin = name.replace('lora_a_', '')
-                w = state_dict[origin]
-                wa = state_dict[name]
-                wb = state_dict[name.replace('lora_a_', 'lora_b_')]
-                res_state_dict[origin] = (w + wb @ wa).clone().to(w.dtype)
+                original_dtype = state_dict[origin].dtype
+                w = state_dict[origin].float()
+                wa = state_dict[name].float()
+                wb = state_dict[name.replace('lora_a_', 'lora_b_')].float()
+                res_state_dict[origin] = (w + wb @ wa).clone().to(original_dtype)
     return res_state_dict
 
 
@@ -342,6 +342,27 @@ def masked_normalize(x: Union[torch.Tensor, np.ndarray], masks: Union[torch.Tens
         raise TypeError('Unknown type: ', type(x))
 
 
+def clamp(x: torch.Tensor, disable: bool = False) -> torch.Tensor:
+    """
+    Clamp inf values to enable fp16 training.
+    Will slow down speed, disable it when you don't need it.
+    """
+    if disable or not x.requires_grad:
+        return x
+    if x.dtype == torch.float16:
+        clamp_value = torch.where(
+            torch.isinf(x).any(),
+            torch.finfo(x.dtype).max - 1000,
+            torch.finfo(x.dtype).max
+        ).item()
+        x = torch.clamp(x, min=-clamp_value, max=clamp_value)
+    return x
+
+
+def apply_lora(x: torch.Tensor, lora_a: torch.nn.Module, lora_b: torch.nn.Module):
+    return lora_b(lora_a(x.type_as(next(lora_a.parameters()))).type_as(next(lora_b.parameters()))).type_as(x)
+
+
 # ===============================================================
 
 
@@ -358,7 +379,7 @@ def deduplicate_texts(iterable: list, threshold: float = 0.8, key: Callable = No
         results.append(iterable[i])
         for j in range(i + 1, len(iterable)):
             sim = jaccard(set(key(iterable[i]).split(' ')), set(key(iterable[j]).split(' ')))
-            if sim > threshold:
+            if sim >= threshold:
                 results.pop(-1)
                 break
 

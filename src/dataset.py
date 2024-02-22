@@ -28,14 +28,15 @@ class JsonDataset(Dataset):
 
 
 class MultiOutputsDataset(JsonDataset):
-    def __init__(self, f):
+    def __init__(self, f, randomize: bool = True):
         super().__init__(f)
+        self.randomize = randomize
         assert "output" in self.datalist[0].keys()
         assert type(self.datalist[0]['output']) is list
 
     def __getitem__(self, i):
         data = self.datalist[i].copy()
-        data['output'] = random.sample(data['output'], 1)[0]
+        data['output'] = random.sample(data['output'], 1)[0] if self.randomize else data['output'][0]
         return data
 
 
