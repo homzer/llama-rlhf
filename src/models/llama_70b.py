@@ -170,50 +170,50 @@ class LoraAttention70B(Attention70B):
             self.args.dim,
             self.args.r,
             bias=False
-        )
+        ).float()
         self.lora_b_wq = ColumnParallelLinear(
             self.args.r,
             self.args.n_heads * self.head_dim,
             bias=False,
             gather_output=False,
             init_method=init.zeros_,
-        )
+        ).float()
         self.lora_a_wk = nn.Linear(
             self.args.dim,
             self.args.r,
             bias=False
-        )
+        ).float()
         self.lora_b_wk = ColumnParallelLinear(
             self.args.r,
             self.n_kv_heads * self.head_dim,
             bias=False,
             gather_output=False,
             init_method=init.zeros_,
-        )
+        ).float()
         self.lora_a_wv = nn.Linear(
             self.args.dim,
             self.args.r,
             bias=False
-        )
+        ).float()
         self.lora_b_wv = ColumnParallelLinear(
             self.args.r,
             self.n_kv_heads * self.head_dim,
             bias=False,
             gather_output=False,
             init_method=init.zeros_,
-        )
+        ).float()
         self.lora_a_wo = RowParallelLinear(
             self.args.n_heads * self.head_dim,
             self.args.r,
             bias=False,
             input_is_parallel=True,
             init_method=init.xavier_normal_,
-        )
+        ).float()
         self.lora_b_wo = nn.Linear(
             self.args.r,
             self.args.dim,
             bias=False
-        )
+        ).float()
         init.zeros_(self.lora_b_wo.weight)
 
     def forward(
@@ -265,39 +265,39 @@ class LoraFeedForward70B(FeedForward70B):
             self.dim,
             self.r,
             bias=False
-        )
+        ).float()
         self.lora_b_w1 = ColumnParallelLinear(
             self.r,
             self.hidden_dim,
             bias=False,
             gather_output=False,
             init_method=init.zeros_,
-        )
+        ).float()
         self.lora_a_w2 = RowParallelLinear(
             self.hidden_dim,
             self.r,
             bias=False,
             input_is_parallel=True,
             init_method=init.xavier_normal_,
-        )
+        ).float()
         self.lora_b_w2 = nn.Linear(
             self.r,
             self.dim,
             bias=False
-        )
+        ).float()
         init.zeros_(self.lora_b_w2.weight)
         self.lora_a_w3 = nn.Linear(
             self.dim,
             self.r,
             bias=False
-        )
+        ).float()
         self.lora_b_w3 = ColumnParallelLinear(
             self.r,
             self.hidden_dim,
             bias=False,
             gather_output=False,
             init_method=init.zeros_,
-        )
+        ).float()
 
     def forward(self, x):
         w1_x = self.w1(x) + apply_lora(x, self.lora_a_w1, self.lora_b_w1)

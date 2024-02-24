@@ -106,50 +106,50 @@ class LoraAttention30B(Attention30B):
             self.args.dim,
             self.args.r,
             bias=False
-        )
+        ).float()
         self.lora_b_wq = ColumnParallelLinearPartitioned(
             self.args.r,
             get_partition_size(self.args.local_rank, self.layer_id),
             bias=False,
             gather_output=False,
             init_method=init.zeros_
-        )
+        ).float()
         self.lora_a_wk = nn.Linear(
             self.args.dim,
             self.args.r,
             bias=False
-        )
+        ).float()
         self.lora_b_wk = ColumnParallelLinearPartitioned(
             self.args.r,
             get_partition_size(self.args.local_rank, self.layer_id),
             bias=False,
             gather_output=False,
             init_method=init.zeros_
-        )
+        ).float()
         self.lora_a_wv = nn.Linear(
             self.args.dim,
             self.args.r,
             bias=False
-        )
+        ).float()
         self.lora_b_wv = ColumnParallelLinearPartitioned(
             self.args.r,
             get_partition_size(self.args.local_rank, self.layer_id),
             bias=False,
             gather_output=False,
             init_method=init.zeros_
-        )
+        ).float()
         self.lora_a_wo = RowParallelLinearPartitioned(
             get_partition_size(self.args.local_rank, self.layer_id),
             self.args.r,
             bias=False,
             input_is_parallel=True,
             init_method=init.xavier_normal_
-        )
+        ).float()
         self.lora_b_wo = nn.Linear(
             self.args.r,
             self.args.dim,
             bias=False
-        )
+        ).float()
         init.zeros_(self.lora_b_wo.weight)
 
 
