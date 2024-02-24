@@ -78,9 +78,7 @@ def main(
             if trainer.step % 100 == 0:
                 print(f'step {trainer.step} ----------------------------------')
                 print("LOSS: ", outputs.loss.item())
-                predict = trainer.predict(
-                    outputs.logits, data['instruction'], data['output']
-                )[0]
+                predict = trainer.predict(outputs.logits, data['instruction'], data['output'])[0]
                 print(predict['instruction'] + predict['output'])
             if trainer.step > 1000:
                 break
