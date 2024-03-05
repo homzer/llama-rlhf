@@ -47,7 +47,7 @@ def compute_position_ids(start_pos: int, seq_length: int):
 class LlamaRotaryEmbedding(nn.Module):
     def __init__(self, dim, max_position_embeddings=2048, base=10000, device=None):
         super().__init__()
-        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float().to(device) / dim))
+        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).type(self.args.lora_dtype).to(device) / dim))
         self.register_buffer("inv_freq", inv_freq)
 
         # Build here to make `torch.jit.trace` work.
@@ -315,50 +315,50 @@ class LoraAttentionHF(AttentionHF):
             self.args.dim,
             self.args.r,
             bias=False
-        ).float()
+        ).type(self.args.lora_dtype)
         self.lora_b_q_proj = ColumnParallelLinear(
             self.args.r,
             self.args.n_heads * self.head_dim,
             bias=False,
             gather_output=False,
             init_method=init.zeros_,
-        ).float()
+        ).type(self.args.lora_dtype)
         self.lora_a_k_proj = nn.Linear(
             self.args.dim,
             self.args.r,
             bias=False
-        ).float()
+        ).type(self.args.lora_dtype)
         self.lora_b_k_proj = ColumnParallelLinear(
             self.args.r,
             self.args.n_heads * self.head_dim,
             bias=False,
             gather_output=False,
             init_method=init.zeros_,
-        ).float()
+        ).type(self.args.lora_dtype)
         self.lora_a_v_proj = nn.Linear(
             self.args.dim,
             self.args.r,
             bias=False
-        ).float()
+        ).type(self.args.lora_dtype)
         self.lora_b_v_proj = ColumnParallelLinear(
             self.args.r,
             self.args.n_heads * self.head_dim,
             bias=False,
             gather_output=False,
             init_method=init.zeros_,
-        ).float()
+        ).type(self.args.lora_dtype)
         self.lora_a_o_proj = RowParallelLinear(
             self.args.n_heads * self.head_dim,
             self.args.r,
             bias=False,
             input_is_parallel=True,
             init_method=init.xavier_normal_,
-        ).float()
+        ).type(self.args.lora_dtype)
         self.lora_b_o_proj = nn.Linear(
             self.args.r,
             self.args.dim,
             bias=False
-        ).float()
+        ).type(self.args.lora_dtype)
         init.zeros_(self.lora_b_wo.weight)
 
     def forward(
@@ -394,6 +394,7 @@ class LoraAttentionHF(AttentionHF):
 class LoraFeedForwardHF(FeedForwardHF):
     def __init__(self, args: LoraLlamaArgs):
         super().__init__(args)
+        self.args = args
         self.r = args.r
 
         self.lora_a_gate_proj = None
@@ -410,39 +411,39 @@ class LoraFeedForwardHF(FeedForwardHF):
             self.dim,
             self.r,
             bias=False
-        ).float()
+        ).type(self.args.lora_dtype)
         self.lora_b_gate_proj = ColumnParallelLinear(
             self.r,
             self.hidden_dim,
             bias=False,
             gather_output=False,
             init_method=init.zeros_,
-        ).float()
+        ).type(self.args.lora_dtype)
         self.lora_a_down_proj = RowParallelLinear(
             self.hidden_dim,
             self.r,
             bias=False,
             input_is_parallel=True,
             init_method=init.xavier_normal_,
-        ).float()
+        ).type(self.args.lora_dtype)
         self.lora_b_down_proj = nn.Linear(
             self.r,
             self.dim,
             bias=False
-        ).float()
+        ).type(self.args.lora_dtype)
         init.zeros_(self.lora_b_w2.weight)
         self.lora_a_up_proj = nn.Linear(
             self.dim,
             self.r,
             bias=False
-        ).float()
+        ).type(self.args.lora_dtype)
         self.lora_b_up_proj = ColumnParallelLinear(
             self.r,
             self.hidden_dim,
             bias=False,
             gather_output=False,
             init_method=init.zeros_,
-        ).float()
+        ).type(self.args.lora_dtype)
 
     def forward(self, x):
         w1_x = self.gate_proj(x) + apply_lora(x, self.lora_a_gate_proj, self.lora_b_gate_proj)
@@ -481,14 +482,14 @@ class LoraLlamaHF(LlamaHF):
             self.args.dim,
             self.args.r,
             bias=False
-        ).float()
+        ).type(self.args.lora_dtype)
         self.lora_b_lm_head = ColumnParallelLinear(
             self.args.r,
             self.args.vocab_size,
             bias=False,
             gather_output=True,
             init_method=init.zeros_
-        ).float()
+        ).type(self.args.lora_dtype)
 
         # Freeze parameters
         self._freeze()

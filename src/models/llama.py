@@ -83,6 +83,7 @@ class Attention(AttentionForCausalLM):
 class FeedForward(nn.Module):
     def __init__(self, args: LlamaArgs):
         super().__init__()
+        self.args = args
         hidden_dim = int(2 * (4 * args.dim) / 3)
         hidden_dim = args.multiple_of * ((hidden_dim + args.multiple_of - 1) // args.multiple_of)
         self.hidden_dim = hidden_dim
@@ -294,56 +295,57 @@ class LoraAttention(Attention):
             self.args.dim,
             self.args.r,
             bias=False
-        ).float()
+        ).type(self.args.lora_dtype)
         self.lora_b_wq = ColumnParallelLinear(
             self.args.r,
             self.args.n_heads * self.head_dim,
             bias=False,
             gather_output=False,
             init_method=init.zeros_,
-        ).float()
+        ).type(self.args.lora_dtype)
         self.lora_a_wk = nn.Linear(
             self.args.dim,
             self.args.r,
             bias=False
-        ).float()
+        ).type(self.args.lora_dtype)
         self.lora_b_wk = ColumnParallelLinear(
             self.args.r,
             self.args.n_heads * self.head_dim,
             bias=False,
             gather_output=False,
             init_method=init.zeros_,
-        ).float()
+        ).type(self.args.lora_dtype)
         self.lora_a_wv = nn.Linear(
             self.args.dim,
             self.args.r,
             bias=False
-        ).float()
+        ).type(self.args.lora_dtype)
         self.lora_b_wv = ColumnParallelLinear(
             self.args.r,
             self.args.n_heads * self.head_dim,
             bias=False,
             gather_output=False,
             init_method=init.zeros_,
-        ).float()
+        ).type(self.args.lora_dtype)
         self.lora_a_wo = RowParallelLinear(
             self.args.n_heads * self.head_dim,
             self.args.r,
             bias=False,
             input_is_parallel=True,
             init_method=init.xavier_normal_,
-        ).float()
+        ).type(self.args.lora_dtype)
         self.lora_b_wo = nn.Linear(
             self.args.r,
             self.args.dim,
             bias=False
-        ).float()
+        ).type(self.args.lora_dtype)
         init.zeros_(self.lora_b_wo.weight)
 
 
 class LoraFeedForward(FeedForward):
     def __init__(self, args: LoraLlamaArgs):
         super().__init__(args)
+        self.args = args
         self.r = args.r
 
         self.lora_a_w1 = None
@@ -366,39 +368,39 @@ class LoraFeedForward(FeedForward):
             self.dim,
             self.r,
             bias=False
-        ).float()
+        ).type(self.args.lora_dtype)
         self.lora_b_w1 = ColumnParallelLinear(
             self.r,
             self.hidden_dim,
             bias=False,
             gather_output=False,
             init_method=init.zeros_,
-        ).float()
+        ).type(self.args.lora_dtype)
         self.lora_a_w2 = RowParallelLinear(
             self.hidden_dim,
             self.r,
             bias=False,
             input_is_parallel=True,
             init_method=init.xavier_normal_,
-        ).float()
+        ).type(self.args.lora_dtype)
         self.lora_b_w2 = nn.Linear(
             self.r,
             self.dim,
             bias=False
-        ).float()
+        ).type(self.args.lora_dtype)
         init.zeros_(self.lora_b_w2.weight)
         self.lora_a_w3 = nn.Linear(
             self.dim,
             self.r,
             bias=False
-        ).float()
+        ).type(self.args.lora_dtype)
         self.lora_b_w3 = ColumnParallelLinear(
             self.r,
             self.hidden_dim,
             bias=False,
             gather_output=False,
             init_method=init.zeros_,
-        ).float()
+        ).type(self.args.lora_dtype)
 
 
 class LoraTransformerBlock(TransformerBlock):
@@ -433,7 +435,6 @@ class LoraLlama(Llama):
         for layer in self.layers:
             h = layer(h, start_pos, freqs_cis, mask, use_cache)
         h = self.norm(h)
-        # self.lora_b_output(self.lora_a_output(h.float())).to(h.dtype)
         output = self.output(h) + apply_lora(h, self.lora_a_output, self.lora_b_output)
         return CausalLMOutputs(logits=logits_normalize(output), hidden_states=h)
 
@@ -444,14 +445,14 @@ class LoraLlama(Llama):
             self.args.dim,
             self.args.r,
             bias=False
-        ).float()
+        ).type(self.args.lora_dtype)
         self.lora_b_output = ColumnParallelLinear(
             self.args.r,
             self.args.vocab_size,
             bias=False,
             gather_output=True,
             init_method=init.zeros_
-        ).float()
+        ).type(self.args.lora_dtype)
 
         # Freeze parameters
         self._freeze()

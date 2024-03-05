@@ -336,50 +336,50 @@ class LoraAttention(Attention):
             self.args.dim,
             self.args.r,
             bias=False
-        ).float()
+        ).type(self.args.lora_dtype)
         self.lora_b_wq = ColumnParallelLinear(
             self.args.r,
             self.args.n_heads * self.args.head_dim,
             bias=False,
             gather_output=False,
             init_method=init.zeros_,
-        ).float()
+        ).type(self.args.lora_dtype)
         self.lora_a_wk = nn.Linear(
             self.args.dim,
             self.args.r,
             bias=False
-        ).float()
+        ).type(self.args.lora_dtype)
         self.lora_b_wk = ColumnParallelLinear(
             self.args.r,
             self.args.n_kv_heads * self.args.head_dim,
             bias=False,
             gather_output=False,
             init_method=init.zeros_,
-        ).float()
+        ).type(self.args.lora_dtype)
         self.lora_a_wv = nn.Linear(
             self.args.dim,
             self.args.r,
             bias=False
-        ).float()
+        ).type(self.args.lora_dtype)
         self.lora_b_wv = ColumnParallelLinear(
             self.args.r,
             self.args.n_kv_heads * self.args.head_dim,
             bias=False,
             gather_output=False,
             init_method=init.zeros_,
-        ).float()
+        ).type(self.args.lora_dtype)
         self.lora_a_wo = RowParallelLinear(
             self.args.n_heads * self.args.head_dim,
             self.args.r,
             bias=False,
             input_is_parallel=True,
             init_method=init.xavier_normal_,
-        ).float()
+        ).type(self.args.lora_dtype)
         self.lora_b_wo = nn.Linear(
             self.args.r,
             self.args.dim,
             bias=False
-        ).float()
+        ).type(self.args.lora_dtype)
         init.zeros_(self.lora_b_wo.weight)
 
     def forward(
@@ -406,7 +406,6 @@ class LoraAttention(Attention):
             xk, xv = repeat_kv(xk, xv, self.repeats)
 
         output = self.apply_attention(xq, xk, xv, mask[None, None, ...] if mask is not None else None)
-        # self.lora_b_wo(self.lora_a_wo(output.float())).to(output.dtype)
         return self.wo(output) + apply_lora(output, self.lora_a_wo, self.lora_b_wo)
 
 
@@ -428,47 +427,44 @@ class LoraFeedForward(FeedForward):
             self.args.dim,
             self.args.r,
             bias=False
-        ).float()
+        ).type(self.args.lora_dtype)
         self.lora_b_w1 = ColumnParallelLinear(
             self.args.r,
             self.args.hidden_dim,
             bias=False,
             gather_output=False,
             init_method=init.zeros_,
-        ).float()
+        ).type(self.args.lora_dtype)
         self.lora_a_w2 = RowParallelLinear(
             self.args.hidden_dim,
             self.args.r,
             bias=False,
             input_is_parallel=True,
             init_method=init.xavier_normal_,
-        ).float()
+        ).type(self.args.lora_dtype)
         self.lora_b_w2 = nn.Linear(
             self.args.r,
             self.args.dim,
             bias=False
-        ).float()
+        ).type(self.args.lora_dtype)
         init.zeros_(self.lora_b_w2.weight)
         self.lora_a_w3 = nn.Linear(
             self.args.dim,
             self.args.r,
             bias=False
-        ).float()
+        ).type(self.args.lora_dtype)
         self.lora_b_w3 = ColumnParallelLinear(
             self.args.r,
             self.args.hidden_dim,
             bias=False,
             gather_output=False,
             init_method=init.zeros_,
-        ).float()
+        ).type(self.args.lora_dtype)
 
     def forward(self, x) -> torch.Tensor:
-        # self.lora_b_w1(self.lora_a_w1(x.float())).to(x.dtype)
         w1_x = self.w1(x) + apply_lora(x, self.lora_a_w1, self.lora_b_w1)
-        # self.lora_b_w3(self.lora_a_w3(x.float())).to(x.dtype)
         w3_x = self.w3(x) + apply_lora(x, self.lora_a_w3, self.lora_b_w3)
         out = F.silu(w1_x) * w3_x
-        # self.lora_b_w2(self.lora_a_w2(out.float())).to(out.dtype)
         return self.w2(out) + apply_lora(out, self.lora_a_w2, self.lora_b_w2)
 
 
@@ -497,14 +493,14 @@ class LoraMistral(Mistral):
             self.args.dim,
             self.args.r,
             bias=False
-        ).float()
+        ).type(self.args.lora_dtype)
         self.lora_b_output = ColumnParallelLinear(
             self.args.r,
             self.args.vocab_size,
             bias=False,
             gather_output=True,
             init_method=init.zeros_
-        ).float()
+        ).type(self.args.lora_dtype)
 
         # Freeze parameters
         self._freeze()
@@ -533,7 +529,6 @@ class LoraMistral(Mistral):
         for layer in self.layers:
             h = layer(h, start_pos, freqs_cis, mask, use_cache)
         h = self.norm(h)
-        # self.lora_b_output(self.lora_a_output(h.float())).to(h.dtype)
         output = self.output(h) + apply_lora(h, self.lora_a_output, self.lora_b_output)
 
         return CausalLMOutputs(logits=logits_normalize(output), hidden_states=h)

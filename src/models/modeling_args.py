@@ -1,6 +1,8 @@
 import json
 from dataclasses import dataclass
 
+import torch
+
 HF_CONFIG_MAP = {
     "hidden_size": "dim",
     "num_attention_heads": "n_heads",
@@ -10,6 +12,18 @@ HF_CONFIG_MAP = {
 
 
 class Args:
+    def __post_init__(self):
+        lora_dtype = getattr(self, 'lora_dtype', None)
+        if lora_dtype is not None:
+            if lora_dtype in ['float32', 'fp32']:
+                setattr(self, 'lora_dtype', torch.float32)
+            elif lora_dtype in ['float16', 'fp16']:
+                setattr(self, 'lora_dtype', torch.float16)
+            elif lora_dtype in ['bfloat16', 'bf16']:
+                setattr(self, 'lora_dtype', torch.bfloat16)
+            else:
+                raise ValueError(lora_dtype)
+
     def _set_attribute(self, name, value):
         try:
             if getattr(self, name, None) is None:
@@ -72,7 +86,7 @@ class LlamaArgs(Args):
 @dataclass
 class LoraLlamaArgs(LlamaArgs):
     r: int = None  # Rank of lora
-    lora_dtype: str = "fp32"
+    lora_dtype: str = "float32"
 
 
 @dataclass
@@ -108,4 +122,4 @@ class OpenChatArgs(MistralArgs):
 @dataclass
 class LoraMistralArgs(MistralArgs):
     r: int = None
-    lora_dtype: str = "fp32"
+    lora_dtype: str = "float32"

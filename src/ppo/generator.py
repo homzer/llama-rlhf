@@ -195,6 +195,30 @@ class LogitsGeneratorForCausalLM:
         return LogitsGeneratorOutputs(forward_outputs.logits)
 
 
+class LogitsGeneratorForCausalLMV0(SolverGeneratorForCausalLM):
+    def __init__(
+            self,
+            model: Union[ModelForCausalLM, ParallelModelForCausalLM],
+            tokenizer: Tokenizer,
+            max_seq_len: int,
+    ):
+        super().__init__(model=model, tokenizer=tokenizer, max_seq_len=max_seq_len)
+
+    def _model_forward(self, tokens, input_masks=None, start_pos=None, t=0.0, p=0.8):
+        tokens = tokens.clone()
+        with torch.no_grad():
+            outputs = self.model.forward(tokens)
+
+        Outputs = collections.namedtuple('Outputs', ['logits'])
+        return Outputs(logits=outputs.logits)
+
+    def forward(self, instructions: List[str], t: float = 0.0, p: float = 0.8) -> LogitsGeneratorOutputs:
+        self.model.eval()
+        prep_outputs = self._prepare_for_generation(instructions, eos=True)
+        forward_outputs = self._model_forward(prep_outputs.tokens)
+        return LogitsGeneratorOutputs(forward_outputs.logits)
+
+
 class ActorGeneratorForCausalLM(SolverGeneratorForCausalLM):
     def __init__(
             self,
