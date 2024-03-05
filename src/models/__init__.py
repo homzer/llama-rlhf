@@ -7,3 +7,4 @@ from src.models.mistral import Mistral, LoraMistral
 from src.models.mistral_hf import MistralHF
 from src.models.openchat import OpenChat
 from src.models.gpt2 import GPT2
+from src.models.qwen import Qwen

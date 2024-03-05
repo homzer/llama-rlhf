@@ -255,6 +255,7 @@ class MistralHF(ParallelModelForCausalLM):
         output = self.lm_head(h)
         return CausalLMOutputs(logits=output, hidden_states=h)
 
+    # Copied from llama_hf.LlamaHF.load
     def load(self, ckpt_dir: str, verbose: bool = True, **kwargs):
         checkpoints = sorted(Path(ckpt_dir).glob("consolidated.*.pth"))
         if len(checkpoints) != 0:  # normal loading
@@ -269,11 +270,10 @@ class MistralHF(ParallelModelForCausalLM):
                 else:
                     split_file = sorted(Path(ckpt_dir).glob("*.safetensors"))
                     if len(split_file) == 0:
-                        raise FileNotFoundError("Can not find any checkpoint file")
-                if 'num_added_tokens' in kwargs:
-                    splitting(split_file, pl_ckpt_dir, n=self.world_size, num_added_tokens=kwargs['num_added_tokens'])
-                else:
-                    splitting(split_file, pl_ckpt_dir, n=self.world_size)
+                        split_file = sorted(Path(ckpt_dir).glob("pytorch_model*.bin"))
+                        if len(split_file) == 0:
+                            raise FileNotFoundError("Can not find any checkpoint file")
+                splitting(split_file, pl_ckpt_dir, n=self.world_size)
                 if verbose:
                     print('Done!')
             set_barrier()

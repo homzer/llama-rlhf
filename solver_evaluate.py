@@ -16,7 +16,7 @@ def main(
         model_type: str = "7B",
         max_seq_len: int = 512,
         max_batch_size: int = 1,
-        lora_rank: int = 16,
+        lora_rank: int = -1,
         t: float = 0.0,
         p: float = 1.0,
         tokenizer_file: str = None,

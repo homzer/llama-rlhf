@@ -1,18 +1,21 @@
+import os
+from pathlib import Path
 from typing import Optional
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.nn.init as init
 from fairscale.nn.model_parallel.layers import (
     RowParallelLinear,
     ColumnParallelLinear,
     ParallelEmbedding
 )
 
+from src.checkpoint import splitting
 from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs, AttentionForCausalLM
 from src.models.modeling_acts import Clamp, RMSNorm
 from src.models.modeling_args import QwenArgs
+from src.utils import logits_normalize, set_barrier
 
 
 class Qwen2RotaryEmbedding(nn.Module):
@@ -251,3 +254,91 @@ class QwenTransformerBlock(nn.Module):
         out = h + self.mlp.forward(self.post_attention_layernorm(h))
         out = self.clamp.forward(out)
         return out
+
+
+class QwenHead(nn.Module):
+    def __init__(self, args: QwenArgs):
+        super().__init__()
+        self.args = args
+
+        self.embed_tokens = None
+        self.layers = torch.nn.ModuleList()
+        for layer_id in range(args.num_hidden_layers):
+            self.layers.append(QwenTransformerBlock(args))
+        self.norm = None
+
+    def init_weights(self):
+        self.embed_tokens = ParallelEmbedding(
+            self.args.vocab_size, self.args.hidden_size, init_method=lambda x: x
+        )
+        for layer in self.layers:
+            layer.init_weights()
+        self.norm = RMSNorm(self.args.hidden_size, eps=self.args.rms_norm_eps)
+
+    def forward(self, tokens: torch.Tensor, start_pos=0, use_cache=False):
+        tokens = tokens.to(next(self.parameters()).device)
+        _bsz, seq_len = tokens.shape
+        h = self.embed_tokens(tokens)
+
+        mask = None
+        if seq_len > 1:
+            mask = torch.full((1, 1, seq_len, seq_len), float("-inf"), device=tokens.device)
+            mask = torch.triu(mask, diagonal=start_pos + 1).type_as(h)
+
+        for layer in self.layers:
+            h = layer(h, start_pos, mask, use_cache)
+        return self.norm(h)
+
+
+class Qwen(ParallelModelForCausalLM):
+    def __init__(self, args: QwenArgs):
+        super().__init__(args.local_rank, args.world_size)
+        self.args = args
+        self.model = QwenHead(args)
+        self.lm_head = None
+
+    def init_weights(self):
+        self.model.init_weights()
+        self.lm_head = ColumnParallelLinear(
+            self.args.hidden_size, self.args.vocab_size, bias=False, init_method=lambda x: x
+        )
+
+    def forward(
+            self,
+            tokens: torch.Tensor,
+            start_pos: int = 0,
+            use_cache: bool = False
+    ) -> CausalLMOutputs:
+        h = self.model.forward(tokens, start_pos, use_cache)
+        output = self.lm_head(h)
+        return CausalLMOutputs(logits=logits_normalize(output), hidden_states=h)
+
+    # Copied from llama_hf.LlamaHF.load
+    def load(self, ckpt_dir: str, verbose: bool = True, **kwargs):
+        checkpoints = sorted(Path(ckpt_dir).glob("consolidated.*.pth"))
+        if len(checkpoints) != 0:  # normal loading
+            super().load(ckpt_dir, verbose, **kwargs)
+        else:  # splitting
+            pl_ckpt_dir = os.path.join(ckpt_dir, str(self.world_size))
+            if self.local_rank == 0 and not os.path.exists(pl_ckpt_dir):
+                if verbose:
+                    print(f'Parallel checkpoint dose not exist. Splitting into {pl_ckpt_dir} ...')
+                if os.path.exists(os.path.join(ckpt_dir, "pytorch_model.bin")):
+                    split_file = os.path.join(ckpt_dir, "pytorch_model.bin")
+                else:
+                    split_file = sorted(Path(ckpt_dir).glob("*.safetensors"))
+                    if len(split_file) == 0:
+                        split_file = sorted(Path(ckpt_dir).glob("pytorch_model*.bin"))
+                        if len(split_file) == 0:
+                            raise FileNotFoundError("Can not find any checkpoint file")
+                splitting(split_file, pl_ckpt_dir, n=self.world_size)
+                if verbose:
+                    print('Done!')
+            set_barrier()
+            super().load(pl_ckpt_dir, verbose, **kwargs)
+
+    def flush(self):
+        """ Clean cache in `LlamaAttention` module """
+        for i in range(self.args.num_hidden_layers):
+            self.model.layers[i].self_attn.flush()
+        set_barrier()

@@ -11,24 +11,24 @@ from tqdm import tqdm
 
 
 def is_parallel(name):
-    return ('wq.wei' in name or 'q_proj.wei' in name) or \
-           ('wk.wei' in name or 'k_proj.wei' in name) or \
-           ('wv.wei' in name or 'v_proj.wei' in name) or \
+    return ('wq.wei' in name or 'q_proj.wei' in name or 'wq.bias' in name or 'q_proj.bias' in name) or \
+           ('wk.wei' in name or 'k_proj.wei' in name or 'wk.bias' in name or 'k_proj.bias' in name) or \
+           ('wv.wei' in name or 'v_proj.wei' in name or 'wv.bias' in name or 'v_proj.bias' in name) or \
            ('wo.wei' in name or 'o_proj.wei' in name) or \
-           ('w1.wei' in name or 'gate_proj.wei' in name) or \
+           ('w1.wei' in name or 'gate_proj.wei' in name or 'w1.bias' in name or 'gate_proj.bias' in name) or \
            ('w2.wei' in name or 'down_proj.wei' in name) or \
-           ('w3.wei' in name or 'up_proj.wei' in name) or \
+           ('w3.wei' in name or 'up_proj.wei' in name or 'w3.bias' in name or 'up_proj.bias' in name) or \
            ('tok_embeddings.wei' in name or 'embed_tokens.wei' in name) or \
-           ('output.wei' in name or 'lm_head.wei' in name)
+           ('output.wei' in name or 'lm_head.wei' in name or 'output.bias' in name or 'lm_head.bias' in name)
 
 
 def is_col_parallel(name):
-    return ('wq.wei' in name or 'q_proj.wei' in name) or \
-           ('wk.wei' in name or 'k_proj.wei' in name) or \
-           ('wv.wei' in name or 'v_proj.wei' in name) or \
-           ('w1.wei' in name or 'gate_proj.wei' in name) or \
-           ('w3.wei' in name or 'up_proj.wei' in name) or \
-           ('output.weight' in name or 'lm_head.wei' in name)
+    return ('wq' in name or 'q_proj' in name) or \
+           ('wk' in name or 'k_proj' in name) or \
+           ('wv' in name or 'v_proj' in name) or \
+           ('w1' in name or 'gate_proj' in name) or \
+           ('w3' in name or 'up_proj' in name) or \
+           ('output' in name or 'lm_head' in name)
 
 
 def get_layer_id(name):
@@ -203,7 +203,7 @@ def merge_hf_checkpoints(
     checkpoints = sorted(Path(folder_path).glob("pytorch_model*.bin"))
     results = None
     for ckpt in checkpoints:
-        c = torch.load(ckpt, map_location='cpu')
+        c = torch.load(str(ckpt), map_location='cpu')
         if results is None:
             results = c
             continue
@@ -321,7 +321,7 @@ def merge_lora(
     checkpoints = sorted(Path(ckpt_dir).glob("*.pth"))
     for ckpt_file in checkpoints:
         result_dict = {}
-        state_dict = torch.load(ckpt_file, map_location="cpu")
+        state_dict = torch.load(str(ckpt_file), map_location="cpu")
         for name, param in state_dict.items():
             if 'lora' not in name:
                 result_dict[name] = param.clone()

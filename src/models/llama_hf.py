@@ -16,7 +16,7 @@ from src.checkpoint import splitting
 from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs, AttentionForCausalLM
 from src.models.modeling_acts import RMSNorm, Clamp
 from src.models.modeling_args import LlamaArgs, LoraLlamaArgs
-from src.utils import set_barrier, apply_lora
+from src.utils import set_barrier, apply_lora, logits_normalize
 
 
 def rotate_half(x):
@@ -263,10 +263,15 @@ class LlamaHF(ParallelModelForCausalLM):
             self.args.dim, self.args.vocab_size, bias=False, init_method=lambda x: x
         )
 
-    def forward(self, tokens: torch.Tensor, start_pos=0, use_cache=False):
+    def forward(
+            self,
+            tokens: torch.Tensor,
+            start_pos=0,
+            use_cache=False
+    ):
         h = self.model.forward(tokens, start_pos, use_cache)
         output = self.lm_head(h)
-        return CausalLMOutputs(logits=output, hidden_states=h)
+        return CausalLMOutputs(logits=logits_normalize(output), hidden_states=h)
 
     def load(self, ckpt_dir: str, verbose: bool = True, **kwargs):
         checkpoints = sorted(Path(ckpt_dir).glob("consolidated.*.pth"))
@@ -282,7 +287,9 @@ class LlamaHF(ParallelModelForCausalLM):
                 else:
                     split_file = sorted(Path(ckpt_dir).glob("*.safetensors"))
                     if len(split_file) == 0:
-                        raise FileNotFoundError("Can not find any checkpoint file")
+                        split_file = sorted(Path(ckpt_dir).glob("pytorch_model*.bin"))
+                        if len(split_file) == 0:
+                            raise FileNotFoundError("Can not find any checkpoint file")
                 splitting(split_file, pl_ckpt_dir, n=self.world_size)
                 if verbose:
                     print('Done!')
