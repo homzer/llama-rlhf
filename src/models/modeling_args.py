@@ -9,10 +9,7 @@ HF_CONFIG_MAP = {
 }
 
 
-@dataclass
 class Args:
-    use_clamp: bool = False
-
     def _set_attribute(self, name, value):
         try:
             if getattr(self, name, None) is None:
@@ -49,6 +46,7 @@ class GPT2Args(Args):
     resid_pdrop: float = None
     vocab_size: int = None
     activation_function: str = None
+    use_clamp: bool = False
 
 
 @dataclass
@@ -68,10 +66,13 @@ class LlamaArgs(Args):
     ffn_dim_multiplier: float = None
     n_kv_heads: int = None
 
+    use_clamp: bool = False
+
 
 @dataclass
 class LoraLlamaArgs(LlamaArgs):
     r: int = None  # Rank of lora
+    lora_dtype: str = "fp32"
 
 
 @dataclass
@@ -96,6 +97,8 @@ class MistralArgs(Args):
     # If this is set, we will use MoE layers instead of dense layers.
     moe = None
 
+    use_clamp: bool = False
+
 
 @dataclass
 class OpenChatArgs(MistralArgs):
@@ -105,3 +108,4 @@ class OpenChatArgs(MistralArgs):
 @dataclass
 class LoraMistralArgs(MistralArgs):
     r: int = None
+    lora_dtype: str = "fp32"

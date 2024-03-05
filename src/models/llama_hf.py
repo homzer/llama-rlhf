@@ -14,9 +14,9 @@ from fairscale.nn.model_parallel.layers import (
 
 from src.checkpoint import splitting
 from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs, AttentionForCausalLM
-from src.models.modeling_acts import RMSNorm
+from src.models.modeling_acts import RMSNorm, Clamp
 from src.models.modeling_args import LlamaArgs, LoraLlamaArgs
-from src.utils import set_barrier, clamp, apply_lora
+from src.utils import set_barrier, apply_lora
 
 
 def rotate_half(x):
@@ -129,7 +129,7 @@ class AttentionHF(AttentionForCausalLM):
             use_cache=False
     ):
         bsz, seq_len, _ = x.shape
-        xq, xk, xv = clamp(self.q_proj(x)), clamp(self.k_proj(x)), clamp(self.v_proj(x))
+        xq, xk, xv = self.q_proj(x), self.k_proj(x), self.v_proj(x)
 
         xq = xq.view(bsz, seq_len, self.n_local_heads, self.head_dim)
         xk = xk.view(bsz, seq_len, self.n_local_heads, self.head_dim)
@@ -146,7 +146,7 @@ class AttentionHF(AttentionForCausalLM):
 
         output = self.apply_attention(xq, xk, xv, mask)
 
-        return clamp(self.o_proj(output))
+        return self.o_proj(output)
 
 
 class FeedForwardHF(nn.Module):
@@ -181,7 +181,7 @@ class FeedForwardHF(nn.Module):
         )
 
     def forward(self, x):
-        return clamp(self.down_proj(clamp(F.silu(self.gate_proj(x)) * self.up_proj(x))))
+        return self.down_proj(F.silu(self.gate_proj(x)) * self.up_proj(x))
 
 
 class TransformerBlockHF(nn.Module):
@@ -191,6 +191,8 @@ class TransformerBlockHF(nn.Module):
         self.self_attn = AttentionHF(args)
         self.mlp = FeedForwardHF(args)
         self.layer_id = layer_id
+        self.clamp = Clamp(disable=not args.use_clamp)
+
         self.input_layernorm = None
         self.post_attention_layernorm = None
 
@@ -206,7 +208,9 @@ class TransformerBlockHF(nn.Module):
                 mask: Optional[torch.Tensor],
                 use_cache):
         h = x + self.self_attn.forward(self.input_layernorm(x), start_pos, mask, use_cache)
+        h = self.clamp.forward(h)
         out = h + self.mlp.forward(self.post_attention_layernorm(h))
+        out = self.clamp.forward(out)
         return out
 
 
@@ -259,7 +263,7 @@ class LlamaHF(ParallelModelForCausalLM):
 
     def forward(self, tokens: torch.Tensor, start_pos=0, use_cache=False):
         h = self.model.forward(tokens, start_pos, use_cache)
-        output = clamp(self.lm_head(h))
+        output = self.lm_head(h)
         return CausalLMOutputs(logits=output, hidden_states=h)
 
     def load(self, ckpt_dir: str, verbose: bool = True, **kwargs):
@@ -365,12 +369,9 @@ class LoraAttentionHF(AttentionHF):
             use_cache=False
     ):
         bsz, seq_len, _ = x.shape
-        # self.lora_b_q_proj(self.lora_a_q_proj(x.float())).to(x.dtype)
-        xq = clamp(self.q_proj(x) + apply_lora(x, self.lora_a_q_proj, self.lora_b_q_proj))
-        # self.lora_b_k_proj(self.lora_a_k_proj(x.float())).to(x.dtype)
-        xk = clamp(self.k_proj(x) + apply_lora(x, self.lora_a_k_proj, self.lora_b_k_proj))
-        # self.lora_b_v_proj(self.lora_a_v_proj(x.float())).to(x.dtype)
-        xv = clamp(self.v_proj(x) + apply_lora(x, self.lora_a_v_proj, self.lora_b_v_proj))
+        xq = self.q_proj(x) + apply_lora(x, self.lora_a_q_proj, self.lora_b_q_proj)
+        xk = self.k_proj(x) + apply_lora(x, self.lora_a_k_proj, self.lora_b_k_proj)
+        xv = self.v_proj(x) + apply_lora(x, self.lora_a_v_proj, self.lora_b_v_proj)
 
         xq = xq.view(bsz, seq_len, self.n_local_heads, self.head_dim)
         xk = xk.view(bsz, seq_len, self.n_local_heads, self.head_dim)
@@ -387,8 +388,7 @@ class LoraAttentionHF(AttentionHF):
 
         output = self.apply_attention(xq, xk, xv, mask)
 
-        # self.lora_b_o_proj(self.lora_a_o_proj(output.float())).to(output.dtype)
-        return clamp(self.o_proj(output) + apply_lora(output, self.lora_a_o_proj, self.lora_b_o_proj))
+        return self.o_proj(output) + apply_lora(output, self.lora_a_o_proj, self.lora_b_o_proj)
 
 
 class LoraFeedForwardHF(FeedForwardHF):
@@ -445,13 +445,10 @@ class LoraFeedForwardHF(FeedForwardHF):
         ).float()
 
     def forward(self, x):
-        # self.lora_b_gate_proj(self.lora_a_gate_proj(x.float())).to(x.dtype)
         w1_x = self.gate_proj(x) + apply_lora(x, self.lora_a_gate_proj, self.lora_b_gate_proj)
-        # self.lora_b_up_proj(self.lora_a_up_proj(x.float())).to(x.dtype)
         w3_x = self.up_proj(x) + apply_lora(x, self.lora_a_up_proj, self.lora_b_up_proj)
-        out = clamp(F.silu(w1_x) * w3_x)
-        # self.lora_b_down_proj(self.lora_a_down_proj(out.float())).to(out.dtype)
-        return clamp(self.down_proj(out) + apply_lora(out, self.lora_a_down_proj, self.lora_b_down_proj))
+        out = F.silu(w1_x) * w3_x
+        return self.down_proj(out) + apply_lora(out, self.lora_a_down_proj, self.lora_b_down_proj)
 
 
 class LoraTransformerBlockHF(TransformerBlockHF):
@@ -498,8 +495,7 @@ class LoraLlamaHF(LlamaHF):
 
     def forward(self, tokens: torch.Tensor, start_pos=0, use_cache=False):
         h = self.model.forward(tokens, start_pos, use_cache)
-        # self.lora_b_lm_head(self.lora_a_lm_head(h.float())).to(h.dtype)
-        output = clamp(self.lm_head(h) + apply_lora(h, self.lora_a_lm_head, self.lora_b_lm_head))
+        output = self.lm_head(h) + apply_lora(h, self.lora_a_lm_head, self.lora_b_lm_head)
         return CausalLMOutputs(logits=output, hidden_states=h)
 
     def _freeze(self):

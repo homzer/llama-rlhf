@@ -12,7 +12,7 @@ from fairscale.nn.model_parallel.layers import (
 from src.models.llama import TransformerBlock, Llama, LoraLlama
 from src.models.modeling import AttentionForCausalLM
 from src.models.modeling_args import LlamaArgs, LoraLlamaArgs
-from src.utils import apply_rotary_emb, clamp, apply_lora
+from src.utils import apply_rotary_emb, apply_lora
 
 
 class Attention70B(AttentionForCausalLM):
@@ -69,7 +69,7 @@ class Attention70B(AttentionForCausalLM):
             use_cache=False
     ):
         bsz, seqlen, _ = x.shape
-        xq, xk, xv = clamp(self.wq(x)), clamp(self.wk(x)), clamp(self.wv(x))
+        xq, xk, xv = self.wq(x), self.wk(x), self.wv(x)
 
         xq = xq.view(bsz, seqlen, self.n_local_heads, self.head_dim)
         xk = xk.view(bsz, seqlen, self.n_local_kv_heads, self.head_dim)
@@ -84,7 +84,7 @@ class Attention70B(AttentionForCausalLM):
         xv = self.repeat_kv(xv)
 
         output = self.apply_attention(xq, xk, xv, mask)
-        return clamp(self.wo(output))
+        return self.wo(output)
 
     def repeat_kv(self, x: torch.Tensor) -> torch.Tensor:
         bs, seqlen, n_kv_heads, head_dim = x.shape
@@ -131,7 +131,7 @@ class FeedForward70B(nn.Module):
         )
 
     def forward(self, x):
-        return clamp(self.w2(clamp(F.silu(self.w1(x)) * self.w3(x))))
+        return self.w2(F.silu(self.w1(x)) * self.w3(x))
 
 
 class TransformerBlock70B(TransformerBlock):
@@ -225,9 +225,9 @@ class LoraAttention70B(Attention70B):
             use_cache=False
     ):
         bsz, seqlen, _ = x.shape
-        xq = clamp(self.wq(x) + apply_lora(x, self.lora_a_wq, self.lora_b_wq))
-        xk = clamp(self.wk(x) + apply_lora(x, self.lora_a_wk, self.lora_b_wk))
-        xv = clamp(self.wv(x) + apply_lora(x, self.lora_a_wv, self.lora_b_wv))
+        xq = self.wq(x) + apply_lora(x, self.lora_a_wq, self.lora_b_wq)
+        xk = self.wk(x) + apply_lora(x, self.lora_a_wk, self.lora_b_wk)
+        xv = self.wv(x) + apply_lora(x, self.lora_a_wv, self.lora_b_wv)
 
         xq = xq.view(bsz, seqlen, self.n_local_heads, self.head_dim)
         xk = xk.view(bsz, seqlen, self.n_local_kv_heads, self.head_dim)
@@ -243,7 +243,7 @@ class LoraAttention70B(Attention70B):
 
         output = self.apply_attention(xq, xk, xv, mask)
 
-        return clamp(self.wo(output) + apply_lora(output, self.lora_a_wo, self.lora_b_wo))
+        return self.wo(output) + apply_lora(output, self.lora_a_wo, self.lora_b_wo)
 
 
 class LoraFeedForward70B(FeedForward70B):
@@ -302,8 +302,8 @@ class LoraFeedForward70B(FeedForward70B):
     def forward(self, x):
         w1_x = self.w1(x) + apply_lora(x, self.lora_a_w1, self.lora_b_w1)
         w3_x = self.w3(x) + apply_lora(x, self.lora_a_w3, self.lora_b_w3)
-        out = clamp(F.silu(w1_x) * w3_x)
-        return clamp(self.w2(out) + apply_lora(out, self.lora_a_w2, self.lora_b_w2))
+        out = F.silu(w1_x) * w3_x
+        return self.w2(out) + apply_lora(out, self.lora_a_w2, self.lora_b_w2)
 
 
 class LoraTransformerBlock70B(TransformerBlock70B):

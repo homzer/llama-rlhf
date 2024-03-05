@@ -12,9 +12,9 @@ from fairscale.nn.model_parallel.layers import (
 
 from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs, AttentionForCausalLM, \
     ParallelVerifier, VerifierOutputs
-from src.models.modeling_acts import RMSNorm
+from src.models.modeling_acts import RMSNorm, Clamp
 from src.models.modeling_args import LlamaArgs, LoraLlamaArgs
-from src.utils import apply_rotary_emb, precompute_freqs_cis, set_barrier, logits_normalize, clamp, apply_lora
+from src.utils import apply_rotary_emb, precompute_freqs_cis, set_barrier, logits_normalize, apply_lora
 
 
 class Attention(AttentionForCausalLM):
@@ -38,7 +38,7 @@ class Attention(AttentionForCausalLM):
             use_cache=False
     ):
         bsz, seqlen, _ = x.shape
-        xq, xk, xv = clamp(self.wq(x)), clamp(self.wk(x)), clamp(self.wv(x))
+        xq, xk, xv = self.wq(x), self.wk(x), self.wv(x)
 
         xq = xq.view(bsz, seqlen, self.n_local_heads, self.head_dim)
         xk = xk.view(bsz, seqlen, self.n_local_heads, self.head_dim)
@@ -47,7 +47,7 @@ class Attention(AttentionForCausalLM):
         if use_cache:
             xk, xv = self.apply_cache(xk, xv, start_pos)
         output = self.apply_attention(xq, xk, xv, mask)
-        return clamp(self.wo(output))
+        return self.wo(output)
 
     def init_weights(self):
         self.wq = ColumnParallelLinear(
@@ -87,12 +87,13 @@ class FeedForward(nn.Module):
         hidden_dim = args.multiple_of * ((hidden_dim + args.multiple_of - 1) // args.multiple_of)
         self.hidden_dim = hidden_dim
         self.dim = args.dim
+
         self.w1 = None
         self.w2 = None
         self.w3 = None
 
     def forward(self, x):
-        return clamp(self.w2(clamp(F.silu(self.w1(x)) * self.w3(x))))
+        return self.w2(F.silu(self.w1(x) * self.w3(x)))
 
     def init_weights(self):
         self.w1 = ColumnParallelLinear(
@@ -125,6 +126,8 @@ class TransformerBlock(nn.Module):
         self.args = args
         self.attention = Attention(args)
         self.feed_forward = FeedForward(args)
+        self.clamp = Clamp(disable=not args.use_clamp)
+
         self.attention_norm = None
         self.ffn_norm = None
 
@@ -135,7 +138,9 @@ class TransformerBlock(nn.Module):
                 mask: Optional[torch.Tensor],
                 use_cache):
         h = x + self.attention.forward(self.attention_norm(x), start_pos, freqs_cis, mask, use_cache)
+        h = self.clamp.forward(h)
         h = h + self.feed_forward.forward(self.ffn_norm(h))
+        h = self.clamp.forward(h)
         return h
 
     def init_weights(self):
@@ -176,7 +181,7 @@ class Llama(ParallelModelForCausalLM):
         for layer in self.layers:
             h = layer(h, start_pos, freqs_cis, mask, use_cache)
         h = self.norm(h)
-        output = clamp(self.output(h))
+        output = self.output(h)
         return CausalLMOutputs(logits=logits_normalize(output), hidden_states=h)
 
     def init_weights(self):
@@ -269,12 +274,9 @@ class LoraAttention(Attention):
                 mask: Optional[torch.Tensor],
                 use_cache=False):
         bsz, seqlen, _ = x.shape
-        xq = clamp(self.wq(x) + apply_lora(x, self.lora_a_wq, self.lora_b_wq))
-        # xq = clamp(self.wq(x) + self.lora_b_wq(self.lora_a_wq(x.float())).to(x.dtype))
-        xk = clamp(self.wk(x) + apply_lora(x, self.lora_a_wk, self.lora_b_wk))
-        # xk = clamp(self.wk(x) + self.lora_b_wk(self.lora_a_wk(x.float())).to(x.dtype))
-        xv = clamp(self.wv(x) + apply_lora(x, self.lora_a_wv, self.lora_b_wv))
-        # xv = clamp(self.wv(x) + self.lora_b_wv(self.lora_a_wv(x.float())).to(x.dtype))
+        xq = self.wq(x) + apply_lora(x, self.lora_a_wq, self.lora_b_wq)
+        xk = self.wk(x) + apply_lora(x, self.lora_a_wk, self.lora_b_wk)
+        xv = self.wv(x) + apply_lora(x, self.lora_a_wv, self.lora_b_wv)
 
         xq = xq.view(bsz, seqlen, self.n_local_heads, self.head_dim)
         xk = xk.view(bsz, seqlen, self.n_local_heads, self.head_dim)
@@ -283,8 +285,7 @@ class LoraAttention(Attention):
         if use_cache:
             xk, xv = self.apply_cache(xk, xv, start_pos)
         output = self.apply_attention(xq, xk, xv, mask)
-        # return clamp(self.wo(output) + self.lora_b_wo(self.lora_a_wo(output.float())).to(output.dtype))
-        return clamp(self.wo(output) + apply_lora(output, self.lora_a_wo, self.lora_b_wo))
+        return self.wo(output) + apply_lora(output, self.lora_a_wo, self.lora_b_wo)
 
     def init_weights(self):
         super().init_weights()
@@ -353,13 +354,10 @@ class LoraFeedForward(FeedForward):
         self.lora_b_w3 = None
 
     def forward(self, x):
-        # self.lora_b_w1(self.lora_a_w1(x.float())).to(x.dtype)
         w1_x = self.w1(x) + apply_lora(x, self.lora_a_w1, self.lora_b_w1)
-        # self.lora_b_w3(self.lora_a_w3(x.float())).to(x.dtype)
         w3_x = self.w3(x) + apply_lora(x, self.lora_a_w3, self.lora_b_w3)
-        out = clamp(F.silu(w1_x) * w3_x)
-        # self.lora_b_w2(self.lora_a_w2(out.float())).to(out.dtype)
-        return clamp(self.w2(out) + apply_lora(out, self.lora_a_w2, self.lora_b_w2))
+        out = F.silu(w1_x) * w3_x
+        return self.w2(out) + apply_lora(out, self.lora_a_w2, self.lora_b_w2)
 
     def init_weights(self):
         super().init_weights()
@@ -436,7 +434,7 @@ class LoraLlama(Llama):
             h = layer(h, start_pos, freqs_cis, mask, use_cache)
         h = self.norm(h)
         # self.lora_b_output(self.lora_a_output(h.float())).to(h.dtype)
-        output = clamp(self.output(h) + apply_lora(h, self.lora_a_output, self.lora_b_output))
+        output = self.output(h) + apply_lora(h, self.lora_a_output, self.lora_b_output)
         return CausalLMOutputs(logits=logits_normalize(output), hidden_states=h)
 
     def init_weights(self):

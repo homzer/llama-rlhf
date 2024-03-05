@@ -17,7 +17,7 @@ from src.models.mistral import Attention, repeat_kv, FeedForward, TransformerBlo
 from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs
 from src.models.modeling_acts import RMSNorm
 from src.models.modeling_args import MistralArgs
-from src.utils import set_barrier, clamp
+from src.utils import set_barrier
 
 
 class MistralRotaryEmbedding(nn.Module):
@@ -112,7 +112,7 @@ class AttentionHF(Attention):
     ) -> torch.Tensor:
         bsz, seqlen, _ = x.shape
 
-        xq, xk, xv = clamp(self.q_proj(x)), clamp(self.k_proj(x)), clamp(self.v_proj(x))
+        xq, xk, xv = self.q_proj(x), self.k_proj(x), self.v_proj(x)
         xq = xq.view(bsz, seqlen, self.n_local_heads, self.args.head_dim)
         xk = xk.view(bsz, seqlen, self.n_local_kv_heads, self.args.head_dim)
         xv = xv.view(bsz, seqlen, self.n_local_kv_heads, self.args.head_dim)
@@ -130,7 +130,7 @@ class AttentionHF(Attention):
 
         output = self.apply_attention(xq, xk, xv, mask[None, None, ...] if mask is not None else None)
 
-        return clamp(self.o_proj(output))
+        return self.o_proj(output)
 
 
 class FeedForwardHF(FeedForward):
@@ -165,7 +165,7 @@ class FeedForwardHF(FeedForward):
         )
 
     def forward(self, x) -> torch.Tensor:
-        return clamp(self.down_proj(clamp(F.silu(self.gate_proj(x)) * self.up_proj(x))))
+        return self.down_proj(F.silu(self.gate_proj(x)) * self.up_proj(x))
 
 
 class TransformerBlockHF(TransformerBlock):
@@ -173,6 +173,7 @@ class TransformerBlockHF(TransformerBlock):
         super().__init__(args)
         self.self_attn = AttentionHF(args)
         self.mlp = FeedForwardHF(args)
+
         self.input_layernorm = None
         self.post_attention_layernorm = None
 
@@ -191,7 +192,9 @@ class TransformerBlockHF(TransformerBlock):
             use_cache: bool
     ) -> torch.Tensor:
         h = x + self.self_attn.forward(self.input_layernorm(x), start_pos, freqs_cis, mask, use_cache)
+        h = self.clamp.forward(h)
         out = h + self.mlp.forward(self.post_attention_layernorm(h))
+        out = self.clamp.forward(out)
         return out
 
 
@@ -249,7 +252,7 @@ class MistralHF(ParallelModelForCausalLM):
 
     def forward(self, tokens: torch.Tensor, start_pos=0, use_cache=False):
         h = self.model.forward(tokens, start_pos, use_cache)
-        output = clamp(self.lm_head(h))
+        output = self.lm_head(h)
         return CausalLMOutputs(logits=output, hidden_states=h)
 
     def load(self, ckpt_dir: str, verbose: bool = True, **kwargs):

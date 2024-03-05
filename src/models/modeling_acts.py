@@ -101,3 +101,24 @@ class RowParallelLinearPartitioned(nn.Module):
         else:
             output = output_
         return output
+
+
+class Clamp:
+    def __init__(self, disable: bool = False):
+        self.disable = disable
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Clamp inf values to enable fp16 training.
+        Will slow down speed, disable it when you don't need it.
+        """
+        if self.disable or not x.requires_grad:  # disable when inference
+            return x
+        if x.dtype == torch.float16:
+            clamp_value = torch.where(
+                torch.isinf(x).any(),
+                torch.finfo(x.dtype).max - 1000,
+                torch.finfo(x.dtype).max
+            ).item()
+            x = torch.clamp(x, min=-clamp_value, max=clamp_value)
+        return x
