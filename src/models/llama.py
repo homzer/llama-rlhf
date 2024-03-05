@@ -17,7 +17,7 @@ from src.models.modeling_args import LlamaArgs, LoraLlamaArgs
 from src.utils import apply_rotary_emb, precompute_freqs_cis, set_barrier, logits_normalize, apply_lora
 
 
-class Attention(AttentionForCausalLM):
+class LlamaAttention(AttentionForCausalLM):
     def __init__(self, args: LlamaArgs):
         super().__init__(args.max_seq_len)
         self.args = args
@@ -80,7 +80,7 @@ class Attention(AttentionForCausalLM):
         )
 
 
-class FeedForward(nn.Module):
+class LlamaFeedForward(nn.Module):
     def __init__(self, args: LlamaArgs):
         super().__init__()
         self.args = args
@@ -94,7 +94,7 @@ class FeedForward(nn.Module):
         self.w3 = None
 
     def forward(self, x):
-        return self.w2(F.silu(self.w1(x) * self.w3(x)))
+        return self.w2(F.silu(self.w1(x)) * self.w3(x))
 
     def init_weights(self):
         self.w1 = ColumnParallelLinear(
@@ -120,13 +120,13 @@ class FeedForward(nn.Module):
         )
 
 
-class TransformerBlock(nn.Module):
+class LlamaTransformerBlock(nn.Module):
     def __init__(self, layer_id: int, args: LlamaArgs):
         super().__init__()
         self.layer_id = layer_id
         self.args = args
-        self.attention = Attention(args)
-        self.feed_forward = FeedForward(args)
+        self.attention = LlamaAttention(args)
+        self.feed_forward = LlamaFeedForward(args)
         self.clamp = Clamp(disable=not args.use_clamp)
 
         self.attention_norm = None
@@ -159,7 +159,7 @@ class Llama(ParallelModelForCausalLM):
         self.tok_embeddings = None
         self.layers = torch.nn.ModuleList()
         for layer_id in range(args.n_layers):
-            self.layers.append(TransformerBlock(layer_id, args))
+            self.layers.append(LlamaTransformerBlock(layer_id, args))
         self.norm = None
         self.output = None
 
@@ -200,7 +200,7 @@ class Llama(ParallelModelForCausalLM):
         super().load(ckpt_dir, verbose, merge_lora=merge_lora)
 
     def flush(self):
-        """ Clean cache in `Attention` module """
+        """ Clean cache in `LlamaAttention` module """
         for i in range(self.args.n_layers):
             self.layers[i].attention.flush()
         set_barrier()
@@ -216,7 +216,7 @@ class LlamaVerifier(ParallelVerifier):
         self.tok_embeddings = None
         self.layers = torch.nn.ModuleList()
         for layer_id in range(args.n_layers):
-            self.layers.append(TransformerBlock(layer_id, args))
+            self.layers.append(LlamaTransformerBlock(layer_id, args))
         self.norm = None
         self.v_head = None
 
@@ -255,7 +255,7 @@ class LlamaVerifier(ParallelVerifier):
         super().load(ckpt_dir, verbose, merge_lora=merge_lora)
 
 
-class LoraAttention(Attention):
+class LoraLlamaAttention(LlamaAttention):
     def __init__(self, args: LoraLlamaArgs):
         super().__init__(args)
         self.args = args
@@ -342,7 +342,7 @@ class LoraAttention(Attention):
         init.zeros_(self.lora_b_wo.weight)
 
 
-class LoraFeedForward(FeedForward):
+class LoraLlamaFeedForward(LlamaFeedForward):
     def __init__(self, args: LoraLlamaArgs):
         super().__init__(args)
         self.args = args
@@ -403,11 +403,11 @@ class LoraFeedForward(FeedForward):
         ).type(self.args.lora_dtype)
 
 
-class LoraTransformerBlock(TransformerBlock):
+class LoraLlamaTransformerBlock(LlamaTransformerBlock):
     def __init__(self, layer_id: int, args: LoraLlamaArgs):
         super().__init__(layer_id, args)
-        self.attention = LoraAttention(args)
-        self.feed_forward = LoraFeedForward(args)
+        self.attention = LoraLlamaAttention(args)
+        self.feed_forward = LoraLlamaFeedForward(args)
 
 
 class LoraLlama(Llama):
@@ -416,7 +416,7 @@ class LoraLlama(Llama):
         self.args = args
         self.layers = nn.ModuleList()
         for layer_id in range(args.n_layers):
-            self.layers.append(LoraTransformerBlock(layer_id, args))
+            self.layers.append(LoraLlamaTransformerBlock(layer_id, args))
         self.lora_a_output = None
         self.lora_b_output = None
 
@@ -473,7 +473,7 @@ class LoraLlamaVerifier(LlamaVerifier):
         self.args = args
         self.layers = torch.nn.ModuleList()
         for layer_id in range(args.n_layers):
-            self.layers.append(LoraTransformerBlock(layer_id, args))
+            self.layers.append(LoraLlamaTransformerBlock(layer_id, args))
 
     def init_weights(self):
         super().init_weights()

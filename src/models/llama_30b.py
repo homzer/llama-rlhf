@@ -2,10 +2,10 @@ import torch.nn as nn
 import torch.nn.init as init
 
 from src.models.llama import (
-    Attention,
-    TransformerBlock,
+    LlamaAttention,
+    LlamaTransformerBlock,
     Llama,
-    LoraFeedForward,
+    LoraLlamaFeedForward,
     LoraLlama
 )
 from src.models.modeling_args import LoraLlamaArgs
@@ -34,7 +34,7 @@ def get_n_local_heads(local_rank, layer_id):
         return 6
 
 
-class Attention30B(Attention):
+class LlamaAttention30B(LlamaAttention):
     def __init__(self, args: LoraLlamaArgs, layer_id: int):
         super().__init__(args)
         self.layer_id = layer_id
@@ -71,10 +71,10 @@ class Attention30B(Attention):
         )
 
 
-class TransformerBlock30B(TransformerBlock):
+class LlamaTransformerBlock30B(LlamaTransformerBlock):
     def __init__(self, layer_id: int, args: LoraLlamaArgs):
         super().__init__(layer_id, args)
-        self.attention = Attention30B(args, layer_id)
+        self.attention = LlamaAttention30B(args, layer_id)
 
 
 class Llama30B(Llama):
@@ -82,10 +82,10 @@ class Llama30B(Llama):
         super().__init__(args)
         self.layers = nn.ModuleList()
         for layer_id in range(args.n_layers):
-            self.layers.append(TransformerBlock30B(layer_id, args))
+            self.layers.append(LlamaTransformerBlock30B(layer_id, args))
 
 
-class LoraAttention30B(Attention30B):
+class LoraLlamaAttention30B(LlamaAttention30B):
     def __init__(self, args: LoraLlamaArgs, layer_id: int):
         super().__init__(args, layer_id)
         self.args = args
@@ -153,11 +153,11 @@ class LoraAttention30B(Attention30B):
         init.zeros_(self.lora_b_wo.weight)
 
 
-class LoraTransformerBlock30B(TransformerBlock30B):
+class LoraLlamaTransformerBlock30B(LlamaTransformerBlock30B):
     def __init__(self, layer_id: int, args: LoraLlamaArgs):
         super().__init__(layer_id, args)
-        self.attention = LoraAttention30B(args, layer_id)
-        self.feed_forward = LoraFeedForward(args)
+        self.attention = LoraLlamaAttention30B(args, layer_id)
+        self.feed_forward = LoraLlamaFeedForward(args)
 
 
 class LoraLlama30B(LoraLlama):
@@ -166,4 +166,4 @@ class LoraLlama30B(LoraLlama):
         self.args = args
         self.layers = nn.ModuleList()
         for layer_id in range(args.n_layers):
-            self.layers.append(LoraTransformerBlock30B(layer_id, args))
+            self.layers.append(LoraLlamaTransformerBlock30B(layer_id, args))

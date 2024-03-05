@@ -13,7 +13,7 @@ from fairscale.nn.model_parallel.layers import (
 
 from src.checkpoint import splitting
 from src.models.llama_hf import compute_position_ids, apply_rotary_pos_emb
-from src.models.mistral import Attention, repeat_kv, FeedForward, TransformerBlock
+from src.models.mistral import MistralAttention, repeat_kv, MistralFeedForward, MistralTransformerBlock
 from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs
 from src.models.modeling_acts import RMSNorm
 from src.models.modeling_args import MistralArgs
@@ -56,7 +56,7 @@ class MistralRotaryEmbedding(nn.Module):
         )
 
 
-class AttentionHF(Attention):
+class MistralAttentionHF(MistralAttention):
     def __init__(self, args: MistralArgs):
         super().__init__(args)
 
@@ -133,7 +133,7 @@ class AttentionHF(Attention):
         return self.o_proj(output)
 
 
-class FeedForwardHF(FeedForward):
+class MistralFeedForwardHF(MistralFeedForward):
     def __init__(self, args: MistralArgs):
         super().__init__(args)
 
@@ -168,11 +168,11 @@ class FeedForwardHF(FeedForward):
         return self.down_proj(F.silu(self.gate_proj(x)) * self.up_proj(x))
 
 
-class TransformerBlockHF(TransformerBlock):
+class MistralTransformerBlockHF(MistralTransformerBlock):
     def __init__(self, args: MistralArgs):
         super().__init__(args)
-        self.self_attn = AttentionHF(args)
-        self.mlp = FeedForwardHF(args)
+        self.self_attn = MistralAttentionHF(args)
+        self.mlp = MistralFeedForwardHF(args)
 
         self.input_layernorm = None
         self.post_attention_layernorm = None
@@ -206,7 +206,7 @@ class MistralHeadHF(nn.Module):
         self.embed_tokens = None
         self.layers = torch.nn.ModuleList()
         for _ in range(args.n_layers):
-            self.layers.append(TransformerBlockHF(args))
+            self.layers.append(MistralTransformerBlockHF(args))
         self.norm = None
 
     def init_weights(self):
@@ -280,7 +280,7 @@ class MistralHF(ParallelModelForCausalLM):
             super().load(pl_ckpt_dir, verbose, **kwargs)
 
     def flush(self):
-        """ Clean cache in `Attention` module """
+        """ Clean cache in `LlamaAttention` module """
         for i in range(self.args.n_layers):
             self.model.layers[i].self_attn.flush()
         set_barrier()

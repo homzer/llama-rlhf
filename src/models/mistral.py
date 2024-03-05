@@ -23,7 +23,7 @@ def repeat_kv(keys: torch.Tensor, values: torch.Tensor, repeats: int):
     return keys, values
 
 
-class Attention(AttentionForCausalLM):
+class MistralAttention(AttentionForCausalLM):
     def __init__(self, args: MistralArgs):
         super().__init__(args.max_seq_len)
         self.args = args
@@ -139,7 +139,7 @@ class Attention(AttentionForCausalLM):
         return self.wo(output)
 
 
-class FeedForward(nn.Module):
+class MistralFeedForward(nn.Module):
     def __init__(self, args: MistralArgs):
         super().__init__()
         self.args = args
@@ -174,12 +174,12 @@ class FeedForward(nn.Module):
         return self.w2(F.silu(self.w1(x)) * self.w3(x))
 
 
-class TransformerBlock(nn.Module):
+class MistralTransformerBlock(nn.Module):
     def __init__(self, args: MistralArgs):
         super().__init__()
         self.args = args
-        self.attention = Attention(args)
-        self.feed_forward = FeedForward(args)
+        self.attention = MistralAttention(args)
+        self.feed_forward = MistralFeedForward(args)
         self.clamp = Clamp(disable=not args.use_clamp)
 
         self.attention_norm = None
@@ -216,7 +216,7 @@ class Mistral(ParallelModelForCausalLM):
         self.tok_embeddings = None
         self.layers = torch.nn.ModuleList()
         for _ in range(args.n_layers):
-            self.layers.append(TransformerBlock(args))
+            self.layers.append(MistralTransformerBlock(args))
         self.norm = None
         self.output = None
 
@@ -262,7 +262,7 @@ class Mistral(ParallelModelForCausalLM):
         return CausalLMOutputs(logits=logits_normalize(output), hidden_states=h)
 
     def flush(self):
-        """ Clean cache in `Attention` module """
+        """ Clean cache in `LlamaAttention` module """
         for i in range(self.args.n_layers):
             self.layers[i].attention.flush()
         set_barrier()
@@ -278,7 +278,7 @@ class MistralVerifier(ParallelVerifier):
         self.tok_embeddings = None
         self.layers = torch.nn.ModuleList()
         for _ in range(args.n_layers):
-            self.layers.append(TransformerBlock(args))
+            self.layers.append(MistralTransformerBlock(args))
         self.norm = None
         self.v_head = None
 
@@ -316,7 +316,7 @@ class MistralVerifier(ParallelVerifier):
         return VerifierOutputs(scores=scores)
 
 
-class LoraAttention(Attention):
+class LoraMistralAttention(MistralAttention):
     def __init__(self, args: LoraMistralArgs):
         super().__init__(args)
         self.args = args
@@ -409,7 +409,7 @@ class LoraAttention(Attention):
         return self.wo(output) + apply_lora(output, self.lora_a_wo, self.lora_b_wo)
 
 
-class LoraFeedForward(FeedForward):
+class LoraMistralFeedForward(MistralFeedForward):
     def __init__(self, args: LoraMistralArgs):
         super().__init__(args)
         self.args = args
@@ -468,12 +468,12 @@ class LoraFeedForward(FeedForward):
         return self.w2(out) + apply_lora(out, self.lora_a_w2, self.lora_b_w2)
 
 
-class LoraTransformerBlock(TransformerBlock):
+class LoraMistralTransformerBlock(MistralTransformerBlock):
     def __init__(self, args: LoraMistralArgs):
         super().__init__(args)
         self.args = args
-        self.attention = LoraAttention(args)
-        self.feed_forward = LoraFeedForward(args)
+        self.attention = LoraMistralAttention(args)
+        self.feed_forward = LoraMistralFeedForward(args)
 
 
 class LoraMistral(Mistral):
@@ -482,7 +482,7 @@ class LoraMistral(Mistral):
         self.args = args
         self.layers = torch.nn.ModuleList()
         for _ in range(args.n_layers):
-            self.layers.append(LoraTransformerBlock(args))
+            self.layers.append(LoraMistralTransformerBlock(args))
         self.lora_a_output = None
         self.lora_b_output = None
 
@@ -549,7 +549,7 @@ class LoraMistralVerifier(MistralVerifier):
         self.args = args
         self.layers = nn.ModuleList()
         for _ in range(args.n_layers):
-            self.layers.append(LoraTransformerBlock(args))
+            self.layers.append(LoraMistralTransformerBlock(args))
 
     def init_weights(self):
         super().init_weights()

@@ -9,13 +9,13 @@ from fairscale.nn.model_parallel.layers import (
     ColumnParallelLinear
 )
 
-from src.models.llama import TransformerBlock, Llama, LoraLlama
+from src.models.llama import LlamaTransformerBlock, Llama, LoraLlama
 from src.models.modeling import AttentionForCausalLM
 from src.models.modeling_args import LlamaArgs, LoraLlamaArgs
 from src.utils import apply_rotary_emb, apply_lora
 
 
-class Attention70B(AttentionForCausalLM):
+class LlamaAttention70B(AttentionForCausalLM):
     def __init__(self, args: LlamaArgs):
         super().__init__(args.max_seq_len)
         self.args = args
@@ -97,7 +97,7 @@ class Attention70B(AttentionForCausalLM):
         )
 
 
-class FeedForward70B(nn.Module):
+class LlamaFeedForward70B(nn.Module):
     def __init__(self, args: LlamaArgs):
         super().__init__()
         self.args = args
@@ -135,11 +135,11 @@ class FeedForward70B(nn.Module):
         return self.w2(F.silu(self.w1(x)) * self.w3(x))
 
 
-class TransformerBlock70B(TransformerBlock):
+class LlamaTransformerBlock70B(LlamaTransformerBlock):
     def __init__(self, layer_id: int, args: LlamaArgs):
         super().__init__(layer_id, args)
-        self.attention = Attention70B(args)
-        self.feed_forward = FeedForward70B(args)
+        self.attention = LlamaAttention70B(args)
+        self.feed_forward = LlamaFeedForward70B(args)
 
 
 class Llama70B(Llama):
@@ -147,10 +147,10 @@ class Llama70B(Llama):
         super().__init__(args)
         self.layers = torch.nn.ModuleList()
         for layer_id in range(args.n_layers):
-            self.layers.append(TransformerBlock70B(layer_id, args))
+            self.layers.append(LlamaTransformerBlock70B(layer_id, args))
 
 
-class LoraAttention70B(Attention70B):
+class LoraLlamaAttention70B(LlamaAttention70B):
     def __init__(self, args: LoraLlamaArgs):
         super().__init__(args)
         self.args = args
@@ -247,7 +247,7 @@ class LoraAttention70B(Attention70B):
         return self.wo(output) + apply_lora(output, self.lora_a_wo, self.lora_b_wo)
 
 
-class LoraFeedForward70B(FeedForward70B):
+class LoraLlamaFeedForward70B(LlamaFeedForward70B):
     def __init__(self, args: LoraLlamaArgs):
         super().__init__(args)
         self.args = args
@@ -308,11 +308,11 @@ class LoraFeedForward70B(FeedForward70B):
         return self.w2(out) + apply_lora(out, self.lora_a_w2, self.lora_b_w2)
 
 
-class LoraTransformerBlock70B(TransformerBlock70B):
+class LoraLlamaTransformerBlock70B(LlamaTransformerBlock70B):
     def __init__(self, layer_id: int, args: LoraLlamaArgs):
         super().__init__(layer_id, args)
-        self.attention = LoraAttention70B(args)
-        self.feed_forward = LoraFeedForward70B(args)
+        self.attention = LoraLlamaAttention70B(args)
+        self.feed_forward = LoraLlamaFeedForward70B(args)
 
 
 class LoraLlama70B(LoraLlama):
@@ -320,4 +320,4 @@ class LoraLlama70B(LoraLlama):
         super().__init__(args)
         self.layers = torch.nn.ModuleList()
         for layer_id in range(args.n_layers):
-            self.layers.append(LoraTransformerBlock70B(layer_id, args))
+            self.layers.append(LoraLlamaTransformerBlock70B(layer_id, args))

@@ -57,12 +57,11 @@ def run(
             world_size=world_size,
             max_seq_len=solver_max_seq_len,
             tokenizer_file=solver_tokenizer_file,
-            lora_rank=solver_lora_rank
+            lora_rank=-1
         )
         solver_model.load(solver_ckpt_dir if (
                 epoch == 0
         ) else os.path.join(solver_save_dir, f"epoch-{epoch}"), merge_lora=True)
-        solver_model.half()
         # Solver Model Evaluation
         evaluator = SolverEvaluator(solver_model, solver_tokenizer, solver_eval_batch_size, max_seq_len)
         outputs = evaluator.forward(task, JsonDataset(label_file))

@@ -123,3 +123,26 @@ class OpenChatArgs(MistralArgs):
 class LoraMistralArgs(MistralArgs):
     r: int = None
     lora_dtype: str = "float32"
+
+
+@dataclass
+class QwenArgs(Args):
+    max_seq_len: int
+    local_rank: int
+    world_size: int
+
+    hidden_size: int = None
+    intermediate_size: int = None
+    max_position_embeddings: int = None
+    max_window_layers: int = None
+    num_attention_heads: int = None
+    num_hidden_layers: int = None
+    num_key_value_heads: int = None
+    rms_norm_eps: float = None
+    rope_theta: int = None
+    sliding_window: int = None
+    tie_word_embeddings: bool = None
+    use_sliding_window: bool = None
+    vocab_size: int = None
+
+    use_clamp: bool = False

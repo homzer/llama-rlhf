@@ -76,7 +76,7 @@ class LlamaRotaryEmbedding(nn.Module):
         )
 
 
-class AttentionHF(AttentionForCausalLM):
+class LlamaAttentionHF(AttentionForCausalLM):
     def __init__(self, args: LlamaArgs):
         super().__init__(args.max_seq_len)
         self.args = args
@@ -149,7 +149,7 @@ class AttentionHF(AttentionForCausalLM):
         return self.o_proj(output)
 
 
-class FeedForwardHF(nn.Module):
+class LlamaFeedForwardHF(nn.Module):
     def __init__(self, args: LlamaArgs):
         super().__init__()
         hidden_dim = int(2 * (4 * args.dim) / 3)
@@ -184,12 +184,12 @@ class FeedForwardHF(nn.Module):
         return self.down_proj(F.silu(self.gate_proj(x)) * self.up_proj(x))
 
 
-class TransformerBlockHF(nn.Module):
+class LlamaTransformerBlockHF(nn.Module):
     def __init__(self, layer_id: int, args: LlamaArgs):
         super().__init__()
         self.args = args
-        self.self_attn = AttentionHF(args)
-        self.mlp = FeedForwardHF(args)
+        self.self_attn = LlamaAttentionHF(args)
+        self.mlp = LlamaFeedForwardHF(args)
         self.layer_id = layer_id
         self.clamp = Clamp(disable=not args.use_clamp)
 
@@ -202,11 +202,13 @@ class TransformerBlockHF(nn.Module):
         self.input_layernorm = RMSNorm(self.args.dim, eps=self.args.norm_eps)
         self.post_attention_layernorm = RMSNorm(self.args.dim, eps=self.args.norm_eps)
 
-    def forward(self,
-                x: torch.Tensor,
-                start_pos: int,
-                mask: Optional[torch.Tensor],
-                use_cache):
+    def forward(
+            self,
+            x: torch.Tensor,
+            start_pos: int,
+            mask: Optional[torch.Tensor],
+            use_cache
+    ):
         h = x + self.self_attn.forward(self.input_layernorm(x), start_pos, mask, use_cache)
         h = self.clamp.forward(h)
         out = h + self.mlp.forward(self.post_attention_layernorm(h))
@@ -222,7 +224,7 @@ class LlamaHeadHF(nn.Module):
         self.embed_tokens = None
         self.layers = torch.nn.ModuleList()
         for layer_id in range(args.n_layers):
-            self.layers.append(TransformerBlockHF(layer_id, args))
+            self.layers.append(LlamaTransformerBlockHF(layer_id, args))
         self.norm = None
 
     def init_weights(self):
@@ -288,13 +290,13 @@ class LlamaHF(ParallelModelForCausalLM):
             super().load(pl_ckpt_dir, verbose, **kwargs)
 
     def flush(self):
-        """ Clean cache in `Attention` module """
+        """ Clean cache in `LlamaAttention` module """
         for i in range(self.args.n_layers):
             self.model.layers[i].self_attn.flush()
         set_barrier()
 
 
-class LoraAttentionHF(AttentionHF):
+class LoraLlamaAttentionHF(LlamaAttentionHF):
     def __init__(self, args: LoraLlamaArgs):
         super().__init__(args)
         self.args = args
@@ -391,7 +393,7 @@ class LoraAttentionHF(AttentionHF):
         return self.o_proj(output) + apply_lora(output, self.lora_a_o_proj, self.lora_b_o_proj)
 
 
-class LoraFeedForwardHF(FeedForwardHF):
+class LoraLlamaFeedForwardHF(LlamaFeedForwardHF):
     def __init__(self, args: LoraLlamaArgs):
         super().__init__(args)
         self.args = args
@@ -452,11 +454,11 @@ class LoraFeedForwardHF(FeedForwardHF):
         return self.down_proj(out) + apply_lora(out, self.lora_a_down_proj, self.lora_b_down_proj)
 
 
-class LoraTransformerBlockHF(TransformerBlockHF):
+class LoraLlamaTransformerBlockHF(LlamaTransformerBlockHF):
     def __init__(self, layer_id: int, args: LoraLlamaArgs):
         super().__init__(layer_id, args)
-        self.self_attn = LoraAttentionHF(args)
-        self.mlp = LoraFeedForwardHF(args)
+        self.self_attn = LoraLlamaAttentionHF(args)
+        self.mlp = LoraLlamaFeedForwardHF(args)
 
 
 class LoraLlamaHeadHF(LlamaHeadHF):
@@ -464,7 +466,7 @@ class LoraLlamaHeadHF(LlamaHeadHF):
         super().__init__(args)
         self.layers = torch.nn.ModuleList()
         for layer_id in range(args.n_layers):
-            self.layers.append(TransformerBlockHF(layer_id, args))
+            self.layers.append(LlamaTransformerBlockHF(layer_id, args))
 
 
 class LoraLlamaHF(LlamaHF):

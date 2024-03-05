@@ -208,6 +208,6 @@ class GPT2(ModelForCausalLM):
         )
 
     def flush(self):
-        """ Clean cache in `Attention` module """
+        """ Clean cache in `LlamaAttention` module """
         for i in range(self.args.n_layer):
             self.h[i].attn.flush()
