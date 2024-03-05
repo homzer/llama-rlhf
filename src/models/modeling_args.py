@@ -9,7 +9,10 @@ HF_CONFIG_MAP = {
 }
 
 
+@dataclass
 class Args:
+    use_clamp: bool = False
+
     def _set_attribute(self, name, value):
         try:
             if getattr(self, name, None) is None:

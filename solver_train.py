@@ -17,15 +17,15 @@ def main(
         ckpt_dir: str,
         save_dir: str,
         train_file: str,
+        tokenizer_file: str,
+        config_file: str,
         model_type: str = "llama-1-7b",
         max_seq_len: int = 512,
         max_batch_size: int = 1,
         lr: float = 1e-5,
         epochs: int = 1,
-        lora_rank: int = 16,
+        lora_rank: int = -1,
         task: str = None,
-        tokenizer_file: str = None,
-        config_file: str = None,
         label_file: str = None,
         eval_batch_size: int = None,
         log_dir: str = None,
@@ -34,7 +34,6 @@ def main(
 ):
     if log_dir is not None:
         os.makedirs(log_dir, exist_ok=True)
-    config_file = f"config/{model_type}/params.json" if config_file is None else config_file
     local_rank, world_size = setup_model_parallel(
         use_float16=use_float16, seed=seed
     )

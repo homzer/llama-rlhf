@@ -141,16 +141,46 @@ class SolverGeneratorForCausalLM:
         )
 
 
-class LogitsGeneratorForCausalLM(SolverGeneratorForCausalLM):
+class LogitsGeneratorForCausalLM:
     def __init__(
             self,
             model: Union[ModelForCausalLM, ParallelModelForCausalLM],
             tokenizer: Tokenizer,
             max_seq_len: int,
     ):
-        super().__init__(model=model, tokenizer=tokenizer, max_seq_len=max_seq_len)
+        self.model = model
+        self.vocab_size = tokenizer.vocab_size
+        self.max_seq_len = max_seq_len
+        self.tokenizer = tokenizer
 
-    def _model_forward(self, tokens, input_masks=None, start_pos=None, t=0.0, p=0.8):
+    def _truncating_strategy(self, instruction_ids, output_ids):
+        """ TODO: duplicated code with `Trainer` """
+        instruction_length = len(instruction_ids)
+        output_length = len(output_ids)
+        if instruction_length >= self.max_seq_len:
+            print(f'WARNING: Length of instruction {instruction_length} '
+                  f'exceeds the max input length {self.max_seq_len}')
+            instruction_ids = instruction_ids[:self.max_seq_len]
+            instruction_length = len(instruction_ids)
+        sequence_length = instruction_length + output_length
+        if sequence_length > self.max_seq_len:
+            exceed_length = sequence_length - self.max_seq_len
+            output_ids = output_ids[:-exceed_length]
+        return instruction_ids, output_ids
+
+    def _prepare_for_generation(self, instructions, outputs):
+        bsz = len(instructions)
+        tokens = torch.full((bsz, self.max_seq_len), self.tokenizer.pad_id).long()
+        for i, (instruction, output) in enumerate(zip(instructions, outputs)):
+            instruction_ids = self.tokenizer.encode(instruction, bos=True, eos=False)
+            output_ids = self.tokenizer.encode(output, bos=False, eos=True)
+            instruction_ids, output_ids = self._truncating_strategy(instruction_ids, output_ids)
+            instr_len, output_len = len(instruction_ids), len(output_ids)
+            tokens[i, :instr_len + output_len] = torch.tensor(instruction_ids + output_ids).long()
+        Output = collections.namedtuple('Outputs', ['tokens'])
+        return Output(tokens=tokens)
+
+    def _model_forward(self, tokens):
         tokens = tokens.clone()
         with torch.no_grad():
             outputs = self.model.forward(tokens)
@@ -158,9 +188,9 @@ class LogitsGeneratorForCausalLM(SolverGeneratorForCausalLM):
         Outputs = collections.namedtuple('Outputs', ['logits'])
         return Outputs(logits=outputs.logits)
 
-    def forward(self, instructions: List[str], t: float = 0.0, p: float = 0.8) -> LogitsGeneratorOutputs:
+    def forward(self, instructions: List[str], outputs: List[str]) -> LogitsGeneratorOutputs:
         self.model.eval()
-        prep_outputs = self._prepare_for_generation(instructions, eos=True)
+        prep_outputs = self._prepare_for_generation(instructions, outputs)
         forward_outputs = self._model_forward(prep_outputs.tokens)
         return LogitsGeneratorOutputs(forward_outputs.logits)
 

@@ -119,6 +119,19 @@ def splitting(
         torch.save(new_state_dicts[i], os.path.join(save_path, f'consolidated.0{i}.pth'))
 
 
+def auto_split_2_to_8(
+        ckpt_dir: str = "config/13B/2/",
+        save_dir: str = 'config/13B/8/'
+):
+    state_dicts = []
+    for i in range(2):
+        state_dict = torch.load(os.path.join(ckpt_dir, f"consolidated.0{i}.pth"), map_location="cpu")
+        state_dicts.extend(__splitting(state_dict, 4))
+    os.makedirs(save_dir, exist_ok=True)
+    for i in range(8):
+        torch.save(state_dicts[i], os.path.join(save_dir, f'consolidated.0{i}.pth'))
+
+
 def auto_split_4_to_8(
         ckpt_dir: str = 'config/13B/4/',
         save_dir: str = 'config/13B/8/'

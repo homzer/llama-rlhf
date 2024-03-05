@@ -178,6 +178,5 @@ class LogitsBufferCollector:
 
     def forward(self, instructions: List[str], outputs: List[str]) -> LogitsRolloutBuffer:
         assert len(instructions) == len(outputs)
-        tokens = [instruction + output for instruction, output in zip(instructions, outputs)]
-        generator_outputs = self.generator.forward(tokens)
+        generator_outputs = self.generator.forward(instructions, outputs)
         return LogitsRolloutBuffer(instructions=instructions, outputs=outputs, logits=generator_outputs.logits)

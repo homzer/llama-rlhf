@@ -214,22 +214,23 @@ class ParallelSolverDistillTrainer(ParallelSolverTrainer):
             instructions: List[str],
             outputs: List[str],
             target_logits: torch.Tensor,
-            alpha: float = 1.0
+            alpha: float = 1.0,
+            beta: float = 1.0
     ):
         self.model.train()
         example = self.prepare_for_training(instructions=instructions, outputs=outputs)
         logits = self.model.forward(example.tokens).logits
 
-        loss_ce = self.criterion_ce.forward(
+        loss_ce = alpha * self.criterion_ce.forward(
             input=logits.view(-1, logits.size(-1)),
             target=example.labels.view(-1).to(logits.device)
         )
-        loss_kl = self.criterion_kl.forward(
+        loss_kl = beta * self.criterion_kl.forward(
             logits=logits,
             targets=torch.softmax(target_logits.float(), dim=-1).to(logits),
             masks=example.masks.to(logits.device)
         )
-        loss = loss_ce + alpha * loss_kl
+        loss = loss_ce + loss_kl
         self._back_propagation(loss)
         Output = collections.namedtuple('Output', ['loss', 'logits', 'loss_kl', 'loss_ce'])
         return Output(logits=logits, loss=loss, loss_kl=loss_kl, loss_ce=loss_ce)
