@@ -5,12 +5,15 @@ from src.models import (
     LoraLlama70B,
     LoraLlama,
     Mistral,
+    MistralHf,
     Llama30B,
     Llama70B,
     Llama,
-    Qwen)
-from src.models.modeling_args import LlamaArgs, MistralArgs, LoraLlamaArgs, LoraMistralArgs, QwenArgs
+    Qwen
+)
+from src.models.modeling_args import LlamaArgs, MistralArgs, LoraLlamaArgs, LoraMistralArgs, QwenArgs, MistralArgsHf
 from src.tokenizers import Tokenizer, MistralTokenizer, LlamaTokenizer, QwenChatTokenizer, QwenTokenizer
+from src.tokenizers.tokenizer_mistral import MistralChatTokenizer
 
 
 def get_parallel_model(
@@ -42,11 +45,18 @@ def get_parallel_model(
             tokenizer = LlamaTokenizer(tokenizer_file)
     else:
         if 'mistral' in model_type:
-            params = MistralArgs(
-                max_seq_len=max_seq_len, local_rank=local_rank, world_size=world_size
-            ).from_json(config_file)
-            model = Mistral(params)
-            tokenizer = MistralTokenizer(tokenizer_file)
+            if 'instruct' in model_type:
+                params = MistralArgsHf(
+                    max_seq_len=max_seq_len, local_rank=local_rank, world_size=world_size
+                ).from_json(config_file)
+                model = MistralHf(params)
+                tokenizer = MistralChatTokenizer(tokenizer_file)
+            else:
+                params = MistralArgs(
+                    max_seq_len=max_seq_len, local_rank=local_rank, world_size=world_size
+                ).from_json(config_file)
+                model = Mistral(params)
+                tokenizer = MistralTokenizer(tokenizer_file)
         elif 'qwen' in model_type:
             params = QwenArgs(
                 max_seq_len=max_seq_len, local_rank=local_rank, world_size=world_size

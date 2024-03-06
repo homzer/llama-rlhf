@@ -39,6 +39,7 @@ class QwenChatTokenizer(QwenTokenizer):
         return self.model.apply_chat_template(conversation, tokenize=False, add_generation_prompt=True)
 
     def encode(self, s: str, bos: bool = False, eos: bool = False) -> List[int]:
+        assert eos is False  # TODO
         s = self.apply_chat_template([{"role": "user", "content": s}])
         return super().encode(s, bos, eos)
 

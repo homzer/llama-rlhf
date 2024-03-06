@@ -13,10 +13,10 @@ from fairscale.nn.model_parallel.layers import (
 
 from src.checkpoint import splitting
 from src.models.llama_hf import compute_position_ids, apply_rotary_pos_emb
-from src.models.mistral import MistralAttention, repeat_kv, MistralFeedForward, MistralTransformerBlock
-from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs
-from src.models.modeling_acts import RMSNorm
-from src.models.modeling_args import MistralArgs
+from src.models.mistral import repeat_kv
+from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs, AttentionForCausalLM
+from src.models.modeling_acts import RMSNorm, Clamp
+from src.models.modeling_args import MistralArgsHf
 from src.utils import set_barrier
 
 
@@ -56,9 +56,15 @@ class MistralRotaryEmbedding(nn.Module):
         )
 
 
-class MistralAttentionHF(MistralAttention):
-    def __init__(self, args: MistralArgs):
-        super().__init__(args)
+class MistralAttentionHf(AttentionForCausalLM):
+    def __init__(self, args: MistralArgsHf):
+        super().__init__(args.max_seq_len)
+        self.args = args
+        self.head_dim = args.hidden_size // args.num_attention_heads
+        self.num_local_heads = args.num_attention_heads // args.world_size
+        self.num_key_value_heads = args.num_key_value_heads
+        self.num_local_key_value_heads = self.num_key_value_heads // args.world_size
+        self.n_rep = args.num_attention_heads // args.num_key_value_heads
 
         self.q_proj = None
         self.k_proj = None
@@ -69,53 +75,52 @@ class MistralAttentionHF(MistralAttention):
 
     def init_weights(self):
         self.q_proj = ColumnParallelLinear(
-            self.args.dim,
-            self.args.n_heads * self.args.head_dim,
+            self.args.hidden_size,
+            self.args.num_attention_heads * self.head_dim,
             bias=False,
             gather_output=False,
             init_method=lambda x: x,
         )
         self.k_proj = ColumnParallelLinear(
-            self.args.dim,
-            self.args.n_kv_heads * self.args.head_dim,
+            self.args.hidden_size,
+            self.args.num_key_value_heads * self.head_dim,
             bias=False,
             gather_output=False,
             init_method=lambda x: x,
         )
         self.v_proj = ColumnParallelLinear(
-            self.args.dim,
-            self.args.n_kv_heads * self.args.head_dim,
+            self.args.hidden_size,
+            self.args.num_key_value_heads * self.head_dim,
             bias=False,
             gather_output=False,
             init_method=lambda x: x,
         )
         self.o_proj = RowParallelLinear(
-            self.args.n_heads * self.args.head_dim,
-            self.args.dim,
+            self.args.num_attention_heads * self.head_dim,
+            self.args.hidden_size,
             bias=False,
             input_is_parallel=True,
             init_method=lambda x: x,
         )
         self.rotary_emb = MistralRotaryEmbedding(
-            self.args.head_dim,
-            max_position_embeddings=8192,  # TODO
-            base=10000
+            self.head_dim,
+            max_position_embeddings=self.args.max_position_embeddings,  # TODO
+            base=self.args.rope_theta
         )
 
     def forward(
             self,
             x: torch.Tensor,
             start_pos: int,
-            freqs_cis: torch.Tensor,
             mask: torch.Tensor = None,
             use_cache: bool = False
     ) -> torch.Tensor:
         bsz, seqlen, _ = x.shape
 
         xq, xk, xv = self.q_proj(x), self.k_proj(x), self.v_proj(x)
-        xq = xq.view(bsz, seqlen, self.n_local_heads, self.args.head_dim)
-        xk = xk.view(bsz, seqlen, self.n_local_kv_heads, self.args.head_dim)
-        xv = xv.view(bsz, seqlen, self.n_local_kv_heads, self.args.head_dim)
+        xq = xq.view(bsz, seqlen, self.num_local_heads, self.head_dim)
+        xk = xk.view(bsz, seqlen, self.num_local_key_value_heads, self.head_dim)
+        xv = xv.view(bsz, seqlen, self.num_local_key_value_heads, self.head_dim)
 
         cos, sin = self.rotary_emb.forward(xv.transpose(1, 2), seq_len=seqlen + start_pos)
         position_ids = compute_position_ids(start_pos, seqlen).to(x.device)
@@ -126,16 +131,17 @@ class MistralAttentionHF(MistralAttention):
         if use_cache:
             xk, xv = self.apply_cache(xk, xv, start_pos)
         else:
-            xk, xv = repeat_kv(xk, xv, self.repeats)
+            xk, xv = repeat_kv(xk, xv, self.n_rep)
 
         output = self.apply_attention(xq, xk, xv, mask[None, None, ...] if mask is not None else None)
 
         return self.o_proj(output)
 
 
-class MistralFeedForwardHF(MistralFeedForward):
-    def __init__(self, args: MistralArgs):
-        super().__init__(args)
+class MistralFeedForwardHf(nn.Module):
+    def __init__(self, args: MistralArgsHf):
+        super().__init__()
+        self.args = args
 
         self.gate_proj = None
         self.down_proj = None
@@ -143,22 +149,22 @@ class MistralFeedForwardHF(MistralFeedForward):
 
     def init_weights(self):
         self.gate_proj = ColumnParallelLinear(
-            self.args.dim,
-            self.args.hidden_dim,
+            self.args.hidden_size,
+            self.args.intermediate_size,
             bias=False,
             gather_output=False,
             init_method=lambda x: x
         )
         self.down_proj = RowParallelLinear(
-            self.args.hidden_dim,
-            self.args.dim,
+            self.args.intermediate_size,
+            self.args.hidden_size,
             bias=False,
             input_is_parallel=True,
             init_method=lambda x: x
         )
         self.up_proj = ColumnParallelLinear(
-            self.args.dim,
-            self.args.hidden_dim,
+            self.args.hidden_size,
+            self.args.intermediate_size,
             bias=False,
             gather_output=False,
             init_method=lambda x: x
@@ -168,11 +174,13 @@ class MistralFeedForwardHF(MistralFeedForward):
         return self.down_proj(F.silu(self.gate_proj(x)) * self.up_proj(x))
 
 
-class MistralTransformerBlockHF(MistralTransformerBlock):
-    def __init__(self, args: MistralArgs):
-        super().__init__(args)
-        self.self_attn = MistralAttentionHF(args)
-        self.mlp = MistralFeedForwardHF(args)
+class MistralTransformerBlockHf(nn.Module):
+    def __init__(self, args: MistralArgsHf):
+        super().__init__()
+        self.args = args
+        self.self_attn = MistralAttentionHf(args)
+        self.mlp = MistralFeedForwardHf(args)
+        self.clamp = Clamp(disable=not args.use_clamp)
 
         self.input_layernorm = None
         self.post_attention_layernorm = None
@@ -180,42 +188,41 @@ class MistralTransformerBlockHF(MistralTransformerBlock):
     def init_weights(self):
         self.self_attn.init_weights()
         self.mlp.init_weights()
-        self.input_layernorm = RMSNorm(self.args.dim, eps=self.args.norm_eps)
-        self.post_attention_layernorm = RMSNorm(self.args.dim, eps=self.args.norm_eps)
+        self.input_layernorm = RMSNorm(self.args.hidden_size, eps=self.args.rms_norm_eps)
+        self.post_attention_layernorm = RMSNorm(self.args.hidden_size, eps=self.args.rms_norm_eps)
 
     def forward(
             self,
             x: torch.Tensor,
             start_pos: int,
-            freqs_cis: torch.Tensor,
             mask: Optional[torch.Tensor],
             use_cache: bool
     ) -> torch.Tensor:
-        h = x + self.self_attn.forward(self.input_layernorm(x), start_pos, freqs_cis, mask, use_cache)
+        h = x + self.self_attn.forward(self.input_layernorm(x), start_pos, mask, use_cache)
         h = self.clamp.forward(h)
         out = h + self.mlp.forward(self.post_attention_layernorm(h))
         out = self.clamp.forward(out)
         return out
 
 
-class MistralHeadHF(nn.Module):
-    def __init__(self, args: MistralArgs):
+class MistralHeadHf(nn.Module):
+    def __init__(self, args: MistralArgsHf):
         super().__init__()
         self.args = args
 
         self.embed_tokens = None
         self.layers = torch.nn.ModuleList()
-        for _ in range(args.n_layers):
-            self.layers.append(MistralTransformerBlockHF(args))
+        for _ in range(args.num_hidden_layers):
+            self.layers.append(MistralTransformerBlockHf(args))
         self.norm = None
 
     def init_weights(self):
         self.embed_tokens = ParallelEmbedding(
-            self.args.vocab_size, self.args.dim, init_method=lambda x: x
+            self.args.vocab_size, self.args.hidden_size, init_method=lambda x: x
         )
         for layer in self.layers:
             layer.init_weights()
-        self.norm = RMSNorm(self.args.dim, eps=self.args.norm_eps)
+        self.norm = RMSNorm(self.args.hidden_size, eps=self.args.rms_norm_eps)
 
     def forward(
             self,
@@ -233,21 +240,21 @@ class MistralHeadHF(nn.Module):
             mask = torch.triu(mask, diagonal=start_pos + 1).type_as(h)
 
         for layer in self.layers:
-            h = layer(h, start_pos, None, mask, use_cache)
+            h = layer(h, start_pos, mask, use_cache)
         return self.norm(h)
 
 
-class MistralHF(ParallelModelForCausalLM):
-    def __init__(self, args: MistralArgs):
+class MistralHf(ParallelModelForCausalLM):
+    def __init__(self, args: MistralArgsHf):
         super().__init__(args.local_rank, args.world_size)
         self.args = args
-        self.model = MistralHeadHF(args)
+        self.model = MistralHeadHf(args)
         self.lm_head = None
 
     def init_weights(self):
         self.model.init_weights()
         self.lm_head = ColumnParallelLinear(
-            self.args.dim, self.args.vocab_size, bias=False, init_method=lambda x: x
+            self.args.hidden_size, self.args.vocab_size, bias=False, init_method=lambda x: x
         )
 
     def forward(self, tokens: torch.Tensor, start_pos=0, use_cache=False):
@@ -255,7 +262,7 @@ class MistralHF(ParallelModelForCausalLM):
         output = self.lm_head(h)
         return CausalLMOutputs(logits=output, hidden_states=h)
 
-    # Copied from llama_hf.LlamaHF.load
+    # Copied from llama_hf.LlamaHf.load
     def load(self, ckpt_dir: str, verbose: bool = True, **kwargs):
         checkpoints = sorted(Path(ckpt_dir).glob("consolidated.*.pth"))
         if len(checkpoints) != 0:  # normal loading
@@ -279,8 +286,8 @@ class MistralHF(ParallelModelForCausalLM):
             set_barrier()
             super().load(pl_ckpt_dir, verbose, **kwargs)
 
+    # Copied from llama_hf.LlamaHf.flush
     def flush(self):
-        """ Clean cache in `LlamaAttention` module """
-        for i in range(self.args.n_layers):
+        for i in range(self.args.num_hidden_layers):
             self.model.layers[i].self_attn.flush()
         set_barrier()

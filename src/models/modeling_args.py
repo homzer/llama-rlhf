@@ -115,6 +115,31 @@ class MistralArgs(Args):
 
 
 @dataclass
+class MistralArgsHf(Args):
+    max_seq_len: int
+    local_rank: int
+    world_size: int
+
+    hidden_size: int = None
+    num_hidden_layers: int = None
+    intermediate_size: int = None
+    max_position_embeddings: int = None
+    num_attention_heads: int = None
+    num_key_value_heads: int = None
+    rms_norm_eps: float = None
+    vocab_size: int = None
+
+    # For rotary embeddings. If not set, will be infered from sliding window.
+    rope_theta: int = None
+    # If this is set, use sliding window attention rotating cache.
+    sliding_window: int = None
+    # If this is set, we will use MoE layers instead of dense layers.
+    moe = None
+
+    use_clamp: bool = False
+
+
+@dataclass
 class OpenChatArgs(MistralArgs):
     pass
 

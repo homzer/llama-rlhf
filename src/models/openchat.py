@@ -1,6 +1,6 @@
 from fairscale.nn.model_parallel.layers import RowParallelLinear
 
-from src.models.mistral_hf import MistralHF
+from src.models.mistral_hf import MistralHf
 from src.models.modeling_args import OpenChatArgs
 
 
@@ -13,7 +13,7 @@ def get_lm_head_partition(local_rank: int, world_size: int, vocab_size: int) -> 
     return partition + remained if local_rank == world_size - 1 else partition
 
 
-class OpenChat(MistralHF):
+class OpenChat(MistralHf):
     def __init__(self, args: OpenChatArgs):
         super().__init__(args)
 

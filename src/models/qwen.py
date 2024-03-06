@@ -337,8 +337,8 @@ class Qwen(ParallelModelForCausalLM):
             set_barrier()
             super().load(pl_ckpt_dir, verbose, **kwargs)
 
+    # Copied from llama_hf.LlamaHF.flush
     def flush(self):
-        """ Clean cache in `LlamaAttention` module """
         for i in range(self.args.num_hidden_layers):
             self.model.layers[i].self_attn.flush()
         set_barrier()
