@@ -36,7 +36,7 @@ def main(
         tokenizer_file=tokenizer_file,
         lora_rank=lora_rank
     )
-    model.load(ckpt_dir, merge_lora=not lora_rank > 0)
+    model.load(ckpt_dir, merge_lora=True)
     evaluator = SolverEvaluator(model, tokenizer, max_batch_size, max_seq_len)
     outputs = evaluator.forward(task, JsonDataset(label_file), t=t, p=p)
     print("Evaluate Accuracy: ", outputs.acc, "Missing: ", outputs.missing)

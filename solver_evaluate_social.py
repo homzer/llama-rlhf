@@ -1,18 +1,16 @@
 import collections
+import copy
 import json
 import os
 import re
 
 import fire
-import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import Dataset, DataLoader
 
-from src.dataset import JsonDataset
 from src.entities import Timer
 from src.generator import GeneratorForCausalLM
 from src.models.modeling_utils import get_parallel_model
-from src.trainer import ParallelSolverTrainer
-from src.utils import setup_model_parallel, json_dump
+from src.utils import json_load, json_dump, setup_model_parallel
 
 PROMPT_EN = """
 ==Profile==
@@ -28,6 +26,20 @@ Based on the provided role Profile and Conversations, please choose the best opt
 Your selection:
 """
 
+PROMPT_ZH = """
+==角色描述==
+{role_profile}
+
+==对话历史==
+{conversations}
+
+你要扮演{role_name}角色，你在聊天中要具备该角色对应的知识背景，语气风格等特征。
+请根据所给的{role_name}角色描述和对话历史，从下面四个选项（A. B. C.和D.）中选择符合{role_name}的选项：
+{options}
+
+你的选择：
+"""
+
 PROMPT_DIALOGUE_EMOTION_EN = """
 ==Conversations==
 {conversations}
@@ -36,6 +48,28 @@ Select the option () that best matches the mood in utterance "{utterance}". Sing
 {options}
 
 Your selection:
+"""
+
+PROMPT_DIALOGUE_EMOTION_ZH = """
+==对话历史==
+{conversations}
+
+单选选择题，选择最符合"{utterance}"说话者当时心情的选项()
+{options}
+
+你的选择:
+"""
+
+PROMPT_OPEN_ZH = """
+==角色描述==
+{role_profile}
+
+==对话历史==
+{conversations}
+
+你要扮演{role_name}角色，你在聊天中要具备该角色对应的知识背景，语气风格等特征。
+请根据所给的{role_name}角色描述和对话历史，根据最后一个User的对话再补充一轮你作为Assistant的回复（一轮就好）：
+Assistant: 
 """
 
 PROMPT_OPEN_EN = """
@@ -66,117 +100,109 @@ def format_question(dialogue, choices=None):
     return Output(dialogue=conversations, options=options)
 
 
+def format_instruction(data):
+    dialogue = data['dialogue']
+    choices = data['choices'] if 'choices' in data else None
+    category = data['meta']['category']
+    lang = data['meta']['lang']
+    outputs = format_question(dialogue, choices)
+    if category == "Individual-MEM":
+        PROMPT = PROMPT_OPEN_EN if lang.lower() == "en" else PROMPT_OPEN_ZH
+        prompt = PROMPT.format_map({
+            "role_profile": data['meta']['profile'][data['meta']['name']],
+            "conversations": outputs.dialogue,
+            "role_name": data['meta']['name'],
+        })
+    elif category == "Individual-EP-DialogueEmotionDetect":
+        PROMPT = PROMPT_DIALOGUE_EMOTION_EN if lang.lower() == "en" else PROMPT_DIALOGUE_EMOTION_ZH
+        prompt = PROMPT.format_map({
+            "conversations": outputs.dialogue,
+            "options": outputs.options,
+            "utterance": dialogue[-1]["value"]
+        })
+    elif category in ["Individual-EP-HumorSarcasmDetect", "Individual-EP-SituationUnderstanding"]:
+        prompt = f"{outputs.dialogue}\n{outputs.options}"
+    else:
+        assert category in [
+            'Group-SAP-Positive',
+            'Group-SAP-Negative',
+            'Group-SAP-Neutral',
+            'Individual-SA-RoleStyle',
+            'Individual-SA-RoleKnowledge'
+        ]
+        PROMPT = PROMPT_EN if lang.lower() == "en" else PROMPT_ZH
+        prompt = PROMPT.format_map({
+            "role_profile": data['meta']['profile'][data['meta']['name']],
+            "conversations": outputs.dialogue,
+            "role_name": data['meta']['name'],
+            "options": outputs.options
+        })
+    return prompt
+
+
+class SocialBenchDataset(Dataset):
+    def __init__(self, f: str, limit: int = None):
+        self.datalist = json_load(f)
+        if limit is not None:
+            self.datalist = self.datalist[: limit]
+
+    def __getitem__(self, i):
+        data = copy.deepcopy(self.datalist[i])
+        instruction = format_instruction(data)
+        label = json.dumps(data['label'])
+        return dict(instruction=instruction, label=label, category=data['meta']['category'])
+
+    def __len__(self):
+        return len(self.datalist)
+
+    @classmethod
+    def compute_score(cls, predict: str, label: str, category: str):
+        labels = json.loads(label)  # type(label) == list
+        if category == "Individual-MEM":
+            predict = predict.lower()
+            if len(predict) == 0:
+                return None
+            score = 0
+            for keyword in labels:
+                score += 1 if keyword.lower() in predict else 0
+            return score / len(labels)
+        else:
+            answers = format_predict(predict)
+            if len(answers) == 0:
+                return None
+            if len(labels) == 1:  # single choice
+                return 1 if answers[0] == labels[0] else 0
+            # multi choices
+            for answer in answers:
+                if answer not in labels:
+                    return 0
+            return len(set(answers)) / len(set(labels))
+
+
 def format_predict(predict: str):
     answer = set()
-    matches = re.findall(r'(\W+|^|[\u4e00-\u9fa5]+)([A-Z])($|\W+|[\u4e00-\u9fa5]+)', predict)
+    matches = re.findall(r'(\W+|^|[\u4e00-\u9fa5]+)([A-H])($|\W+|[\u4e00-\u9fa5]+)', predict)
     for match in matches:
         answer.add(match[1])
     return list(answer)
 
 
-def get_open_domain_score(predict: str, keywords: list) -> float:
-    assert len(keywords) != 0
-    predict = predict.lower()
-    score = 0
-    for keyword in keywords:
-        score += 1 if keyword.lower() in predict else 0
-    return score / len(keywords)
+# =================================================================================================
 
 
-def compute_score(answers: list, labels: list):
-    if len(answers) == 0:
-        return 0
-    if len(labels) == 1:  # single choice
-        return 1 if answers[0] == labels[0] else 0
-    # multi choices
-    for answer in answers:
-        if answer not in labels:
-            return 0
-    return len(set(answers)) / len(set(labels))
-
-
-def compute_datalist_score(datalist):
-    score = 0
-    length = 0
-    for data in datalist:
-        if 'score' in data:
-            length += 1
-            score += data['score']
-    acc = score / (length + 1e-12)
-    return acc
-
-
-class SocialBenchDataset(JsonDataset):
-    def __init__(self, f):
-        super().__init__(f)
-        results = []
-        for data in self.datalist:
-            if data['meta']['lang'] == 'en':
-                results.append(data)
-        self.datalist = results
-
-    def __getitem__(self, i):
-        data = self.datalist[i].copy()
-        outputs = format_question(data['dialogue'], data['choices'] if 'choices' in data else None)
-        if data['meta']['category'] == "Individual-MEM":
-            role_name = data['meta']['name']
-            role_profile = data['meta']['profile'][role_name]
-            instruction = PROMPT_OPEN_EN.format_map({
-                "role_profile": role_profile,
-                "conversations": outputs.dialogue,
-                "role_name": role_name,
-            })
-            response = data['meta']['reference']
-        elif data['meta']['category'] == "Individual-EP-DialogueEmotionDetect":
-            instruction = PROMPT_DIALOGUE_EMOTION_EN.format_map({
-                "conversations": outputs.dialogue,
-                "options": outputs.options,
-                "utterance": data['dialogue'][-1]["value"]
-            })
-            response = "\n".join(data['label'])
-        elif data['meta']['category'] in ["Individual-EP-HumorSarcasmDetect", "Individual-EP-SituationUnderstanding"]:
-            instruction = f"{outputs.dialogue}\n{outputs.options}"
-            response = "\n".join(data['label'])
-        else:
-            role_name = data['meta']['name']
-            role_profile = data['meta']['profile'][role_name]
-            instruction = PROMPT_EN.format_map({
-                "role_profile": role_profile,
-                "conversations": outputs.dialogue,
-                "role_name": role_name,
-                "options": outputs.options
-            })
-            response = "\n".join(data['label'])
-
-        return dict(
-            instruction=instruction,
-            output=response,
-            label=json.dumps({"label": data['label']}),
-            category=data['meta']['category']
-        )
-
-
-def main(
+def run(
         ckpt_dir: str,
+        model_type: str,
         log_dir: str,
-        train_file: str = "data/SocialBench/en-2048/train.json",
-        model_type: str = "llama-1-7b",
+        label_dir: str,
+        config_file: str,
+        tokenizer_file: str,
         max_seq_len: int = 2048,
         max_batch_size: int = 1,
-        eval_batch_size: int = 4,
-        lora_rank: int = -1,
-        lr: float = 1e-5,
-        t: float = 0.0,
-        p: float = 1.0,
-        tokenizer_file: str = None,
-        config_file: str = None,
-        seed: int = None
+        limit: int = None,
+        begin: int = 0
 ):
-    local_rank, world_size = setup_model_parallel(
-        use_float16=True, seed=seed
-    )
-    train_dataset = SocialBenchDataset(train_file)
-    train_dataloader = DataLoader(train_dataset, batch_size=max_batch_size)
+    local_rank, world_size = setup_model_parallel(use_float16=True)
     model, tokenizer = get_parallel_model(
         model_type=model_type,
         config_file=config_file,
@@ -184,52 +210,43 @@ def main(
         world_size=world_size,
         max_seq_len=max_seq_len,
         tokenizer_file=tokenizer_file,
-        lora_rank=lora_rank
+        lora_rank=-1
     )
-    model.load(ckpt_dir, merge_lora=not lora_rank > 0)
-
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    trainer = ParallelSolverTrainer(
-        model=model,
-        tokenizer=tokenizer,
-        optimizer=optimizer,
-        max_seq_len=max_seq_len
-    )
-    for epoch in range(5):
-        for data in train_dataloader:
-            trainer.forward(
-                instructions=data['instruction'],
-                outputs=data['output']
-            )
-
+    model.load(ckpt_dir, merge_lora=True)
     generator = GeneratorForCausalLM(model, tokenizer, max_seq_len)
-    for task in ['awareness', 'emotion', 'memory', 'group']:
+    os.makedirs(log_dir, exist_ok=True)
+    label_files = ['self_awareness.json', 'conversation_memory.json',
+                   'social_preference.json', 'emotional_perception.json'][begin:]
+    for label_file in label_files:
+        label_file = os.path.join(label_dir, label_file)
+        dataset = SocialBenchDataset(label_file, limit)
+        dataloader = DataLoader(dataset, batch_size=max_batch_size)
+        timer = Timer(len(dataloader))
         datalist = []
-        eval_dataset = SocialBenchDataset(f"data/SocialBench/en-2048/{task}.json")
-        eval_dataloader = DataLoader(eval_dataset, batch_size=eval_batch_size)
-        timer = Timer(len(eval_dataloader))
-        for data in eval_dataloader:
+        for data in dataloader:
             timer.step()
-            outputs = generator.forward(data['instruction'], t=t, p=p)
+            outputs = generator.forward(data['instruction'])
             for i, output in enumerate(outputs):
+                score = SocialBenchDataset.compute_score(output['output'], data['label'][i], data['category'][i])
                 datalist.append(dict(
-                    instruction=output['instruction'],
+                    instruction=data['instruction'][i],
                     output=output['output'],
-                    label=json.loads(data['label'][i])["label"],
-                    category=data['category']
+                    score=score,
+                    label=data['label'][i],
+                    category=data['category'][i]
                 ))
-            print(outputs[0]['instruction'] + re.sub(r'\n\n\n\n+', "", outputs[0]['output']))
+            print(outputs[0]['output'])
+            json_dump(datalist, os.path.join(log_dir, os.path.split(label_file)[-1]))
+        scores = []
         for data in datalist:
-            if "MEM" in data['category']:
-                data['score'] = get_open_domain_score(data['output'], data["label"])
-            else:
-                data['score'] = compute_score(format_predict(data['output']), data['label'])
-        if local_rank == 0:
-            os.makedirs(log_dir, exist_ok=True)
-            json_dump(datalist, os.path.join(
-                log_dir, f'results-{task}-{compute_datalist_score(datalist)}.json'
-            ), indent=4)
+            if data['score'] is not None:
+                scores.append(data['score'])
+        acc = sum(scores) / (len(scores) + 1e-12)
+        save_name = os.path.split(label_file)[-1].replace(".json", f"_{round(acc, 3)}.json")
+        json_dump(datalist, os.path.join(log_dir, save_name))
 
 
-if __name__ == '__main__':
-    fire.Fire(main)
+if __name__ == "__main__":
+    fire.Fire(run)
+
+
