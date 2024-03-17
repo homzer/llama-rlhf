@@ -55,7 +55,10 @@ class SlimLogits:
         assert 0 <= i < len(self), "Index out of range error"
         value = self.values[i]  # [s, n]
         index = self.indices[i]  # [s, n]
-        logits = torch.full((self.max_seq_len, self.vocab_size), fill_value=-1e4)
+        logits = torch.full(
+            (self.max_seq_len, self.vocab_size),
+            fill_value=torch.finfo(torch.get_default_dtype()).min
+        )
         for j in range(self.max_seq_len):
             logits[j, index[j]] = value[j].to(logits)
         return logits  # [s, v]

@@ -294,7 +294,7 @@ class MultiChoicesEvaluator(Evaluator):
     def __init__(self):
         super().__init__()
         self.label_patterns = [
-            r'\b([A-Z])\b'
+            r'\b([A-N])\b'
         ]
 
     def get_label_pattern(self, label: str) -> str:

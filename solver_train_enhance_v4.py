@@ -79,7 +79,7 @@ def run(
         for data in tqdm(eval_dataloader):
             timer.step()
             solver_rollout_buffer.extend(
-                solver_buffer_collector.forward(data['instruction'], t=1.2)
+                solver_buffer_collector.forward(data['instruction'], t=1.0)
             )
             print(data['instruction'][-1] + solver_tokenizer.decode(
                 solver_rollout_buffer.actions[-1][solver_rollout_buffer.action_masks[-1]].tolist()

@@ -17,13 +17,13 @@ class Trainer:
         self.model = model
         self.optimizer = optimizer
         # To avoid overflowing, will cause performance degradation !!!
-        if "eps" in self.optimizer.defaults:
-            # get trainable dtype
-            dtype = optimizer.param_groups[0]['params'][0].dtype
-            if dtype == torch.float16:
-                self.optimizer.defaults["eps"] = torch.finfo(dtype).tiny
-                for group in self.optimizer.param_groups:
-                    group["eps"] = torch.finfo(dtype).tiny
+        # if "eps" in self.optimizer.defaults:
+        #     # get trainable dtype
+        #     dtype = optimizer.param_groups[0]['params'][0].dtype
+        #     if dtype == torch.float16:
+        #         self.optimizer.defaults["eps"] = torch.finfo(dtype).tiny
+        #         for group in self.optimizer.param_groups:
+        #             group["eps"] = torch.finfo(dtype).tiny
 
     def forward(self, *args, **kwargs):
         raise NotImplementedError
