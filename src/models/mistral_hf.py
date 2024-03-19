@@ -1,5 +1,4 @@
 from pathlib import Path
-from pathlib import Path
 from typing import Optional
 
 import torch
@@ -168,7 +167,7 @@ class MistralTransformerBlockHf(nn.Module):
         return out
 
 
-class MistralHeadHf(nn.Module):
+class MistralModelHf(nn.Module):
     def __init__(self, args: MistralArgsHf):
         super().__init__()
         self.args = args
@@ -211,7 +210,7 @@ class MistralHf(ParallelModelForCausalLM):
     def __init__(self, args: MistralArgsHf):
         super().__init__(args.local_rank, args.world_size)
         self.args = args
-        self.model = MistralHeadHf(args)
+        self.model = MistralModelHf(args)
         self.lm_head = None
 
     def init_weights(self):

@@ -13,7 +13,7 @@ from fairscale.nn.model_parallel.layers import (
 from src.checkpoint import auto_split_huggingface_checkpoints
 from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs, AttentionForCausalLM
 from src.models.modeling_acts import Clamp, RMSNorm, RotaryEmbedding
-from src.models.modeling_args import QwenArgs
+from src.models.modeling_args import QwenArgsHf
 from src.utils import logits_normalize, set_barrier, compute_position_ids, apply_rotary_pos_emb
 
 
@@ -100,7 +100,7 @@ from src.utils import logits_normalize, set_barrier, compute_position_ids, apply
 
 
 class QwenAttention(AttentionForCausalLM):
-    def __init__(self, args: QwenArgs):
+    def __init__(self, args: QwenArgsHf):
         super().__init__(args.max_seq_len)
         self.args = args
         self.head_dim = args.hidden_size // args.num_attention_heads
@@ -192,7 +192,7 @@ class QwenAttention(AttentionForCausalLM):
 
 
 class QwenFeedForward(nn.Module):
-    def __init__(self, args: QwenArgs):
+    def __init__(self, args: QwenArgsHf):
         super().__init__()
         self.args = args
 
@@ -225,7 +225,7 @@ class QwenFeedForward(nn.Module):
 
 
 class QwenTransformerBlock(nn.Module):
-    def __init__(self, args: QwenArgs):
+    def __init__(self, args: QwenArgsHf):
         super().__init__()
         self.args = args
         self.self_attn = QwenAttention(args)
@@ -256,7 +256,7 @@ class QwenTransformerBlock(nn.Module):
 
 
 class QwenHead(nn.Module):
-    def __init__(self, args: QwenArgs):
+    def __init__(self, args: QwenArgsHf):
         super().__init__()
         self.args = args
 
@@ -290,7 +290,7 @@ class QwenHead(nn.Module):
 
 
 class Qwen(ParallelModelForCausalLM):
-    def __init__(self, args: QwenArgs):
+    def __init__(self, args: QwenArgsHf):
         super().__init__(args.local_rank, args.world_size)
         self.args = args
         self.model = QwenHead(args)
@@ -312,7 +312,7 @@ class Qwen(ParallelModelForCausalLM):
         output = self.lm_head(h)
         return CausalLMOutputs(logits=logits_normalize(output), hidden_states=h)
 
-    # Copied from llama_hf.LlamaHF.load
+    # Copied from llama_hf.LlamaHf.load
     def load(self, ckpt_dir: str, verbose: bool = True, **kwargs):
         checkpoints = sorted(Path(ckpt_dir).glob("consolidated.*.pth"))
         if len(checkpoints) != 0:  # normal loading
@@ -324,7 +324,7 @@ class Qwen(ParallelModelForCausalLM):
             set_barrier()
             super().load(pl_ckpt_dir, verbose, **kwargs)
 
-    # Copied from llama_hf.LlamaHF.flush
+    # Copied from llama_hf.LlamaHf.flush
     def flush(self):
         for i in range(self.args.num_hidden_layers):
             self.model.layers[i].self_attn.flush()

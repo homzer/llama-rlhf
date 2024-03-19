@@ -151,7 +151,7 @@ class LoraMistralArgs(MistralArgs):
 
 
 @dataclass
-class QwenArgs(Args):
+class QwenArgsHf(Args):
     max_seq_len: int
     local_rank: int
     world_size: int
@@ -171,3 +171,8 @@ class QwenArgs(Args):
     vocab_size: int = None
 
     use_clamp: bool = False
+
+
+class MistralMoEArgsHf(MistralArgsHf):
+    num_local_experts: int
+    num_experts_per_tok: int
