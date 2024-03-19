@@ -338,6 +338,25 @@ def merge_lora(
         torch.save(result_dict, os.path.join(save_dir, f'consolidated.0{i}.pth'))
 
 
+def auto_split_huggingface_checkpoints(ckpt_dir: str, world_size: int, local_rank: int, verbose: bool = True) -> str:
+    pl_ckpt_dir = os.path.join(ckpt_dir, str(world_size))
+    if local_rank == 0 and not os.path.exists(pl_ckpt_dir):
+        if verbose:
+            print(f'Parallel checkpoint dose not exist. Splitting into {pl_ckpt_dir} ...')
+        if os.path.exists(os.path.join(ckpt_dir, "pytorch_model.bin")):
+            split_file = os.path.join(ckpt_dir, "pytorch_model.bin")
+        else:
+            split_file = sorted(Path(ckpt_dir).glob("*.safetensors"))
+            if len(split_file) == 0:
+                split_file = sorted(Path(ckpt_dir).glob("pytorch_model*.bin"))
+                if len(split_file) == 0:
+                    raise FileNotFoundError("Can not find any checkpoint file")
+        splitting(split_file, pl_ckpt_dir, n=world_size)
+        if verbose:
+            print('Done!')
+    return pl_ckpt_dir
+
+
 def convert_dtype(
         ckpt_file='consolidated.00.pth',
         save_dir='',

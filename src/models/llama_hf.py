@@ -1,18 +1,18 @@
-import os
+from pathlib import Path
 from pathlib import Path
 from typing import Optional
 
 import torch
 import torch.nn as nn
-import torch.nn.init as init
 import torch.nn.functional as F
+import torch.nn.init as init
 from fairscale.nn.model_parallel.layers import (
     RowParallelLinear,
     ColumnParallelLinear,
     ParallelEmbedding
 )
 
-from src.checkpoint import splitting
+from src.checkpoint import auto_split_huggingface_checkpoints
 from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs, AttentionForCausalLM
 from src.models.modeling_acts import RMSNorm, Clamp, RotaryEmbedding
 from src.models.modeling_args import LlamaArgs, LoraLlamaArgs
@@ -221,21 +221,9 @@ class LlamaHF(ParallelModelForCausalLM):
         if len(checkpoints) != 0:  # normal loading
             super().load(ckpt_dir, verbose, **kwargs)
         else:  # splitting
-            pl_ckpt_dir = os.path.join(ckpt_dir, str(self.world_size))
-            if self.local_rank == 0 and not os.path.exists(pl_ckpt_dir):
-                if verbose:
-                    print(f'Parallel checkpoint dose not exist. Splitting into {pl_ckpt_dir} ...')
-                if os.path.exists(os.path.join(ckpt_dir, "pytorch_model.bin")):
-                    split_file = os.path.join(ckpt_dir, "pytorch_model.bin")
-                else:
-                    split_file = sorted(Path(ckpt_dir).glob("*.safetensors"))
-                    if len(split_file) == 0:
-                        split_file = sorted(Path(ckpt_dir).glob("pytorch_model*.bin"))
-                        if len(split_file) == 0:
-                            raise FileNotFoundError("Can not find any checkpoint file")
-                splitting(split_file, pl_ckpt_dir, n=self.world_size)
-                if verbose:
-                    print('Done!')
+            pl_ckpt_dir = auto_split_huggingface_checkpoints(
+                ckpt_dir, world_size=self.world_size, local_rank=self.local_rank, verbose=verbose
+            )
             set_barrier()
             super().load(pl_ckpt_dir, verbose, **kwargs)
 
