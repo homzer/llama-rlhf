@@ -51,6 +51,34 @@ def apply_rotary_emb(
     return xq_out.type_as(xq), xk_out.type_as(xk)
 
 
+# Copied from Huggingface
+def rotate_half(x):
+    """Rotates half the hidden dims of the input."""
+    x1 = x[..., : x.shape[-1] // 2]
+    x2 = x[..., x.shape[-1] // 2:]
+    return torch.cat((-x2, x1), dim=-1)
+
+
+# Copied from Huggingface
+def apply_rotary_pos_emb(q, k, cos, sin, position_ids):
+    gather_indices = position_ids[:, None, :, None]  # [bs, 1, seq_len, 1]
+    gather_indices = gather_indices.repeat(1, cos.shape[1], 1, cos.shape[3])
+    cos = torch.gather(cos.repeat(gather_indices.shape[0], 1, 1, 1), 2, gather_indices)
+    sin = torch.gather(sin.repeat(gather_indices.shape[0], 1, 1, 1), 2, gather_indices)
+    q_embed = (q * cos) + (rotate_half(q) * sin)
+    k_embed = (k * cos) + (rotate_half(k) * sin)
+    return q_embed, k_embed
+
+
+# Copied from Huggingface
+def compute_position_ids(start_pos: int, seq_length: int):
+    position_ids = torch.arange(
+        start_pos, seq_length + start_pos, dtype=torch.long
+    )
+    position_ids = position_ids.unsqueeze(0).view(-1, seq_length)
+    return position_ids
+
+
 def json_dump(obj, f, indent=None):
     if str(f).endswith(".json"):
         with open(f, 'w', encoding='utf-8') as writer:
