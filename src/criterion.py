@@ -28,21 +28,22 @@ class KLDivLoss(Loss):
         Compute KL-Divergence loss.
         :param T: Temperature, default to be 1.
         :param logits: the logits of the estimated distribution, before `softmax`
-        :param targets: the target distribution, which should be summed up to be 1.
+        :param targets: the target logits, before `softmax`.
         :param masks: Optional. For masked selection.
         Shape is identical to the shape of `logits` up to last dim.
         :return: scalar loss.
         """
         logits = logits.view(-1, logits.size(-1))
-        targets = targets.view(-1, targets.size(-1))
-        estimates = torch.softmax(logits.float() / T, dim=-1).type_as(logits)
+        targets = targets.view(-1, targets.size(-1)).to(logits)
+        estimates = torch.softmax(logits.float(), dim=-1).type_as(logits)
+        targets = torch.softmax(targets.float() / T, dim=-1).type_as(targets)
         estimates = powmax(estimates + self.eps)
         targets = powmax(targets + self.eps)
 
         loss = targets * (torch.log(targets) - torch.log(estimates))
         loss = torch.sum(loss, dim=-1)
         if masks is not None:
-            masks = masks.view(-1)
+            masks = masks.view(-1).to(logits.device)
             loss = torch.masked_select(loss, masks)
         return torch.mean(loss)
 

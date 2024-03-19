@@ -216,7 +216,8 @@ class ParallelSolverDistillTrainer(ParallelSolverTrainer):
             outputs: List[str],
             target_logits: torch.Tensor,
             alpha: float = 1.0,
-            beta: float = 1.0
+            beta: float = 1.0,
+            T: float = 1.0
     ):
         self.model.train()
         example = self.prepare_for_training(instructions=instructions, outputs=outputs)
@@ -228,8 +229,9 @@ class ParallelSolverDistillTrainer(ParallelSolverTrainer):
         )
         loss_kl = beta * self.criterion_kl.forward(
             logits=logits,
-            targets=torch.softmax(target_logits.float(), dim=-1).to(logits),
-            masks=example.masks.to(logits.device)
+            targets=target_logits,
+            masks=example.masks,
+            T=T
         )
         loss = loss_ce + loss_kl
         self._back_propagation(loss)
@@ -255,13 +257,13 @@ class ParallelSolverDistillTrainer(ParallelSolverTrainer):
         )
         loss_kl = self.criterion_kl.forward(
             logits=logits,
-            targets=torch.softmax(target_logits.float(), dim=-1).to(logits),
-            masks=example.masks.to(logits.device)
+            targets=target_logits,
+            masks=example.masks
         )
         loss_kl_ = self.criterion_kl.forward(
             logits=logits,
-            targets=torch.softmax(target_logits_.float(), dim=-1).to(logits),
-            masks=example.masks.to(logits.device)
+            targets=target_logits_,
+            masks=example.masks
         )
         loss = loss_ce + alpha * loss_kl + beta * loss_kl_
         self._back_propagation(loss)
