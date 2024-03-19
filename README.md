@@ -49,13 +49,13 @@ To train an auto-regressive language model, you just need to run:
 torchrun --nproc_per_node 8 solver_train.py \
 --ckpt_dir /path/to/your/ckpt/ \
 --save_dir /path/to/save/ \
---train_file data/GSM8K/train.json \
+--train_file dataset/GSM8K/train.json \
 --model_type llama-1-7b \
 --max_batch_size 6 \
 --lora_rank -1
 ```
 
-Taking llama-1-7b as an example, we provide a `data/GSM8K/train.json` file as the training data format, while using full-parameter training. To enable LoRA, simply set the parameter as `--lora_rank=16` in the settings.
+Taking llama-1-7b as an example, we provide a `dataset/GSM8K/train.json` file as the training data format, while using full-parameter training. To enable LoRA, simply set the parameter as `--lora_rank=16` in the settings.
 
 
 ### 3. Model Inference
@@ -67,7 +67,7 @@ torchrun --nproc_per_node 8 solver_evaluate.py \
 --task GSM8K \
 --ckpt_dir /path/to/your/ckpt/ \
 --log_dir /path/to/log/ \
---label_file data/GSM8K/test.json \
+--label_file dataset/GSM8K/test.json \
 --model_type llama-1-7b \
 --max_batch_size 384 
 ```
@@ -81,7 +81,7 @@ To train a reward model, run:
 torchrun --nproc_per_node 8 verifier_train.py \
 --ckpt_dir /path/to/your/ckpt/ \
 --save_dir /path/to/save/ \
---train_file data/GSM8K/train.json \
+--train_file dataset/GSM8K/train.json \
 --model_type llama-1-7b \
 --max_batch_size 6 \
 --lora_rank -1
