@@ -50,6 +50,7 @@ class SolverEvaluator:
                     label=data['label'][i]
                 ))
             print(outs[0]['instruction'] + outs[0]['output'])
+            print("---" * 50)
 
         for data in datalist:  # TODO MATH
             data['predict'] = evaluator.forward(data['output'], data['label'] if task != "MATH" else None)

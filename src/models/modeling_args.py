@@ -173,6 +173,6 @@ class QwenArgsHf(Args):
     use_clamp: bool = False
 
 
-class MistralMoEArgsHf(MistralArgsHf):
+class MistralMoeArgsHf(MistralArgsHf):
     num_local_experts: int
     num_experts_per_tok: int

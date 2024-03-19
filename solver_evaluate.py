@@ -13,7 +13,7 @@ def main(
         ckpt_dir: str,
         log_dir: str,
         label_file: str,
-        model_type: str = "7B",
+        model_type: str = "llama-2-7b",
         max_seq_len: int = 512,
         max_batch_size: int = 1,
         lora_rank: int = -1,

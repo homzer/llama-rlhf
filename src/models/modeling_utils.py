@@ -6,14 +6,112 @@ from src.models import (
     LoraLlama,
     Mistral,
     MistralHf,
+    MistralMoeHf,
     Llama30B,
     Llama70B,
     Llama,
     Qwen
 )
-from src.models.modeling_args import LlamaArgs, MistralArgs, LoraLlamaArgs, LoraMistralArgs, QwenArgsHf, MistralArgsHf
-from src.tokenizers import Tokenizer, MistralTokenizer, LlamaTokenizer, QwenChatTokenizer, QwenTokenizer
-from src.tokenizers.tokenizer_mistral import MistralChatTokenizer
+from src.models.modeling_args import (
+    LlamaArgs,
+    MistralArgs,
+    LoraLlamaArgs,
+    LoraMistralArgs,
+    QwenArgsHf,
+    MistralArgsHf,
+    MistralMoeArgsHf
+)
+from src.tokenizers import (
+    Tokenizer,
+    LlamaTokenizer,
+    MistralTokenizer,
+    MistralChatTokenizer,
+    QwenChatTokenizer,
+    QwenTokenizer
+)
+
+
+ARGS = {
+    "llama-1-7b": LlamaArgs,
+    "llama-1-13b": LlamaArgs,
+    "llama-2-7b": LlamaArgs,
+    "llama-2-13b": LlamaArgs,
+    "llama-1-30b": LlamaArgs,
+    "llama-2-70b": LlamaArgs,
+    "lora-llama-1-7b": LoraLlamaArgs,
+    "lora-llama-1-13b": LoraLlamaArgs,
+    "lora-llama-2-7b": LoraLlamaArgs,
+    "lora-llama-2-13b": LoraLlamaArgs,
+    "lora-llama-1-30b": LoraLlamaArgs,
+    "lora-llama-2-70b": LoraLlamaArgs,
+
+    "mistral-7b": MistralArgs,
+    "lora-mistral-7b": LoraMistralArgs,
+    "mistral-7b-instruct-v0.2": MistralArgsHf,
+    "mixtral-8x7b-instruct-v0.1": MistralMoeArgsHf,
+
+    "qwen-7b": QwenArgsHf,
+    "qwen-14b": QwenArgsHf,
+    "qwen-72b": QwenArgsHf,
+    "qwen-7b-chat": QwenArgsHf,
+    "qwen-14b-chat": QwenArgsHf,
+    "qwen-72b-chat": QwenArgsHf,
+}
+
+
+MODELS = {
+    "llama-1-7b": Llama,
+    "llama-1-13b": Llama,
+    "llama-2-7b": Llama,
+    "llama-2-13b": Llama,
+    "llama-1-30b": Llama30B,
+    "llama-2-70b": Llama70B,
+    "lora-llama-1-7b": LoraLlama,
+    "lora-llama-1-13b": LoraLlama,
+    "lora-llama-2-7b": LoraLlama,
+    "lora-llama-2-13b": LoraLlama,
+    "lora-llama-1-30b": LoraLlama30B,
+    "lora-llama-2-70b": LoraLlama70B,
+
+    "mistral-7b": Mistral,
+    "lora-mistral-7b": LoraMistral,
+    "mistral-7b-instruct-v0.2": MistralHf,
+    "mixtral-8x7b-instruct-v0.1": MistralMoeHf,
+
+    "qwen-7b": Qwen,
+    "qwen-14b": Qwen,
+    "qwen-72b": Qwen,
+    "qwen-7b-chat": Qwen,
+    "qwen-14b-chat": Qwen,
+    "qwen-72b-chat": Qwen,
+}
+
+TOKENIZERS = {
+    "llama-1-7b": LlamaTokenizer,
+    "llama-1-13b": LlamaTokenizer,
+    "llama-2-7b": LlamaTokenizer,
+    "llama-2-13b": LlamaTokenizer,
+    "llama-1-30b": LlamaTokenizer,
+    "llama-2-70b": LlamaTokenizer,
+    "lora-llama-1-7b": LlamaTokenizer,
+    "lora-llama-1-13b": LlamaTokenizer,
+    "lora-llama-2-7b": LlamaTokenizer,
+    "lora-llama-2-13b": LlamaTokenizer,
+    "lora-llama-1-30b": LlamaTokenizer,
+    "lora-llama-2-70b": LlamaTokenizer,
+
+    "mistral-7b": MistralTokenizer,
+    "lora-mistral-7b": MistralTokenizer,
+    "mistral-7b-instruct-v0.2": MistralChatTokenizer,
+    "mixtral-8x7b-instruct-v0.1": MistralChatTokenizer,
+
+    "qwen-7b": QwenTokenizer,
+    "qwen-14b": QwenTokenizer,
+    "qwen-72b": QwenTokenizer,
+    "qwen-7b-chat": QwenChatTokenizer,
+    "qwen-14b-chat": QwenChatTokenizer,
+    "qwen-72b-chat": QwenChatTokenizer,
+}
 
 
 def get_parallel_model(
@@ -25,56 +123,15 @@ def get_parallel_model(
         tokenizer_file: str,
         lora_rank: int
 ) -> (ParallelModule, Tokenizer):
-    if lora_rank > 0:
-        if 'mistral' in model_type:
-            params = LoraMistralArgs(
-                max_seq_len=max_seq_len, local_rank=local_rank, world_size=world_size, r=lora_rank
-            ).from_json(config_file)
-            model = LoraMistral(params)
-            tokenizer = MistralTokenizer(tokenizer_file)
-        else:
-            params = LoraLlamaArgs(
-                max_seq_len=max_seq_len, local_rank=local_rank, world_size=world_size, r=lora_rank
-            ).from_json(config_file)
-            if '30' in model_type:
-                model = LoraLlama30B(params)
-            elif '70' in model_type:
-                model = LoraLlama70B(params)
-            else:
-                model = LoraLlama(params)
-            tokenizer = LlamaTokenizer(tokenizer_file)
-    else:
-        if 'mistral' in model_type:
-            if 'instruct' in model_type:
-                params = MistralArgsHf(
-                    max_seq_len=max_seq_len, local_rank=local_rank, world_size=world_size
-                ).from_json(config_file)
-                model = MistralHf(params)
-                tokenizer = MistralChatTokenizer(tokenizer_file)
-            else:
-                params = MistralArgs(
-                    max_seq_len=max_seq_len, local_rank=local_rank, world_size=world_size
-                ).from_json(config_file)
-                model = Mistral(params)
-                tokenizer = MistralTokenizer(tokenizer_file)
-        elif 'qwen' in model_type:
-            params = QwenArgsHf(
-                max_seq_len=max_seq_len, local_rank=local_rank, world_size=world_size
-            ).from_json(config_file)
-            model = Qwen(params)
-            tokenizer = QwenChatTokenizer(tokenizer_file) if 'chat' in model_type else QwenTokenizer(tokenizer_file)
-        else:
-            params = LlamaArgs(
-                max_seq_len=max_seq_len, local_rank=local_rank, world_size=world_size
-            ).from_json(config_file)
-            if '30' in model_type:
-                model = Llama30B(params)
-            elif '70' in model_type:
-                model = Llama70B(params)
-            else:
-                model = Llama(params)
-            tokenizer = LlamaTokenizer(tokenizer_file)
-
-    # parameter post initialization
+    if local_rank > 0:
+        model_type = "lora-" + model_type
+    args = ARGS[model_type](
+        max_seq_len=max_seq_len,
+        local_rank=local_rank,
+        world_size=world_size,
+        r=lora_rank
+    ).from_json(config_file)
+    model = MODELS[model_type](args)
+    tokenizer = TOKENIZERS[model_type](tokenizer_file)
     model.init_weights()
     return model, tokenizer
