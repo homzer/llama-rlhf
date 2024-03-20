@@ -2,6 +2,11 @@
 
 Llama-RLHF is an efficient and easy-to-develop LLM training + inference framework. This project is developed based on PyTorch and FairScale, employing tensor (model) parallelism strategy.
 
+- Efficient Training
+- Efficient Inference
+
+The maximum supported inference batch size is **384**, and the maximum supported training batch size is **3**. This is based on using 8xV100 32GB GPUs, a model with 7 billion parameters, and a maximum sequence length of 1024.
+
 ## Requirement
 
 | Library       | Recommend | 
