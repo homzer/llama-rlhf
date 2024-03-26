@@ -7,7 +7,7 @@ import torch
 from src.generator import GeneratorForVerifier
 from src.models.modeling import ModelForCausalLM, ParallelModelForCausalLM, ParallelVerifier, Verifier
 from src.tokenizers import Tokenizer
-from src.utils import sample_top_p
+from src.utils import sample_top_p, truncate
 
 ActionGeneratorOutputs = collections.namedtuple("ActionGeneratorOutputs", [
     'outputs', 'logits', 'hidden_states', 'obs', 'actions', 'action_logits', 'action_masks'
@@ -153,20 +153,20 @@ class LogitsGeneratorForCausalLM:
         self.max_seq_len = max_seq_len
         self.tokenizer = tokenizer
 
-    def _truncating_strategy(self, instruction_ids, output_ids):
-        """ TODO: duplicated code with `Trainer` """
-        instruction_length = len(instruction_ids)
-        output_length = len(output_ids)
-        if instruction_length >= self.max_seq_len:
-            print(f'WARNING: Length of instruction {instruction_length} '
-                  f'exceeds the max input length {self.max_seq_len}')
-            instruction_ids = instruction_ids[:self.max_seq_len]
-            instruction_length = len(instruction_ids)
-        sequence_length = instruction_length + output_length
-        if sequence_length > self.max_seq_len:
-            exceed_length = sequence_length - self.max_seq_len
-            output_ids = output_ids[:-exceed_length]
-        return instruction_ids, output_ids
+    # def _truncating_strategy(self, instruction_ids, output_ids):
+    #     """ TODO: duplicated code with `Trainer` """
+    #     instruction_length = len(instruction_ids)
+    #     output_length = len(output_ids)
+    #     if instruction_length >= self.max_seq_len:
+    #         print(f'WARNING: Length of instruction {instruction_length} '
+    #               f'exceeds the max input length {self.max_seq_len}')
+    #         instruction_ids = instruction_ids[:self.max_seq_len]
+    #         instruction_length = len(instruction_ids)
+    #     sequence_length = instruction_length + output_length
+    #     if sequence_length > self.max_seq_len:
+    #         exceed_length = sequence_length - self.max_seq_len
+    #         output_ids = output_ids[:-exceed_length]
+    #     return instruction_ids, output_ids
 
     def _prepare_for_generation(self, instructions, outputs):
         bsz = len(instructions)
@@ -174,7 +174,7 @@ class LogitsGeneratorForCausalLM:
         for i, (instruction, output) in enumerate(zip(instructions, outputs)):
             instruction_ids = self.tokenizer.encode(instruction, bos=True, eos=False)
             output_ids = self.tokenizer.encode(output, bos=False, eos=True)
-            instruction_ids, output_ids = self._truncating_strategy(instruction_ids, output_ids)
+            instruction_ids, output_ids = truncate(instruction_ids, output_ids, self.max_seq_len)
             instr_len, output_len = len(instruction_ids), len(output_ids)
             tokens[i, :instr_len + output_len] = torch.tensor(instruction_ids + output_ids).long()
         Output = collections.namedtuple('Outputs', ['tokens'])

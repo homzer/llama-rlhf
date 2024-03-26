@@ -9,7 +9,7 @@ import torch.nn as nn
 from src.criterion import RewardLoss, KLDivLoss
 from src.models.modeling import Module, ParallelModule, ParallelModelForCausalLM, ParallelVerifier
 from src.tokenizers import Tokenizer
-from src.utils import set_barrier
+from src.utils import set_barrier, truncate
 
 
 class Trainer:
@@ -127,19 +127,19 @@ class ParallelSolverTrainer(ParallelTrainer):
         self.accumulation_steps = accumulation_steps
         self.step = 0
 
-    def _truncating_strategy(self, instruction_ids, output_ids):
-        instruction_length = len(instruction_ids)
-        output_length = len(output_ids)
-        if instruction_length >= self.max_seq_len:
-            print(f'WARNING: Length of instruction {instruction_length} '
-                  f'exceeds the max input length {self.max_seq_len}')
-            instruction_ids = instruction_ids[:self.max_seq_len]
-            instruction_length = len(instruction_ids)
-        sequence_length = instruction_length + output_length
-        if sequence_length > self.max_seq_len:
-            exceed_length = sequence_length - self.max_seq_len
-            output_ids = output_ids[:-exceed_length]
-        return instruction_ids, output_ids
+    # def _truncating_strategy(self, instruction_ids, output_ids):
+    #     instruction_length = len(instruction_ids)
+    #     output_length = len(output_ids)
+    #     if instruction_length >= self.max_seq_len:
+    #         print(f'WARNING: Length of instruction {instruction_length} '
+    #               f'exceeds the max input length {self.max_seq_len}')
+    #         instruction_ids = instruction_ids[:self.max_seq_len]
+    #         instruction_length = len(instruction_ids)
+    #     sequence_length = instruction_length + output_length
+    #     if sequence_length > self.max_seq_len:
+    #         exceed_length = sequence_length - self.max_seq_len
+    #         output_ids = output_ids[:-exceed_length]
+    #     return instruction_ids, output_ids
 
     def _back_propagation(self, loss: torch.Tensor):
         self.step += 1
@@ -157,7 +157,8 @@ class ParallelSolverTrainer(ParallelTrainer):
         for i, (instruction, output) in enumerate(zip(instructions, outputs)):
             instruction_ids = self.tokenizer.encode(instruction, bos=True, eos=False)
             output_ids = self.tokenizer.encode(output, bos=False, eos=True)
-            instruction_ids, output_ids = self._truncating_strategy(instruction_ids, output_ids)
+            # instruction_ids, output_ids = self._truncating_strategy(instruction_ids, output_ids)
+            instruction_ids, output_ids = truncate(instruction_ids, output_ids, self.max_seq_len)
             instr_len, output_len = len(instruction_ids), len(output_ids)
             tokens[i, :instr_len + output_len] = torch.tensor(instruction_ids + output_ids).long()
             labels[i, instr_len - 1: instr_len - 1 + output_len] = torch.tensor(output_ids).long()
@@ -171,7 +172,7 @@ class ParallelSolverTrainer(ParallelTrainer):
         for i in range(bzs):
             instruction_ids = self.tokenizer.encode(instructions[i], bos=True)
             output_ids = self.tokenizer.encode(outputs[i], eos=True)
-            instruction_ids, output_ids = self._truncating_strategy(instruction_ids, output_ids)
+            instruction_ids, output_ids = truncate(instruction_ids, output_ids, self.max_seq_len)
             instr_len, output_len = len(instruction_ids), len(output_ids)
             predict_ids = torch.argmax(logits[i], dim=-1)[instr_len - 1: instr_len - 1 + output_len].tolist()
             datalist.append(dict(instruction=instructions[i], output=self.tokenizer.decode(predict_ids)))
@@ -298,19 +299,19 @@ class ParallelVerifierTrainer(ParallelTrainer):
             self.optimizer.step()
             self.optimizer.zero_grad()
 
-    def _truncating_strategy(self, instruction_ids, output_ids):
-        instruction_length = len(instruction_ids)
-        output_length = len(output_ids)
-        if instruction_length >= self.max_seq_len:
-            print(f'WARNING: Length of instruction {instruction_length} '
-                  f'exceeds the max input length {self.max_seq_len}')
-            instruction_ids = instruction_ids[:self.max_seq_len]
-            instruction_length = len(instruction_ids)
-        sequence_length = instruction_length + output_length
-        if sequence_length > self.max_seq_len:
-            exceed_length = sequence_length - self.max_seq_len
-            output_ids = output_ids[:-exceed_length]
-        return instruction_ids, output_ids
+    # def _truncating_strategy(self, instruction_ids, output_ids):
+    #     instruction_length = len(instruction_ids)
+    #     output_length = len(output_ids)
+    #     if instruction_length >= self.max_seq_len:
+    #         print(f'WARNING: Length of instruction {instruction_length} '
+    #               f'exceeds the max input length {self.max_seq_len}')
+    #         instruction_ids = instruction_ids[:self.max_seq_len]
+    #         instruction_length = len(instruction_ids)
+    #     sequence_length = instruction_length + output_length
+    #     if sequence_length > self.max_seq_len:
+    #         exceed_length = sequence_length - self.max_seq_len
+    #         output_ids = output_ids[:-exceed_length]
+    #     return instruction_ids, output_ids
 
     def prepare_for_training(self, instructions: List[str], outputs: List[str]):
         bsz = len(instructions)
@@ -319,7 +320,7 @@ class ParallelVerifierTrainer(ParallelTrainer):
         for i, (instruction, output) in enumerate(zip(instructions, outputs)):
             instruction_ids = self.tokenizer.encode(instruction, bos=True, eos=False)
             output_ids = self.tokenizer.encode(output, bos=False, eos=True)
-            instruction_ids, output_ids = self._truncating_strategy(instruction_ids, output_ids)
+            instruction_ids, output_ids = truncate(instruction_ids, output_ids, self.max_seq_len)
             instr_len, output_len = len(instruction_ids), len(output_ids)
             tokens[i, :instr_len + output_len] = torch.tensor(instruction_ids + output_ids).long()
             masks[i, instr_len: instr_len + output_len] = True
@@ -334,10 +335,10 @@ class ParallelVerifierTrainer(ParallelTrainer):
         r_rewards = self.model.forward(r_examples.tokens)
 
         loss = self.criterion.forward(
-            chosen_rewards=c_rewards,
-            rejected_rewards=r_rewards,
-            chosen_masks=c_examples.masks.to(c_rewards.device),
-            rejected_masks=r_examples.masks.to(r_rewards.device)
+            chosen_rewards=c_rewards.scores,
+            rejected_rewards=r_rewards.scores,
+            chosen_masks=c_examples.masks.to(c_rewards.scores.device),
+            rejected_masks=r_examples.masks.to(r_rewards.scores.device)
         )
         self._back_propagation(loss)
 

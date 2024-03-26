@@ -391,6 +391,21 @@ def apply_lora(x: torch.Tensor, lora_a: torch.nn.Module, lora_b: torch.nn.Module
     return lora_b(lora_a(x.type_as(next(lora_a.parameters()))).type_as(next(lora_b.parameters()))).type_as(x)
 
 
+def truncate(instruction_ids: list, output_ids: list, max_seq_len: int) -> (list, list):
+    instruction_length = len(instruction_ids)
+    output_length = len(output_ids)
+    if instruction_length >= max_seq_len:
+        print(f'WARNING: Length of instruction {instruction_length} '
+              f'exceeds the max input length {max_seq_len}')
+        instruction_ids = instruction_ids[:max_seq_len]
+        instruction_length = len(instruction_ids)
+    sequence_length = instruction_length + output_length
+    if sequence_length > max_seq_len:
+        exceed_length = sequence_length - max_seq_len
+        output_ids = output_ids[:-exceed_length]
+    return instruction_ids, output_ids
+
+
 # ===============================================================
 
 

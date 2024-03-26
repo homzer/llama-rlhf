@@ -5,7 +5,7 @@ import torch
 
 from src.models.modeling import ModelForCausalLM, ParallelModelForCausalLM, ParallelVerifier, Verifier
 from src.tokenizers.tokenizer import Tokenizer
-from src.utils import sample_top_p, masked_mean
+from src.utils import sample_top_p, masked_mean, truncate
 
 
 class GeneratorForCausalLM:
@@ -85,19 +85,19 @@ class GeneratorForVerifier:
         self.reduce = reduce
         assert self.reduce in ["mean", "last"]
 
-    def _truncating_strategy(self, instruction_ids, output_ids):
-        instruction_length = len(instruction_ids)
-        output_length = len(output_ids)
-        if instruction_length >= self.max_seq_len:
-            print(f'WARNING: Length of instruction {instruction_length} '
-                  f'exceeds the max input length {self.max_seq_len}')
-            instruction_ids = instruction_ids[:self.max_seq_len]
-            instruction_length = len(instruction_ids)
-        sequence_length = instruction_length + output_length
-        if sequence_length > self.max_seq_len:
-            exceed_length = sequence_length - self.max_seq_len
-            output_ids = output_ids[:-exceed_length]
-        return instruction_ids, output_ids
+    # def _truncating_strategy(self, instruction_ids, output_ids):
+    #     instruction_length = len(instruction_ids)
+    #     output_length = len(output_ids)
+    #     if instruction_length >= self.max_seq_len:
+    #         print(f'WARNING: Length of instruction {instruction_length} '
+    #               f'exceeds the max input length {self.max_seq_len}')
+    #         instruction_ids = instruction_ids[:self.max_seq_len]
+    #         instruction_length = len(instruction_ids)
+    #     sequence_length = instruction_length + output_length
+    #     if sequence_length > self.max_seq_len:
+    #         exceed_length = sequence_length - self.max_seq_len
+    #         output_ids = output_ids[:-exceed_length]
+    #     return instruction_ids, output_ids
 
     def _prepare_for_generation(
             self,
@@ -122,7 +122,7 @@ class GeneratorForVerifier:
                 output_ids = output
             else:
                 raise TypeError(type(output))
-            instruction_ids, output_ids = self._truncating_strategy(instruction_ids, output_ids)
+            instruction_ids, output_ids = truncate(instruction_ids, output_ids, self.max_seq_len)
             instr_len, output_len = len(instruction_ids), len(output_ids)
             tokens[i, :instr_len + output_len] = torch.tensor(instruction_ids + output_ids).long()
             masks[i, instr_len: instr_len + output_len] = True
