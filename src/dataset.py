@@ -2,6 +2,7 @@ import random
 from typing import List
 
 import torch
+import numpy as np
 from torch.utils.data import Dataset
 
 from src.utils import json_load, deduplicate_texts
@@ -196,3 +197,20 @@ class DistillingDataset(JsonDataset):
         assert "logits" in self.datalist[0].keys()
         for data in self.datalist:
             data["logits"] = [LogitsData(item) for item in data["logits"]]
+
+
+class MnistDataset(Dataset):
+    def __init__(self, f, train: bool = True):
+        self.x_data, self.y_data = None, None
+        dataset = np.load(f)
+        if train:
+            self.x_data, self.y_data = dataset['x_train'], dataset['y_train']
+        else:
+            self.x_data, self.y_data = dataset['x_test'], dataset['y_test']
+        self.x_data = np.reshape(self.x_data, [self.x_data.shape[0], -1]) / 255.
+
+    def __len__(self):
+        return len(self.x_data)
+
+    def __getitem__(self, i):
+        return dict(x=self.x_data[i], y=self.y_data[i])
