@@ -1,6 +1,6 @@
 from typing import List
 
-from transformers import Qwen2Tokenizer
+# from transformers import Qwen2Tokenizer
 
 from src.tokenizers import Tokenizer
 

@@ -3,7 +3,6 @@ import os
 import fire
 import torch
 from torch.utils.data import DataLoader
-from tqdm import tqdm
 
 from src.dataset import MultiOutputsDataset, JsonDataset
 from src.entities import Timer
@@ -17,35 +16,40 @@ def main(
         ckpt_dir: str,
         save_dir: str,
         train_file: str,
-        tokenizer_file: str,
-        config_file: str,
         model_type: str = "llama-1-7b",
+        tokenizer_file: str = None,
+        config_file: str = None,
         max_seq_len: int = 512,
         max_batch_size: int = 1,
         lr: float = 1e-5,
         epochs: int = 1,
+        dtype: str = "float16",
         lora_rank: int = -1,
+        lora_dtype: str = "float32",
         task: str = None,
         label_file: str = None,
         eval_batch_size: int = None,
         log_dir: str = None,
         seed: int = None,
-        use_float16: bool = True
 ):
     if log_dir is not None:
         os.makedirs(log_dir, exist_ok=True)
-    local_rank, world_size = setup_model_parallel(
-        use_float16=use_float16, seed=seed
-    )
+    if tokenizer_file is None:
+        tokenizer_file = ckpt_dir
+    if config_file is None:
+        config_file = ckpt_dir
+    local_rank, world_size = setup_model_parallel(seed=seed)
 
     model, tokenizer = get_parallel_model(
         model_type=model_type,
-        config_file=config_file,
         local_rank=local_rank,
+        config_file=config_file,
+        tokenizer_file=tokenizer_file,
         world_size=world_size,
         max_seq_len=max_seq_len,
-        tokenizer_file=tokenizer_file,
-        lora_rank=lora_rank
+        lora_rank=lora_rank,
+        dtype=dtype,
+        lora_dtype=lora_dtype
     )
     dataset = MultiOutputsDataset(f=train_file)
     dataloader = DataLoader(dataset, batch_size=max_batch_size)
@@ -62,7 +66,7 @@ def main(
     trainer.load(ckpt_dir)
     for epoch in range(epochs):
         timer = Timer(total=len(dataloader), episode=100)
-        for data in tqdm(dataloader):
+        for data in dataloader:
             outputs = trainer.forward(
                 instructions=data['instruction'],
                 outputs=data['output']
@@ -71,8 +75,7 @@ def main(
             if trainer.step % 100 == 0:
                 print(f'step {trainer.step} of {len(dataloader)} -------------------------------')
                 print(f'LOSS: ', outputs.loss.item())
-                predict = trainer.predict(outputs.logits, data['instruction'], data['output'])[0]
-                print(predict['instruction'] + predict['output'])
+                trainer.predict(outputs.logits, data['instruction'], data['output'])
             if trainer.step % 7200 == 0:
                 trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))
         trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))

@@ -37,28 +37,28 @@ class LlamaAttention70B(AttentionForCausalLM):
             bias=False,
             gather_output=False,
             init_method=lambda x: x,
-        )
+        ).type(self.args.dtype)
         self.wk = ColumnParallelLinear(
             self.args.dim,
             self.n_kv_heads * self.head_dim,
             bias=False,
             gather_output=False,
             init_method=lambda x: x
-        )
+        ).type(self.args.dtype)
         self.wv = ColumnParallelLinear(
             self.args.dim,
             self.n_kv_heads * self.head_dim,
             bias=False,
             gather_output=False,
             init_method=lambda x: x,
-        )
+        ).type(self.args.dtype)
         self.wo = RowParallelLinear(
             self.args.n_heads * self.head_dim,
             self.args.dim,
             bias=False,
             input_is_parallel=True,
             init_method=lambda x: x,
-        )
+        ).type(self.args.dtype)
 
     def forward(
             self,
@@ -117,19 +117,19 @@ class LlamaFeedForward70B(nn.Module):
             bias=False,
             gather_output=False,
             init_method=lambda x: x
-        )
+        ).type(self.args.dtype)
         self.w2 = RowParallelLinear(
             self.hidden_dim, self.dim,
             bias=False,
             input_is_parallel=True,
             init_method=lambda x: x
-        )
+        ).type(self.args.dtype)
         self.w3 = ColumnParallelLinear(
             self.dim, self.hidden_dim,
             bias=False,
             gather_output=False,
             init_method=lambda x: x
-        )
+        ).type(self.args.dtype)
 
     def forward(self, x):
         return self.w2(F.silu(self.w1(x)) * self.w3(x))

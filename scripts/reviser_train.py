@@ -75,8 +75,7 @@ def main(
             if trainer.step % 100 == 0:
                 print(f'step {trainer.step} of {len(dataloader)} -------------------------------')
                 print(f'LOSS: ', outputs.loss.item())
-                predict = trainer.predict(outputs.logits, data['instruction'], data['output'])[0]
-                print(predict['instruction'] + predict['output'])
+                trainer.predict(outputs.logits, data['instruction'], data['output'])
         trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))
 
 

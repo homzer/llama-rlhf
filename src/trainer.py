@@ -166,8 +166,8 @@ class ParallelSolverTrainer(ParallelTrainer):
         Output = collections.namedtuple('Outputs', ['tokens', 'labels', 'masks'])
         return Output(tokens=tokens, labels=labels, masks=masks)
 
-    def predict(self, logits, instructions: List[str], outputs: List[str]) -> List[dict]:
-        bzs = int(logits.shape[0])
+    def predict(self, logits, instructions: List[str], outputs: List[str]):
+        bzs = min(int(logits.shape[0]), 1)
         datalist = []
         for i in range(bzs):
             instruction_ids = self.tokenizer.encode(instructions[i], bos=True)
@@ -176,7 +176,7 @@ class ParallelSolverTrainer(ParallelTrainer):
             instr_len, output_len = len(instruction_ids), len(output_ids)
             predict_ids = torch.argmax(logits[i], dim=-1)[instr_len - 1: instr_len - 1 + output_len].tolist()
             datalist.append(dict(instruction=instructions[i], output=self.tokenizer.decode(predict_ids)))
-        return datalist
+        print(datalist[0]['instruction'] + datalist[0]['output'])
 
     def forward(self, instructions: List[str], outputs: List[str]):
         """ Instruction tuning """
@@ -239,12 +239,32 @@ class ParallelSolverDistillTrainer(ParallelSolverTrainer):
         Output = collections.namedtuple('Output', ['loss', 'logits', 'loss_kl', 'loss_ce'])
         return Output(logits=logits, loss=loss, loss_kl=loss_kl, loss_ce=loss_ce)
 
-    def distill_(
+
+class ParallelSolverTripleDistillTrainer(ParallelSolverTrainer):
+    def __init__(
+            self,
+            model: ParallelModelForCausalLM,
+            tokenizer: Tokenizer,
+            optimizer: torch.optim.Optimizer,
+            max_seq_len: int,
+            accumulation_steps: int = 1
+    ):
+        super().__init__(
+            model=model,
+            tokenizer=tokenizer,
+            optimizer=optimizer,
+            max_seq_len=max_seq_len,
+            accumulation_steps=accumulation_steps
+        )
+        self.criterion_ce = nn.CrossEntropyLoss(ignore_index=-100)
+        self.criterion_kl = KLDivLoss()
+
+    def distill(
             self,
             instructions: List[str],
             outputs: List[str],
-            target_logits: torch.Tensor,
-            target_logits_: torch.Tensor,
+            target_logits_a: torch.Tensor,
+            target_logits_b: torch.Tensor,
             alpha: float = 1.0,
             beta: float = 1.0
     ):
@@ -258,18 +278,104 @@ class ParallelSolverDistillTrainer(ParallelSolverTrainer):
         )
         loss_kl = self.criterion_kl.forward(
             logits=logits,
-            targets=target_logits,
+            targets=target_logits_a,
             masks=example.masks
         )
         loss_kl_ = self.criterion_kl.forward(
             logits=logits,
-            targets=target_logits_,
+            targets=target_logits_b,
             masks=example.masks
         )
         loss = loss_ce + alpha * loss_kl + beta * loss_kl_
         self._back_propagation(loss)
         Output = collections.namedtuple('Output', ['loss', 'logits', 'loss_kl', 'loss_ce', 'loss_kl_'])
         return Output(logits=logits, loss=loss, loss_kl=loss_kl, loss_ce=loss_ce, loss_kl_=loss_kl_)
+
+
+class ParallelSolverMccDistillTrainer(ParallelSolverTrainer):
+    def __init__(
+            self,
+            model: ParallelModelForCausalLM,
+            tokenizer: Tokenizer,
+            optimizer: torch.optim.Optimizer,
+            max_seq_len: int,
+            accumulation_steps: int = 1
+    ):
+        super().__init__(
+            model=model,
+            tokenizer=tokenizer,
+            optimizer=optimizer,
+            max_seq_len=max_seq_len,
+            accumulation_steps=accumulation_steps
+        )
+        self.criterion_ce = nn.CrossEntropyLoss(ignore_index=-100)
+        self.criterion_kl = KLDivLoss()
+
+    def compute_kl_for_mcc(
+            self,
+            indices_a: List[List[torch.Tensor]],
+            indices_b: List[List[torch.Tensor]],
+            logits_a: torch.Tensor,
+            logits_b: torch.Tensor,
+            T: float
+    ) -> torch.Tensor:
+        """ It's gonna be a bit messy """
+        indices_a, indices_b = indices_a[0], indices_b[0]
+        indices_a = torch.cat([t.unsqueeze(0) for t in indices_a], dim=0).to(logits_a.device).T
+        indices_b = torch.cat([t.unsqueeze(0) for t in indices_b], dim=0).to(logits_b.device).T
+        bzs = indices_a.shape[0]
+        vocab_size = logits_a.shape[-1]
+        max_len1 = max(torch.sub(indices_a[:, 1], indices_a[:, 0]))
+        max_len2 = max(torch.sub(indices_b[:, 1], indices_b[:, 0]))
+        assert max_len1 == max_len2
+        p = torch.full(size=(bzs, max_len1, vocab_size), fill_value=0.).float()
+        q = torch.full(size=(bzs, max_len2, vocab_size), fill_value=0.).float()
+        valid_batch_indices = []  # only count for those within `max_seq_len`
+        for i in range(bzs):
+            if indices_a[i, 1] >= self.max_seq_len or indices_b[i, 1] >= self.max_seq_len:
+                print(f'WARNING: Escaping batch index because {max(indices_a[i, 1], indices_b[i, 1])} '
+                      f'exceeding max length {self.max_seq_len}')
+                continue
+            p[i, : indices_a[i, 1] - indices_a[i, 0], :] = logits_a[i, indices_a[i, 0]: indices_a[i, 1], :]
+            q[i, : indices_b[i, 1] - indices_b[i, 0], :] = logits_b[i, indices_b[i, 0]: indices_b[i, 1], :]
+            valid_batch_indices.append(i)
+        if len(valid_batch_indices) == 0:
+            return torch.tensor(0.0)
+
+        p = p[valid_batch_indices]
+        q = q[valid_batch_indices]
+        masks = (torch.sum(p, dim=-1) != 0)
+        p_loss = self.criterion_kl.forward(p, q, masks=masks, T=T)
+        q_loss = self.criterion_kl.forward(q, p, masks=masks, T=T)
+        return (p_loss + q_loss) * 0.5
+
+    def distill(
+            self,
+            instructions: List[str],
+            outputs_a: List[str],
+            outputs_b: List[str],
+            indices_a: List[List[torch.Tensor]],
+            indices_b: List[List[torch.Tensor]],
+            alpha: float = 1.0,
+            T: float = 1.0
+    ):
+        example_a = self.prepare_for_training(instructions, outputs_a)
+        example_b = self.prepare_for_training(instructions, outputs_b)
+
+        logits_a = self.model.forward(example_a.tokens).logits
+        logits_b = self.model.forward(example_b.tokens).logits
+
+        ce_loss_a = self.criterion_ce.forward(logits_a, example_a.tokens)
+        ce_loss_b = self.criterion_ce.forward(logits_b, example_b.tokens)
+        ce_loss = (ce_loss_a + ce_loss_b) * 0.5
+
+        # Compute KL Div Loss
+        kl_loss = alpha * self.compute_kl_for_mcc(indices_a, indices_b, logits_a, logits_b, T)
+
+        loss = ce_loss + kl_loss
+        self._back_propagation(loss)
+        Output = collections.namedtuple('Output', ['logits_a', 'logits_b', 'loss', 'loss_kl', 'loss_ce'])
+        return Output(logits_a=logits_a, logits_b=logits_b, loss=loss, loss_kl=kl_loss, loss_ce=ce_loss)
 
 
 class ParallelVerifierTrainer(ParallelTrainer):

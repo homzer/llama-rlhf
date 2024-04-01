@@ -5,7 +5,7 @@ import torch
 
 from src.entities import Timer
 from src.models.modeling_utils import get_parallel_model
-from src.trainer import ParallelSolverDistillTrainer
+from src.trainer import ParallelSolverTripleDistillTrainer
 from src.utils import setup_model_parallel
 
 
@@ -46,7 +46,7 @@ def main(
     )
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    trainer = ParallelSolverDistillTrainer(
+    trainer = ParallelSolverTripleDistillTrainer(
         model=model,
         tokenizer=tokenizer,
         optimizer=optimizer,
@@ -62,19 +62,18 @@ def main(
         ):
             assert data.instructions[0] == prior_data.instructions[0]
             timer.step()
-            outputs = trainer.distill_(
+            outputs = trainer.distill(
                 instructions=data.instructions,
                 outputs=data.outputs,
-                target_logits=data.logits,
-                target_logits_=prior_data.logits
+                target_logits_a=data.logits,
+                target_logits_b=prior_data.logits
             )
             if trainer.step % 100 == 0:
                 print(f'step {trainer.step} of {len(rollout_buffer) // max_batch_size} ---------------')
                 print(f'CE LOSS: ', outputs.loss_ce.item(),
                       'KL LOSS: ', outputs.loss_kl.item(),
                       'PRIOR KL LOSS: ', outputs.loss_kl_.item())
-                predict = trainer.predict(outputs.logits, data.instructions, data.outputs)[0]
-                print(predict['instruction'] + predict['output'])
+                trainer.predict(outputs.logits, data.instructions, data.outputs)
             if trainer.step % 7200 == 0:
                 trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))
         trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))

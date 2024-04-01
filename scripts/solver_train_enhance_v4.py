@@ -153,8 +153,7 @@ def run(
             if trainer.step % 100 == 0:
                 print(f'step {trainer.step} of {len(solver_rollout_buffer) // max_batch_size} ---------------')
                 print(f'CE LOSS: ', trainer_outputs.loss_ce.item(), 'KL LOSS: ', trainer_outputs.loss_kl.item())
-                predict = trainer.predict(trainer_outputs.logits, reviser_data.instructions, reviser_data.outputs)[0]
-                print(predict['instruction'] + predict['output'])
+                trainer.predict(trainer_outputs.logits, reviser_data.instructions, reviser_data.outputs)
 
         trainer.save(os.path.join(solver_save_dir, f"epoch-{epoch + 1}"))
 

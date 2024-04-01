@@ -1,6 +1,6 @@
 from typing import List
 
-from transformers import LlamaTokenizerFast
+# from transformers import LlamaTokenizerFast
 
 from src.tokenizers import Tokenizer
 from src.tokenizers.tokenizer_llama import LlamaTokenizer

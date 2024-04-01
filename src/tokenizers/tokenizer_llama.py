@@ -8,7 +8,8 @@ from src.tokenizers.tokenizer import Tokenizer
 
 class LlamaTokenizer(Tokenizer):
     def __init__(self, model_file: str):
-        assert os.path.isfile(model_file), model_file
+        if not model_file.endswith("tokenizer.model"):
+            model_file = os.path.join(model_file, "tokenizer.model")
         self.model = SentencePieceProcessor()
         self.model.Init(model_file=model_file)
         super().__init__(

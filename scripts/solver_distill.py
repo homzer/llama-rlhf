@@ -62,8 +62,7 @@ def main(
             if trainer.step % 100 == 0:
                 print(f'step {trainer.step} of {len(rollout_buffer) // max_batch_size} ---------------')
                 print(f'CE LOSS: ', outputs.loss_ce.item(), 'KL LOSS: ', outputs.loss_kl.item())
-                predict = trainer.predict(outputs.logits, data.instructions, data.outputs)[0]
-                print(predict['instruction'] + predict['output'])
+                trainer.predict(outputs.logits, data.instructions, data.outputs)
             if trainer.step % 7200 == 0:
                 trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))
         trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))

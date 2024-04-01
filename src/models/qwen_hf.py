@@ -109,11 +109,7 @@ class QwenAttention(AttentionForCausalLM):
         self.num_local_key_value_heads = self.num_key_value_heads // args.world_size
         self.n_rep = args.num_attention_heads // args.num_key_value_heads
 
-        self.rotary_emb = RotaryEmbedding(
-            self.head_dim,
-            max_position_embeddings=self.args.max_position_embeddings,
-            base=self.args.rope_theta,
-        )
+        self.rotary_emb = None
 
         self.q_proj = None
         self.k_proj = None
@@ -127,28 +123,34 @@ class QwenAttention(AttentionForCausalLM):
             bias=True,
             gather_output=False,
             init_method=lambda x: x,
-        )
+        ).type(self.args.dtype)
         self.k_proj = ColumnParallelLinear(
             self.args.hidden_size,
             self.num_key_value_heads * self.head_dim,
             bias=True,
             gather_output=False,
             init_method=lambda x: x
-        )
+        ).type(self.args.dtype)
         self.v_proj = ColumnParallelLinear(
             self.args.hidden_size,
             self.num_key_value_heads * self.head_dim,
             bias=True,
             gather_output=False,
             init_method=lambda x: x,
-        )
+        ).type(self.args.dtype)
         self.o_proj = RowParallelLinear(
             self.args.num_attention_heads * self.head_dim,
             self.args.hidden_size,
             bias=False,
             input_is_parallel=True,
             init_method=lambda x: x,
-        )
+        ).type(self.args.dtype)
+
+        self.rotary_emb = RotaryEmbedding(
+            self.head_dim,
+            max_position_embeddings=self.args.max_position_embeddings,
+            base=self.args.rope_theta,
+        ).type(self.args.dtype)
 
     def forward(
             self,
@@ -206,19 +208,19 @@ class QwenFeedForward(nn.Module):
             bias=False,
             gather_output=False,
             init_method=lambda x: x
-        )
+        ).type(self.args.dtype)
         self.down_proj = RowParallelLinear(
             self.args.intermediate_size, self.args.hidden_size,
             bias=False,
             input_is_parallel=True,
             init_method=lambda x: x
-        )
+        ).type(self.args.dtype)
         self.up_proj = ColumnParallelLinear(
             self.args.hidden_size, self.args.intermediate_size,
             bias=False,
             gather_output=False,
             init_method=lambda x: x
-        )
+        ).type(self.args.dtype)
 
     def forward(self, x):
         return self.down_proj(F.silu(self.gate_proj(x)) * self.up_proj(x))
@@ -238,8 +240,8 @@ class QwenTransformerBlock(nn.Module):
     def init_weights(self):
         self.self_attn.init_weights()
         self.mlp.init_weights()
-        self.input_layernorm = RMSNorm(self.args.hidden_size, eps=self.args.rms_norm_eps)
-        self.post_attention_layernorm = RMSNorm(self.args.hidden_size, eps=self.args.rms_norm_eps)
+        self.input_layernorm = RMSNorm(self.args.hidden_size, eps=self.args.rms_norm_eps).type(self.args.dtype)
+        self.post_attention_layernorm = RMSNorm(self.args.hidden_size, eps=self.args.rms_norm_eps).type(self.args.dtype)
 
     def forward(
             self,
@@ -269,10 +271,10 @@ class QwenHead(nn.Module):
     def init_weights(self):
         self.embed_tokens = ParallelEmbedding(
             self.args.vocab_size, self.args.hidden_size, init_method=lambda x: x
-        )
+        ).type(self.args.dtype)
         for layer in self.layers:
             layer.init_weights()
-        self.norm = RMSNorm(self.args.hidden_size, eps=self.args.rms_norm_eps)
+        self.norm = RMSNorm(self.args.hidden_size, eps=self.args.rms_norm_eps).type(self.args.dtype)
 
     def forward(self, tokens: torch.Tensor, start_pos=0, use_cache=False):
         tokens = tokens.to(next(self.parameters()).device)
@@ -300,7 +302,7 @@ class Qwen(ParallelModelForCausalLM):
         self.model.init_weights()
         self.lm_head = ColumnParallelLinear(
             self.args.hidden_size, self.args.vocab_size, bias=False, init_method=lambda x: x
-        )
+        ).type(self.args.dtype)
 
     def forward(
             self,

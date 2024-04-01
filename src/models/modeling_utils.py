@@ -121,16 +121,27 @@ def get_parallel_model(
         world_size: int,
         max_seq_len: int,
         tokenizer_file: str,
-        lora_rank: int
+        lora_rank: int,
+        dtype: str = 'float16',
+        lora_dtype: str = 'float32'
 ) -> (ParallelModule, Tokenizer):
-    if local_rank > 0:
+    if lora_rank > 0:
         model_type = "lora-" + model_type
-    args = ARGS[model_type](
-        max_seq_len=max_seq_len,
-        local_rank=local_rank,
-        world_size=world_size,
-        r=lora_rank
-    ).from_json(config_file)
+        args = ARGS[model_type](
+            max_seq_len=max_seq_len,
+            local_rank=local_rank,
+            world_size=world_size,
+            dtype=dtype,
+            r=lora_rank,
+            lora_dtype=lora_dtype
+        ).from_json(config_file)
+    else:
+        args = ARGS[model_type](
+            max_seq_len=max_seq_len,
+            local_rank=local_rank,
+            world_size=world_size,
+            dtype=dtype,
+        ).from_json(config_file)
     model = MODELS[model_type](args)
     tokenizer = TOKENIZERS[model_type](tokenizer_file)
     model.init_weights()

@@ -56,28 +56,28 @@ class LlamaAttention(AttentionForCausalLM):
             bias=False,
             gather_output=False,
             init_method=lambda x: x,
-        )
+        ).type(self.args.dtype)
         self.wk = ColumnParallelLinear(
             self.args.dim,
             self.args.n_heads * self.head_dim,
             bias=False,
             gather_output=False,
             init_method=lambda x: x,
-        )
+        ).type(self.args.dtype)
         self.wv = ColumnParallelLinear(
             self.args.dim,
             self.args.n_heads * self.head_dim,
             bias=False,
             gather_output=False,
             init_method=lambda x: x,
-        )
+        ).type(self.args.dtype)
         self.wo = RowParallelLinear(
             self.args.n_heads * self.head_dim,
             self.args.dim,
             bias=False,
             input_is_parallel=True,
             init_method=lambda x: x,
-        )
+        ).type(self.args.dtype)
 
 
 class LlamaFeedForward(nn.Module):
@@ -103,21 +103,21 @@ class LlamaFeedForward(nn.Module):
             bias=False,
             gather_output=False,
             init_method=lambda x: x
-        )
+        ).type(self.args.dtype)
         self.w2 = RowParallelLinear(
             self.hidden_dim,
             self.dim,
             bias=False,
             input_is_parallel=True,
             init_method=lambda x: x
-        )
+        ).type(self.args.dtype)
         self.w3 = ColumnParallelLinear(
             self.dim,
             self.hidden_dim,
             bias=False,
             gather_output=False,
             init_method=lambda x: x
-        )
+        ).type(self.args.dtype)
 
 
 class LlamaTransformerBlock(nn.Module):
@@ -147,8 +147,8 @@ class LlamaTransformerBlock(nn.Module):
     def init_weights(self):
         self.attention.init_weights()
         self.feed_forward.init_weights()
-        self.attention_norm = RMSNorm(self.args.dim, eps=self.args.norm_eps)
-        self.ffn_norm = RMSNorm(self.args.dim, eps=self.args.norm_eps)
+        self.attention_norm = RMSNorm(self.args.dim, eps=self.args.norm_eps).type(self.args.dtype)
+        self.ffn_norm = RMSNorm(self.args.dim, eps=self.args.norm_eps).type(self.args.dtype)
 
 
 class Llama(ParallelModelForCausalLM):
@@ -188,13 +188,13 @@ class Llama(ParallelModelForCausalLM):
     def init_weights(self):
         self.tok_embeddings = ParallelEmbedding(
             self.args.vocab_size, self.args.dim, init_method=lambda x: x
-        )
+        ).type(self.args.dtype)
         for layer in self.layers:
             layer.init_weights()
-        self.norm = RMSNorm(self.args.dim, eps=self.args.norm_eps)
+        self.norm = RMSNorm(self.args.dim, eps=self.args.norm_eps).type(self.args.dtype)
         self.output = ColumnParallelLinear(
             self.args.dim, self.args.vocab_size, bias=False, init_method=lambda x: x
-        )
+        ).type(self.args.dtype)
 
     def load(self, ckpt_dir: str, verbose: bool = True, merge_lora: bool = False):
         super().load(ckpt_dir, verbose, merge_lora=merge_lora)
@@ -245,11 +245,11 @@ class LlamaVerifier(ParallelVerifier):
     def init_weights(self):
         self.tok_embeddings = ParallelEmbedding(
             self.args.vocab_size, self.args.dim, init_method=lambda x: x
-        )
+        ).type(self.args.dtype)
         for layer in self.layers:
             layer.init_weights()
-        self.norm = RMSNorm(self.args.dim, eps=self.args.norm_eps)
-        self.v_head = nn.Linear(self.args.dim, 1, bias=False)
+        self.norm = RMSNorm(self.args.dim, eps=self.args.norm_eps).type(self.args.dtype)
+        self.v_head = nn.Linear(self.args.dim, 1, bias=False).type(self.args.dtype)
 
     def load(self, ckpt_dir: str, verbose: bool = True, merge_lora: bool = False):
         super().load(ckpt_dir, verbose, merge_lora=merge_lora)

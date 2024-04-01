@@ -47,28 +47,28 @@ class LlamaAttention30B(LlamaAttention):
             bias=False,
             gather_output=False,
             init_method=lambda x: x,
-        )
+        ).type(self.args.dtype)
         self.wk = ColumnParallelLinearPartitioned(
             self.args.dim,
             get_partition_size(self.args.local_rank, self.layer_id),
             bias=False,
             gather_output=False,
             init_method=lambda x: x,
-        )
+        ).type(self.args.dtype)
         self.wv = ColumnParallelLinearPartitioned(
             self.args.dim,
             get_partition_size(self.args.local_rank, self.layer_id),
             bias=False,
             gather_output=False,
             init_method=lambda x: x,
-        )
+        ).type(self.args.dtype)
         self.wo = RowParallelLinearPartitioned(
             get_partition_size(self.args.local_rank, self.layer_id),
             self.args.dim,
             bias=False,
             input_is_parallel=True,
             init_method=lambda x: x,
-        )
+        ).type(self.args.dtype)
 
 
 class LlamaTransformerBlock30B(LlamaTransformerBlock):

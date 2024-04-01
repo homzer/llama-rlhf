@@ -41,6 +41,30 @@ class MultiOutputsDataset(JsonDataset):
         return data
 
 
+class MultiOutputsConsistentDataset(MultiOutputsDataset):
+    def __init__(self, f):
+        super().__init__(f)
+        assert "output" in self.datalist[0]
+        assert "indices" in self.datalist[0]
+        assert type(self.datalist[0]['output']) is list
+        assert type(self.datalist[0]['indices']) is list
+
+    def __getitem__(self, i):
+        data = self.datalist[i].copy()
+        assert len(data['output']) == len(data['indices'])
+        assert len(data['output']) >= 2
+        id1, id2 = random.sample([j for j in range(len(data['output']))], 2)
+        data['output'] = random.sample(data['output'], 1)[0] if self.randomize else data['output'][0]
+        data['indices'] = random.sample(data['indices'], 1)[0] if self.randomize else data['indices'][0]
+        return dict(
+            instruction=data['instruction'],
+            output_a=data['output'][id1],
+            output_b=data['output'][id2],
+            indices_a=data['indices'][id1],
+            indices_b=data['indices'][id2]
+        )
+
+
 class EvoMultiOutputsDataset(MultiOutputsDataset):
     def __init__(self, f):
         super().__init__(f)

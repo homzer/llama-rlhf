@@ -50,28 +50,28 @@ class MistralAttention(AttentionForCausalLM):
             bias=False,
             gather_output=False,
             init_method=lambda x: x,
-        )
+        ).type(self.args.dtype)
         self.wk = ColumnParallelLinear(
             self.args.dim,
             self.args.n_kv_heads * self.args.head_dim,
             bias=False,
             gather_output=False,
             init_method=lambda x: x,
-        )
+        ).type(self.args.dtype)
         self.wv = ColumnParallelLinear(
             self.args.dim,
             self.args.n_kv_heads * self.args.head_dim,
             bias=False,
             gather_output=False,
             init_method=lambda x: x,
-        )
+        ).type(self.args.dtype)
         self.wo = RowParallelLinear(
             self.args.n_heads * self.args.head_dim,
             self.args.dim,
             bias=False,
             input_is_parallel=True,
             init_method=lambda x: x,
-        )
+        ).type(self.args.dtype)
 
     def apply_cache(self, xk, xv, start_pos):
         bsz, seqlen, n_heads, head_dim = xk.shape
@@ -154,21 +154,21 @@ class MistralFeedForward(nn.Module):
             bias=False,
             gather_output=False,
             init_method=lambda x: x
-        )
+        ).type(self.args.dtype)
         self.w2 = RowParallelLinear(
             self.args.hidden_dim,
             self.args.dim,
             bias=False,
             input_is_parallel=True,
             init_method=lambda x: x
-        )
+        ).type(self.args.dtype)
         self.w3 = ColumnParallelLinear(
             self.args.dim,
             self.args.hidden_dim,
             bias=False,
             gather_output=False,
             init_method=lambda x: x
-        )
+        ).type(self.args.dtype)
 
     def forward(self, x) -> torch.Tensor:
         return self.w2(F.silu(self.w1(x)) * self.w3(x))
@@ -188,8 +188,8 @@ class MistralTransformerBlock(nn.Module):
     def init_weights(self):
         self.attention.init_weights()
         self.feed_forward.init_weights()
-        self.attention_norm = RMSNorm(self.args.dim, eps=self.args.norm_eps)
-        self.ffn_norm = RMSNorm(self.args.dim, eps=self.args.norm_eps)
+        self.attention_norm = RMSNorm(self.args.dim, eps=self.args.norm_eps).type(self.args.dtype)
+        self.ffn_norm = RMSNorm(self.args.dim, eps=self.args.norm_eps).type(self.args.dtype)
 
     def forward(
             self,
@@ -225,13 +225,13 @@ class Mistral(ParallelModelForCausalLM):
     def init_weights(self):
         self.tok_embeddings = ParallelEmbedding(
             self.args.vocab_size, self.args.dim, init_method=lambda x: x
-        )
+        ).type(self.args.dtype)
         for layer in self.layers:
             layer.init_weights()
-        self.norm = RMSNorm(self.args.dim, eps=self.args.norm_eps)
+        self.norm = RMSNorm(self.args.dim, eps=self.args.norm_eps).type(self.args.dtype)
         self.output = ColumnParallelLinear(
             self.args.dim, self.args.vocab_size, bias=False, init_method=lambda x: x
-        )
+        ).type(self.args.dtype)
 
     def forward(
             self,
@@ -287,11 +287,11 @@ class MistralVerifier(ParallelVerifier):
     def init_weights(self):
         self.tok_embeddings = ParallelEmbedding(
             self.args.vocab_size, self.args.dim, init_method=lambda x: x
-        )
+        ).type(self.args.dtype)
         for layer in self.layers:
             layer.init_weights()
-        self.norm = RMSNorm(self.args.dim, eps=self.args.norm_eps)
-        self.v_head = nn.Linear(self.args.dim, 1, bias=False)
+        self.norm = RMSNorm(self.args.dim, eps=self.args.norm_eps).type(self.args.dtype)
+        self.v_head = nn.Linear(self.args.dim, 1, bias=False).type(self.args.dtype)
 
     def forward(self, tokens: torch.Tensor) -> VerifierOutputs:
         tokens = tokens.to(next(self.parameters()).device)

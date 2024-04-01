@@ -14,6 +14,19 @@ from torch.distributed import init_process_group
 from tqdm import trange
 
 
+def get_torch_dtype(dtype: str):
+    if dtype == "float32" or dtype == "fp32":
+        return torch.float32
+    elif dtype == 'float16' or dtype == "fp16":
+        return torch.float16
+    elif dtype == "bfloat16" or dtype == "bf16":
+        return torch.bfloat16
+    elif dtype == "int8":
+        return torch.int8
+    else:
+        raise ValueError(dtype)
+
+
 def set_seed(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
@@ -418,10 +431,13 @@ def deduplicate_texts(iterable: list, threshold: float = 0.8, key: Callable = No
     if key is None:
         def key(x):
             return x
-    for i in range(len(iterable)):
+    for i in trange(len(iterable)):
         results.append(iterable[i])
         for j in range(i + 1, len(iterable)):
-            sim = jaccard(set(key(iterable[i]).split(' ')), set(key(iterable[j]).split(' ')))
+            if threshold == 1:
+                sim = 1 if key(iterable[i]) == key(iterable[j]) else 0
+            else:
+                sim = jaccard(set(key(iterable[i]).split(' ')), set(key(iterable[j]).split(' ')))
             if sim >= threshold:
                 results.pop(-1)
                 break

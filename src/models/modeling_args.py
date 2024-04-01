@@ -1,7 +1,10 @@
 import json
+import os
 from dataclasses import dataclass
 
-import torch
+import transformers
+
+from src.utils import get_torch_dtype
 
 HF_CONFIG_MAP = {
     "hidden_size": "dim",
@@ -13,16 +16,12 @@ HF_CONFIG_MAP = {
 
 class Args:
     def __post_init__(self):
+        dtype = getattr(self, 'dtype', None)
+        if dtype is not None:
+            setattr(self, 'dtype', get_torch_dtype(dtype))
         lora_dtype = getattr(self, 'lora_dtype', None)
         if lora_dtype is not None:
-            if lora_dtype in ['float32', 'fp32']:
-                setattr(self, 'lora_dtype', torch.float32)
-            elif lora_dtype in ['float16', 'fp16']:
-                setattr(self, 'lora_dtype', torch.float16)
-            elif lora_dtype in ['bfloat16', 'bf16']:
-                setattr(self, 'lora_dtype', torch.bfloat16)
-            else:
-                raise ValueError(lora_dtype)
+            setattr(self, 'lora_dtype', get_torch_dtype(lora_dtype))
 
     def _set_attribute(self, name, value):
         try:
@@ -69,6 +68,7 @@ class LlamaArgs(Args):
     local_rank: int
     world_size: int
 
+    dtype: str = "float16"
     dim: int = None
     n_layers: int = None
     n_heads: int = None
@@ -81,6 +81,11 @@ class LlamaArgs(Args):
     n_kv_heads: int = None
 
     use_clamp: bool = False
+
+    def from_json(self, filename: str):
+        if not filename.endswith(".json"):
+            filename = os.path.join(filename, "params.json")
+        return super().from_json(filename)
 
 
 @dataclass
@@ -95,6 +100,7 @@ class MistralArgs(Args):
     local_rank: int
     world_size: int
 
+    dtype: str = "float16"
     dim: int = None
     n_layers: int = None
     head_dim: int = None
@@ -120,6 +126,7 @@ class MistralArgsHf(Args):
     local_rank: int
     world_size: int
 
+    dtype: str = "float16"
     hidden_size: int = None
     num_hidden_layers: int = None
     intermediate_size: int = None
@@ -156,6 +163,7 @@ class QwenArgsHf(Args):
     local_rank: int
     world_size: int
 
+    dtype: str = "float16"
     hidden_size: int = None
     intermediate_size: int = None
     max_position_embeddings: int = None
@@ -176,3 +184,17 @@ class QwenArgsHf(Args):
 class MistralMoeArgsHf(MistralArgsHf):
     num_local_experts: int
     num_experts_per_tok: int
+
+
+class T5Config(transformers.T5Config):
+    def __init__(self, max_input_len=128, max_output_len=384, **kwargs):
+        super().__init__(**kwargs)
+        self.max_input_len = max_input_len
+        self.max_output_len = max_output_len
+
+
+class LoraT5Config(T5Config):
+    def __init__(self, r=16, **kwargs):
+        super().__init__(**kwargs)
+        self.r = r
+        self.lora_dtype = "float32"

@@ -1,6 +1,6 @@
 from typing import List
 
-from transformers import GPT2Tokenizer as BaseGPT2Tokenizer
+# from transformers import GPT2Tokenizer as BaseGPT2Tokenizer
 
 from src.tokenizers.tokenizer import Tokenizer
 
