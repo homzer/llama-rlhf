@@ -180,6 +180,11 @@ class QwenArgsHf(Args):
 
     use_clamp: bool = False
 
+    def from_json(self, filename: str):
+        if not filename.endswith(".json"):
+            filename = os.path.join(filename, "config.json")
+        return super().from_json(filename)
+
 
 class MistralMoeArgsHf(MistralArgsHf):
     num_local_experts: int

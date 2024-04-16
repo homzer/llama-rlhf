@@ -128,7 +128,7 @@ class Clamp:
 class RotaryEmbedding(nn.Module):
     def __init__(self, dim, max_position_embeddings=2048, base=10000, device=None):
         super().__init__()
-        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).type(self.args.lora_dtype).to(device) / dim))
+        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).type(torch.float32).to(device) / dim))
         self.register_buffer("inv_freq", inv_freq)
 
         # Build here to make `torch.jit.trace` work.
