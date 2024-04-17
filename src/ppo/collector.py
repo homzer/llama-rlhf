@@ -13,7 +13,7 @@ from src.ppo.buffer import (
     ActorRolloutBuffer,
     SolverRolloutBuffer,
     LogitsRolloutBuffer,
-    LogitsRolloutBufferV0)
+    LogitsRolloutBufferV0, OutputRolloutBuffer)
 from src.ppo.generator import (
     CriticGeneratorForCausalLM,
     ActorGeneratorForCausalLM,
@@ -98,6 +98,22 @@ class SolverBufferCollector:
         actions = outputs.actions.cpu().numpy()
         action_masks = outputs.action_masks.cpu().numpy()
         return SolverRolloutBuffer(instructions, actions, action_masks)
+
+
+class OutputBufferCollector:
+    def __init__(
+            self,
+            solver: Union[ModelForCausalLM, ParallelModelForCausalLM],
+            tokenizer: Tokenizer,
+            max_seq_len: int
+    ):
+        self.generator = SolverGeneratorForCausalLM(
+            model=solver, tokenizer=tokenizer, max_seq_len=max_seq_len
+        )
+
+    def forward(self, instructions: List[str], t: float = 0.0, p: float = 0.8) -> OutputRolloutBuffer:
+        outputs = self.generator.forward(instructions, t=t, p=p)
+        return OutputRolloutBuffer(instructions, outputs.outputs)
 
 
 class ActorBufferCollector:

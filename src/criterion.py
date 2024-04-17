@@ -89,11 +89,92 @@ class RewardLoss(Loss):
         return loss
 
 
+class DpoLoss(Loss):
+    def __init__(self, beta=1.0, eps=1e-5):
+        super().__init__()
+        self.beta = beta
+        self.eps = eps
+
+    def _prepare_for_loss(self, logits, labels, masks, reference_logits):
+        log_probs = torch.log_softmax(logits, dim=-1)
+        labels = labels.to(logits.device).long()
+        labels[labels == -100] = 0
+        # [b, s]
+        log_probs = torch.gather(log_probs, dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
+        if masks is None:
+            masks = torch.ones_like(log_probs)
+        masks = masks.to(logits.device)
+        log_probs = (log_probs * masks).sum(-1) / (masks.sum(-1) + self.eps)
+
+        reference_log_probs = 0
+        if reference_logits is not None:
+            reference_logits = reference_logits.to(logits)
+            reference_log_probs = torch.log_softmax(reference_logits, dim=-1)
+            reference_log_probs = torch.gather(reference_log_probs, dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
+            reference_log_probs = (reference_log_probs * masks).sum(-1) / (masks.sum(-1) + self.eps)
+
+        return log_probs, reference_log_probs
+
+    def forward(
+            self,
+            chosen_logits: torch.Tensor,
+            rejected_logits: torch.Tensor,
+            chosen_labels: torch.Tensor,
+            rejected_labels: torch.Tensor,
+            chosen_masks: torch.Tensor = None,
+            rejected_masks: torch.Tensor = None,
+            reference_chosen_logits: torch.Tensor = None,
+            reference_rejected_logits: torch.Tensor = None,
+    ):
+        """
+        Compute Dpo loss.
+        :param chosen_logits: [batch_size, seq_len, vocab_size] from policy model.
+        :param rejected_logits: [batch_size, seq_len, vocab_size] from policy model.
+        :param chosen_labels: [batch_size, seq_len], chosen token ids.
+        :param rejected_labels: [batch_size, seq_len], rejected token ids.
+        :param chosen_masks: [batch_size, seq_len] with values of `True` or `False`.
+        :param rejected_masks: [batch_size, seq_len] with values of `True` or `False`.
+        :param reference_chosen_logits: [batch_size, seq_len, vocab_size] from reference model.
+        :param reference_rejected_logits: [batch_size, seq_len, vocab_size] from reference model.
+        :return: Scalar loss tensor.
+        """
+        assert not ((reference_chosen_logits is None) ^ (reference_rejected_logits is None))
+
+        chosen_log_probs, reference_chosen_log_probs = self._prepare_for_loss(
+            logits=chosen_logits,
+            labels=chosen_labels,
+            masks=chosen_masks,
+            reference_logits=reference_chosen_logits
+        )
+
+        rejected_log_probs, reference_rejected_log_probs = self._prepare_for_loss(
+            logits=rejected_logits,
+            labels=rejected_labels,
+            masks=rejected_masks,
+            reference_logits=reference_rejected_logits
+        )
+
+        log_probs = (chosen_log_probs - reference_chosen_log_probs) - (rejected_log_probs - reference_rejected_log_probs)
+        loss = -torch.nn.functional.logsigmoid(self.beta * log_probs).mean()
+        return loss
+
+
 if __name__ == '__main__':
-    criterion = RewardLoss()
-    _chosen_rewards = torch.tensor([[2, 2, 3, 3, 3]])
-    _rejected_rewards = torch.tensor([[1, 1, 1, 1, 4]])
-    _chosen_masks = torch.tensor([[False, False, False, False, False]])
-    _rejected_masks = torch.tensor([[True, True, True, True, False]])
-    _loss = criterion.forward(_chosen_rewards, _rejected_rewards, _chosen_masks, _rejected_masks)
-    print(_loss)
+    torch.manual_seed(0)
+    criterion = DpoLoss()
+    _chosen_logits = torch.randn(2, 3, 4)
+    _rejected_logits = torch.randn(2, 3, 4)
+    _chosen_labels = torch.Tensor([[2, 1, 2], [3, 2, -100]])
+    _rejected_labels = torch.Tensor([[3, 1, -100], [2, -100, -100]])
+    _chosen_masks = _chosen_labels == -100
+    _rejected_masks = _rejected_labels == -100
+    _reference_chosen_logits = torch.randn(2, 3, 4)
+    _reference_rejected_logits = torch.randn(2, 3, 4)
+    print(criterion.forward(
+        _chosen_logits, _rejected_logits, _chosen_labels, _rejected_labels, _chosen_masks, _rejected_masks, _reference_chosen_logits, _reference_rejected_logits
+    ))
+    # _chosen_masks = torch.tensor([[False, False, False, False, True]])
+    # _rejected_masks = torch.tensor([[True, True, True, True, False]])
+    # print(_chosen_rewards * _chosen_masks)
+    # _loss = criterion.forward(_chosen_rewards, _rejected_rewards, _chosen_masks, _rejected_masks)
+    # print(_loss)
