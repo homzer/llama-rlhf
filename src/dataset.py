@@ -32,8 +32,9 @@ class MultiOutputsDataset(JsonDataset):
     def __init__(self, f, randomize: bool = True):
         super().__init__(f)
         self.randomize = randomize
-        assert "output" in self.datalist[0].keys()
-        assert type(self.datalist[0]['output']) is list
+        if self.datalist:
+            assert "output" in self.datalist[0].keys()
+            assert type(self.datalist[0]['output']) is list
 
     def __getitem__(self, i):
         data = self.datalist[i].copy()

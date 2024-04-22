@@ -12,7 +12,7 @@ from src.models.modeling_utils import get_parallel_model
 from src.ppo.buffer import LogitsRolloutBuffer, OutputRolloutBuffer
 from src.ppo.collector import LogitsBufferCollector, OutputBufferCollector
 from src.trainer import ParallelSolverDpoTrainer
-from src.utils import setup_model_parallel, set_barrier, json_dump
+from src.utils import setup_model_parallel, set_barrier, json_dump, json_load
 
 
 def main(
@@ -38,11 +38,11 @@ def main(
         eval_batch_size: int = 256,
         max_batch_size: int = 1,
         lr: float = 1e-5,
-        epochs: int = 1,
         dtype: str = "float16",
         lora_dtype: str = "float32",
         log_dir: str = None,
-        seed: int = None
+        seed: int = None,
+        chunk_size: int = 10000
 ):
     if task is not None:
         assert label_file is not None
@@ -50,14 +50,15 @@ def main(
         assert log_dir is not None
         os.makedirs(log_dir, exist_ok=True)
     local_rank, world_size = setup_model_parallel(seed=seed)
-    dataset = MultiOutputsDataset(train_file)
+    datalist = json_load(train_file)
+    epochs = len(datalist) // chunk_size
 
     for epoch in range(epochs):
-        print(f"Epoch - {epoch} of {len(dataset) // 10000}")
-        sub_dataset = dataset[epoch * 10000: (epoch + 1) * 10000]
-        if len(sub_dataset) == 0:
+        print(f"Epoch - {epoch} of {epochs}")
+        dataset = MultiOutputsDataset(datalist[epoch * chunk_size: (epoch + 1) * chunk_size])
+        if len(dataset) == 0:
             return
-        dataloader = DataLoader(sub_dataset, batch_size=eval_batch_size)
+        dataloader = DataLoader(dataset, batch_size=eval_batch_size)
 
         # Collect policy's outputs as rejected samples
         policy, policy_tokenizer = get_parallel_model(
@@ -80,7 +81,7 @@ def main(
         timer = Timer(len(dataloader))
         for data in dataloader:
             timer.step()
-            rejected_rollout_buffer.extend(rejected_buffer_collector.forward(data['instruction']))
+            rejected_rollout_buffer.extend(rejected_buffer_collector.forward(data['instruction'], t=1.0))
             chosen_rollout_buffer.extend(OutputRolloutBuffer(data['instruction'], data['output']))
         assert len(rejected_rollout_buffer) == len(chosen_rollout_buffer)
         policy.cpu()
@@ -169,7 +170,7 @@ def main(
                 reference_rejected_logits=reference_rejected_data.logits
             )
             if trainer.step % 100 == 0:
-                print(f'step {trainer.step} of {len(chosen_data) // max_batch_size} ---------------')
+                print(f'step {trainer.step} of {len(chosen_rollout_buffer) // max_batch_size} ---------------')
                 print(f'CE LOSS: ', trainer_outputs.loss_ce.item(), 'DPO LOSS: ', trainer_outputs.loss_dpo.item())
                 trainer.predict(trainer_outputs.logits, chosen_data.instructions, chosen_data.outputs)
             if trainer.step % 7200 == 0:

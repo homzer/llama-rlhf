@@ -90,13 +90,13 @@ class RewardLoss(Loss):
 
 
 class DpoLoss(Loss):
-    def __init__(self, beta=1.0, eps=1e-5):
+    def __init__(self, beta=0.01, eps=1e-5):
         super().__init__()
         self.beta = beta
         self.eps = eps
 
     def _prepare_for_loss(self, logits, labels, masks, reference_logits):
-        log_probs = torch.log_softmax(logits, dim=-1)
+        log_probs = torch.log_softmax(logits.float(), dim=-1).type_as(logits)
         labels = labels.to(logits.device).long()
         labels[labels == -100] = 0
         # [b, s]
@@ -109,7 +109,7 @@ class DpoLoss(Loss):
         reference_log_probs = 0
         if reference_logits is not None:
             reference_logits = reference_logits.to(logits)
-            reference_log_probs = torch.log_softmax(reference_logits, dim=-1)
+            reference_log_probs = torch.log_softmax(reference_logits.float(), dim=-1).type_as(reference_logits)
             reference_log_probs = torch.gather(reference_log_probs, dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
             reference_log_probs = (reference_log_probs * masks).sum(-1) / (masks.sum(-1) + self.eps)
 
@@ -162,14 +162,26 @@ class DpoLoss(Loss):
 if __name__ == '__main__':
     torch.manual_seed(0)
     criterion = DpoLoss()
-    _chosen_logits = torch.randn(2, 3, 4)
-    _rejected_logits = torch.randn(2, 3, 4)
+    _chosen_logits = torch.Tensor([
+        [[1, 0, 100, -100], [1, 100, 0, -100], [0, 1, 100, -100]],
+        [[-100, 1, 0, 100], [0, 1, 100, -100], [100, 1, 0, -100]]
+    ])
+    _rejected_logits = torch.Tensor([
+        [[1, 0, -100, 100], [1, 100, 0, -100], [0, 1, 100, -100]],
+        [[-0, 1, 100, -100], [0, 1, 100, -100], [100, 1, 0, -100]]
+    ])
     _chosen_labels = torch.Tensor([[2, 1, 2], [3, 2, -100]])
     _rejected_labels = torch.Tensor([[3, 1, -100], [2, -100, -100]])
-    _chosen_masks = _chosen_labels == -100
-    _rejected_masks = _rejected_labels == -100
-    _reference_chosen_logits = torch.randn(2, 3, 4)
-    _reference_rejected_logits = torch.randn(2, 3, 4)
+    _chosen_masks = _chosen_labels != -100
+    _rejected_masks = _rejected_labels != -100
+    _reference_chosen_logits = - torch.Tensor([
+        [[1, 0, 50, -50], [1, 50, 0, -50], [0, 1, 50, -50]],
+        [[-50, 1, 0, 50], [0, 1, 50, -50], [50, 1, 0, -50]]
+    ])
+    _reference_rejected_logits = torch.Tensor([
+        [[1, 0, -50, 50], [1, 50, 0, -50], [0, 1, 50, -50]],
+        [[-0, 1, 50, -50], [0, 1, 50, -50], [50, 1, 0, -50]]
+    ])
     print(criterion.forward(
         _chosen_logits, _rejected_logits, _chosen_labels, _rejected_labels, _chosen_masks, _rejected_masks, _reference_chosen_logits, _reference_rejected_logits
     ))
