@@ -42,14 +42,14 @@ class SolverEvaluator:
         timer = Timer(len(dataloader))
         for data in tqdm(dataloader):
             timer.step()
-            outs = self.generator.forward(data['instruction'], t=t, p=p)
-            for i, out in enumerate(outs):
-                datalist.append(dict(
-                    instruction=out['instruction'],
-                    output=out['output'],
-                    label=data['label'][i]
-                ))
-            print(outs[0]['instruction'] + outs[0]['output'])
+            generator_outputs = self.generator.forward(data['instruction'], t=t, p=p)
+            for i, generator_output in enumerate(generator_outputs):
+                result_dict = dict()
+                for key in data.keys():
+                    result_dict[key] = data[key][i]
+                result_dict['output'] = generator_output['output']
+                datalist.append(result_dict)
+            print(generator_outputs[0]['instruction'] + generator_outputs[0]['output'])
             print("---" * 50)
 
         for data in datalist:  # TODO MATH
