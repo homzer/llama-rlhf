@@ -164,7 +164,7 @@ class Llama(ParallelModelForCausalLM):
         self.output = None
 
         self.freqs_cis = precompute_freqs_cis(
-            self.args.dim // self.args.n_heads, self.args.max_seq_len * 2
+            self.args.dim // self.args.n_heads, self.args.max_seq_len * 2, self.args.rope_theta
         )
 
     def forward(self, tokens: torch.Tensor, start_pos=0, use_cache=False):
