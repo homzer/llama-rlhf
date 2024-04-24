@@ -64,7 +64,7 @@ def main(
             outputs = evaluator.forward(task, JsonDataset(label_file), t=t, p=p)
             print("Task: ", task, "Evaluate Accuracy: ", outputs.acc, "Missing: ", outputs.missing)
             if local_rank == 0:
-                os.makedirs(log_dir, exist_ok=True)
+                os.makedirs(os.path.join(log_dir, checkpoint.name), exist_ok=True)
                 json_dump(outputs.datalist, os.path.join(
                     log_dir, checkpoint.name, f'{task}-results-{round(outputs.acc, 5)}.json'
                 ), indent=4)
