@@ -50,7 +50,7 @@ class SolverEvaluator:
                 result_dict['output'] = generator_output['output']
                 datalist.append(result_dict)
             print(generator_outputs[0]['instruction'] + generator_outputs[0]['output'])
-            print("---" * 50)
+            print("---" * 10)
 
         for data in datalist:  # TODO MATH
             data['predict'] = evaluator.forward(data['output'], data['label'] if task != "MATH" else None)

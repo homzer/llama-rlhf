@@ -4,12 +4,11 @@ import fire
 import torch
 from torch.utils.data import DataLoader
 
-from src.dataset import MultiOutputsDataset, JsonDataset
+from src.dataset import MultiOutputsDataset
 from src.entities import Timer
-from src.evaluator import SolverEvaluator
 from src.models.modeling_utils import get_parallel_model
 from src.trainer import ParallelSolverTrainer
-from src.utils import setup_model_parallel, json_dump
+from src.utils import setup_model_parallel, json_load
 
 
 def main(
@@ -22,19 +21,12 @@ def main(
         max_seq_len: int = 512,
         max_batch_size: int = 1,
         lr: float = 1e-5,
-        epochs: int = 1,
         dtype: str = "float16",
         lora_rank: int = -1,
         lora_dtype: str = "float32",
-        save_steps: int = 10000,
-        task: str = None,
-        label_file: str = None,
-        eval_batch_size: int = None,
-        log_dir: str = None,
+        chunk_size: int = 10000,
         seed: int = None,
 ):
-    if log_dir is not None:
-        os.makedirs(log_dir, exist_ok=True)
     if tokenizer_file is None:
         tokenizer_file = ckpt_dir
     if config_file is None:
@@ -52,8 +44,7 @@ def main(
         dtype=dtype,
         lora_dtype=lora_dtype
     )
-    dataset = MultiOutputsDataset(f=train_file)
-    dataloader = DataLoader(dataset, batch_size=max_batch_size)
+
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     trainer = ParallelSolverTrainer(
         model=model,
@@ -61,11 +52,16 @@ def main(
         optimizer=optimizer,
         max_seq_len=max_seq_len
     )
-    evaluator = SolverEvaluator(
-        model, tokenizer, eval_batch_size, max_seq_len
-    ) if task is not None else None
     trainer.load(ckpt_dir)
+    datalist = json_load(train_file)
+    epochs = len(datalist) // chunk_size
+
     for epoch in range(epochs):
+        print(f"Epoch - {epoch} of {epochs}")
+        dataset = MultiOutputsDataset(datalist[epoch * chunk_size: (epoch + 1) * chunk_size])
+        if len(dataset) == 0:
+            return
+        dataloader = DataLoader(dataset, batch_size=max_batch_size)
         timer = Timer(total=len(dataloader), episode=100)
         for data in dataloader:
             outputs = trainer.forward(
@@ -77,16 +73,7 @@ def main(
                 print(f'step {trainer.step} of {len(dataloader)} -------------------------------')
                 print(f'LOSS: ', outputs.loss.item())
                 trainer.predict(outputs.logits, data['instruction'], data['output'])
-            if trainer.step % save_steps == 0:
-                trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))
         trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))
-        if evaluator is not None:
-            outputs = evaluator.forward(task, JsonDataset(label_file))
-            print("Evaluate Accuracy: ", outputs.acc, "Missing: ", outputs.missing)
-            if log_dir is not None:
-                json_dump(outputs.datalist, os.path.join(
-                    log_dir, f'results-epoch-{epoch + 1}-{round(outputs.acc, 4)}.json'), indent=4
-                )
 
 
 if __name__ == '__main__':

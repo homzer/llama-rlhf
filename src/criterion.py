@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from src.utils import powmax, masked_mean
 
@@ -90,12 +91,15 @@ class RewardLoss(Loss):
 
 
 class DpoLoss(Loss):
-    def __init__(self, beta=0.01, eps=1e-5):
+    def __init__(self, beta=1.0, logits_norm: bool = True, label_smoothing: float = 0.0, eps=1e-5):
         super().__init__()
         self.beta = beta
+        self.label_smoothing = label_smoothing
         self.eps = eps
+        self.logits_norm = logits_norm
 
     def _prepare_for_loss(self, logits, labels, masks, reference_logits):
+        logits = self._norm(logits) if self.logits_norm else logits
         log_probs = torch.log_softmax(logits.float(), dim=-1).type_as(logits)
         labels = labels.to(logits.device).long()
         labels[labels == -100] = 0
@@ -109,11 +113,15 @@ class DpoLoss(Loss):
         reference_log_probs = 0
         if reference_logits is not None:
             reference_logits = reference_logits.to(logits)
+            reference_logits = self._norm(reference_logits) if self.logits_norm else reference_logits
             reference_log_probs = torch.log_softmax(reference_logits.float(), dim=-1).type_as(reference_logits)
             reference_log_probs = torch.gather(reference_log_probs, dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
             reference_log_probs = (reference_log_probs * masks).sum(-1) / (masks.sum(-1) + self.eps)
 
         return log_probs, reference_log_probs
+
+    def _norm(self, x: torch.Tensor, dim: int = -1):
+        return x / (x.std(dim=dim, keepdim=True) + self.eps)
 
     def forward(
             self,
@@ -154,14 +162,21 @@ class DpoLoss(Loss):
             reference_logits=reference_rejected_logits
         )
 
-        log_probs = (chosen_log_probs - reference_chosen_log_probs) - (rejected_log_probs - reference_rejected_log_probs)
-        loss = -torch.nn.functional.logsigmoid(self.beta * log_probs).mean()
-        return loss
+        log_probs = (chosen_log_probs - rejected_log_probs) - (reference_chosen_log_probs - reference_rejected_log_probs)
+        loss = (
+            - F.logsigmoid(self.beta * log_probs) * (1 - self.label_smoothing)
+            - F.logsigmoid(- self.beta * log_probs) * self.label_smoothing
+        )
+        return loss.mean()
+
+
+def norm(x: torch.Tensor, dim: int = -1, eps: float = 1e-5):
+    return x / (x.std(dim=dim, keepdim=True) + eps)
 
 
 if __name__ == '__main__':
     torch.manual_seed(0)
-    criterion = DpoLoss()
+    criterion = DpoLoss(logits_norm=False)
     _chosen_logits = torch.Tensor([
         [[1, 0, 100, -100], [1, 100, 0, -100], [0, 1, 100, -100]],
         [[-100, 1, 0, 100], [0, 1, 100, -100], [100, 1, 0, -100]]
@@ -170,18 +185,22 @@ if __name__ == '__main__':
         [[1, 0, -100, 100], [1, 100, 0, -100], [0, 1, 100, -100]],
         [[-0, 1, 100, -100], [0, 1, 100, -100], [100, 1, 0, -100]]
     ])
-    _chosen_labels = torch.Tensor([[2, 1, 2], [3, 2, -100]])
-    _rejected_labels = torch.Tensor([[3, 1, -100], [2, -100, -100]])
+    # _chosen_logits, _rejected_logits = norm(_chosen_logits), norm(_rejected_logits)
+    _chosen_labels = torch.Tensor([[2, 1, 2],
+                                   [3, 2, -100]])
+    _rejected_labels = torch.Tensor([[3, 1, -100],
+                                     [2, -100, -100]])
     _chosen_masks = _chosen_labels != -100
     _rejected_masks = _rejected_labels != -100
     _reference_chosen_logits = - torch.Tensor([
-        [[1, 0, 50, -50], [1, 50, 0, -50], [0, 1, 50, -50]],
-        [[-50, 1, 0, 50], [0, 1, 50, -50], [50, 1, 0, -50]]
+        [[1, 0, -50, 1000], [1, -50, 0, 1000], [0, 1, -50, 500]],
+        [[500, 5, 0, -500], [0, 1, -500, 100], [50, 10, 0, -100]]
     ])
     _reference_rejected_logits = torch.Tensor([
-        [[1, 0, -50, 50], [1, 50, 0, -50], [0, 1, 50, -50]],
-        [[-0, 1, 50, -50], [0, 1, 50, -50], [50, 1, 0, -50]]
+        [[10, 0, 50, -500], [1, -50, 0, 50], [0, 1, -500, 50]],
+        [[-0, 1, -50, 50], [0, 10, 50, -50], [50, 1, 0, -50]]
     ])
+    # _reference_chosen_logits, _reference_rejected_logits = norm(_reference_chosen_logits), norm(_reference_rejected_logits)
     print(criterion.forward(
         _chosen_logits, _rejected_logits, _chosen_labels, _rejected_labels, _chosen_masks, _rejected_masks, _reference_chosen_logits, _reference_rejected_logits
     ))

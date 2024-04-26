@@ -8,14 +8,14 @@ from src.evaluator import SolverEvaluator
 from src.models.modeling_utils import get_parallel_model
 from src.utils import setup_model_parallel, json_dump
 
-TASKS = ['GSM8K', 'BBH', 'ARC', 'AGIEval', 'MMLU', 'CSQA']
+TASKS = ['GSM8K', 'BBH', 'ARC', 'AGIEval', 'CSQA', 'MMLU']
 LABEL_FILES = {
     'GSM8K': 'data/GSM8K/test.json',
     'BBH': 'data/BBH/test.json',
     'ARC': 'data/ARC/test.json',
     'AGIEval': 'data/AGIEval/test.json',
-    'MMLU': 'data/MMLU/test.json',
-    'CSQA': 'data/CSQA/test.json'
+    'CSQA': 'data/CSQA/test.json',
+    'MMLU': 'data/MMLU/test-preview.json',
 }
 
 
@@ -50,8 +50,11 @@ def main(
         lora_rank=-1
     )
     checkpoints = sorted(Path(ckpt_dir).glob("epoch-*"))
+    done_checkpoints = [checkpoint.name for checkpoint in Path(log_dir).glob("epoch-*")]
     assert len(checkpoints) > 0
     for checkpoint in checkpoints:
+        if checkpoint.name in done_checkpoints:
+            continue
         model.load(checkpoint, merge_lora=True)
         evaluator = SolverEvaluator(
             model=model,
