@@ -195,9 +195,15 @@ class LogitsBufferCollector:
     def forward(self, instructions: List[str], outputs: List[str]) -> LogitsRolloutBuffer:
         assert len(instructions) == len(outputs)
         generator_outputs = self.generator.forward(instructions, outputs)
-        return LogitsRolloutBuffer(instructions=instructions, outputs=outputs, logits=generator_outputs.logits)
+        return LogitsRolloutBuffer(
+            instructions=instructions, 
+            outputs=outputs, 
+            logits=generator_outputs.logits,
+            output_tokens_logps=generator_outputs.tokens_logps.cpu().numpy()
+        )
 
 
+# TODO: Deprecate
 class LogitsBufferCollectorV0:
     def __init__(
             self,

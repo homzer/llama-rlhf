@@ -6,7 +6,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from src.dataset import MultiOutputsDataset
-from src.entities import Timer
+from src.entities import Timer, AverageMeter
 from src.models.modeling_utils import get_parallel_model
 from src.ppo.buffer import LogitsRolloutBuffer
 from src.ppo.collector import LogitsBufferCollector
@@ -72,9 +72,12 @@ def main(
                 buffer_collector.forward(data['instruction'], data['output'])
             )
         # compute reference point
+        meter = AverageMeter()
         for data in rollout_buffer.get(1):
-            pass
-        # -> reference point
+            for logps in (data.output_tokens_logps.sum(-1) / ((data.output_tokens_logps != 0).sum(-1) + 1e-12)):
+                if logps != 0:  # omit for zero
+                    meter.forward(logps)
+        ref_logps = meter.avg
 
         teacher.cpu()
         del teacher

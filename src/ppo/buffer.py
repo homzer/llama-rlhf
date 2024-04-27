@@ -77,7 +77,8 @@ LogitsRolloutBufferSample = collections.namedtuple(
     "LogitsRolloutBufferSample", [
         "instructions",
         "outputs",
-        "logits"
+        "logits",
+        "output_tokens_logps"
     ]
 )
 
@@ -252,51 +253,64 @@ class LogitsRolloutBuffer:
             instructions: Union[List[str], np.ndarray] = None,
             outputs: Union[List[str], np.ndarray] = None,
             logits: torch.Tensor = None,
+            output_tokens_logps: np.ndarray = None
     ):
         self.logits = None
         self.instructions = None
         self.outputs = None
+        self.output_tokens_logps = None
 
         self.__cache_logits = None
         self.__cache_instructions = None
         self.__cache_outputs = None
+        self.__cache_output_tokens_logps = None
 
         if instructions is not None:
             assert logits is not None
             assert outputs is not None
-            self._set(instructions, outputs, SlimLogits(logits=logits))
+            assert output_tokens_logps is not None
+            self._set(instructions, outputs, SlimLogits(logits=logits), output_tokens_logps)
 
     def __flush(self):
         if self.__cache_instructions is not None:
             assert self.__cache_outputs is not None
             assert self.__cache_logits is not None
+            assert self.__cache_output_tokens_logps is not None
             self.instructions = np.concatenate([self.instructions, self.__cache_instructions], axis=0)
             self.outputs = np.concatenate([self.outputs, self.__cache_outputs], axis=0)
             self.logits.extend(self.__cache_logits)
+            self.output_tokens_logps = np.concatenate(
+                [self.output_tokens_logps, self.__cache_output_tokens_logps], axis=0
+            )
             self.__cache_logits = None
             self.__cache_instructions = None
             self.__cache_outputs = None
+            self.__cache_output_tokens_logps = None
         else:
             assert self.__cache_outputs is None
             assert self.__cache_logits is None
+            assert self.__cache_output_tokens_logps is None
 
     def __len__(self):
         self.__flush()
         if self.instructions is not None:
             assert len(self.instructions) == len(self.logits)
             assert len(self.instructions) == len(self.outputs)
+            assert len(self.instructions) == len(self.output_tokens_logps)
             return len(self.logits)
         return 0
 
-    def _set(self, instructions, outputs, logits: SlimLogits):
+    def _set(self, instructions, outputs, logits: SlimLogits, output_tokens_logps):
         assert len(instructions) == len(logits)
         if not isinstance(instructions, np.ndarray):
             instructions = np.array(instructions)
         if not isinstance(outputs, np.ndarray):
             outputs = np.array(outputs)
+        assert isinstance(output_tokens_logps, np.ndarray)
         self.instructions = instructions
         self.outputs = outputs
         self.logits = logits
+        self.output_tokens_logps = output_tokens_logps
 
     def extend(self, rollout_buffer: "LogitsRolloutBuffer"):
         if len(self) == 0:
@@ -304,6 +318,7 @@ class LogitsRolloutBuffer:
                 rollout_buffer.instructions,
                 rollout_buffer.outputs,
                 rollout_buffer.logits,
+                rollout_buffer.output_tokens_logps
             )
         else:
             if len(rollout_buffer) > 0:  # TODO Extremely slow, using cache
@@ -311,6 +326,7 @@ class LogitsRolloutBuffer:
                     self.__cache_instructions = rollout_buffer.instructions
                     self.__cache_outputs = rollout_buffer.outputs
                     self.__cache_logits = rollout_buffer.logits
+                    self.__cache_output_tokens_logps = rollout_buffer.output_tokens_logps
                 else:
                     self.__cache_instructions = np.concatenate(
                         [self.__cache_instructions, rollout_buffer.instructions], axis=0
@@ -319,6 +335,9 @@ class LogitsRolloutBuffer:
                         [self.__cache_instructions, rollout_buffer.outputs], axis=0
                     )
                     self.__cache_logits.extend(rollout_buffer.logits)
+                    self.__cache_output_tokens_logps = np.concatenate(
+                        [self.__cache_output_tokens_logps, rollout_buffer.output_tokens_logps], axis=0
+                    )
                 if len(self.__cache_instructions) > 1000:
                     self.__flush()
         return self
@@ -339,11 +358,13 @@ class LogitsRolloutBuffer:
             yield LogitsRolloutBufferSample(
                 instructions=self.instructions[batch_indices],
                 outputs=self.outputs[batch_indices],
-                logits=logits
+                logits=logits,
+                output_tokens_logps=self.output_tokens_logps[batch_indices]
             )
             start_idx += batch_size
 
 
+# TODO: Deprecate
 class LogitsRolloutBufferV0:
     def __init__(self, instructions: Union[List[str], np.ndarray] = None, logits: torch.Tensor = None):
         self.logits = None

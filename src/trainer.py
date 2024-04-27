@@ -378,6 +378,58 @@ class ParallelSolverMccDistillTrainer(ParallelSolverTrainer):
         return Output(logits_a=logits_a, logits_b=logits_b, loss=loss, loss_kl=kl_loss, loss_ce=ce_loss)
 
 
+class ParallelSolverReferenceDistillTrainer(ParallelSolverTrainer):
+    def __init__(
+            self,
+            model: ParallelModelForCausalLM,
+            tokenizer: Tokenizer,
+            optimizer: torch.optim.Optimizer,
+            max_seq_len: int,
+            reference_point: float,
+            accumulation_steps: int = 1
+    ):
+        super().__init__(
+            model=model,
+            tokenizer=tokenizer,
+            optimizer=optimizer,
+            max_seq_len=max_seq_len,
+            accumulation_steps=accumulation_steps
+        )
+        self.reference_point = reference_point
+        self.criterion_ce = nn.CrossEntropyLoss(ignore_index=-100)
+        self.criterion_kl = KLDivLoss()
+
+    def reference_kl_loss(self):
+        """ TODO: KL loss with reference point weighting """
+
+    def distill(
+            self,
+            instructions: List[str],
+            outputs: List[str],
+            target_logits: torch.Tensor,
+            beta: float = 1.0,
+            temperature: float = 1.0
+    ):
+        self.model.train()
+        example = self.prepare_for_training(instructions=instructions, outputs=outputs)
+        logits = self.model.forward(example.tokens).logits
+
+        loss_ce = self.criterion_ce.forward(
+            input=logits.view(-1, logits.size(-1)),
+            target=example.labels.view(-1).to(logits.device)
+        )
+        loss_kl = beta * self.criterion_kl.forward(
+            logits=logits,
+            targets=target_logits,
+            masks=example.masks,
+            T=temperature
+        )
+        loss = loss_ce + loss_kl
+        self._back_propagation(loss)
+        Output = collections.namedtuple('Output', ['loss', 'logits', 'loss_kl', 'loss_ce'])
+        return Output(logits=logits, loss=loss, loss_kl=loss_kl, loss_ce=loss_ce)
+
+
 class ParallelSolverDpoTrainer(ParallelSolverTrainer):
     def __init__(
             self,

@@ -18,7 +18,8 @@ SolverGeneratorOutputs = collections.namedtuple("SolverGeneratorOutputs", [
 ])
 
 LogitsGeneratorOutputs = collections.namedtuple("LogitsGeneratorOutputs", [
-    'logits'
+    'logits',
+    'tokens_logps'
 ])
 
 
@@ -169,19 +170,22 @@ class LogitsGeneratorForCausalLM:
     #     return instruction_ids, output_ids
 
     def _prepare_for_generation(self, instructions, outputs):
+        """ TODO: duplicated code with `ParallelSolverTrainer().prepare_for_generation()` """
         bsz = len(instructions)
         tokens = torch.full((bsz, self.max_seq_len), self.tokenizer.pad_id).long()
+        labels = torch.full((bsz, self.max_seq_len), -100).long()
         for i, (instruction, output) in enumerate(zip(instructions, outputs)):
             instruction_ids = self.tokenizer.encode(instruction, bos=True, eos=False)
             output_ids = self.tokenizer.encode(output, bos=False, eos=True)
             instruction_ids, output_ids = truncate(instruction_ids, output_ids, self.max_seq_len)
             instr_len, output_len = len(instruction_ids), len(output_ids)
             tokens[i, :instr_len + output_len] = torch.tensor(instruction_ids + output_ids).long()
-        Output = collections.namedtuple('Outputs', ['tokens'])
-        return Output(tokens=tokens)
+            labels[i, instr_len - 1: instr_len - 1 + output_len] = torch.tensor(output_ids).long()
+        masks = (labels != -100)
+        Output = collections.namedtuple('Outputs', ['tokens', 'labels', 'masks'])
+        return Output(tokens=tokens, labels=labels, masks=masks)
 
     def _model_forward(self, tokens):
-        tokens = tokens.clone()
         with torch.no_grad():
             outputs = self.model.forward(tokens)
 
@@ -191,10 +195,19 @@ class LogitsGeneratorForCausalLM:
     def forward(self, instructions: List[str], outputs: List[str]) -> LogitsGeneratorOutputs:
         self.model.eval()
         prep_outputs = self._prepare_for_generation(instructions, outputs)
-        forward_outputs = self._model_forward(prep_outputs.tokens)
-        return LogitsGeneratorOutputs(forward_outputs.logits)
+        logits = self._model_forward(prep_outputs.tokens).logits
+        
+        # retrieve token probs
+        tokens_logps = torch.log_softmax(logits.float(), dim=-1).type_as(logits)
+        labels = prep_outputs.labels.to(logits.device).long()
+        labels[labels == -100] = 0
+        tokens_logps = torch.gather(tokens_logps, dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
+        tokens_logps = tokens_logps * prep_outputs.masks.to(logits.device)  # [b, s]
+        
+        return LogitsGeneratorOutputs(logits, tokens_logps)
 
 
+# TODO: Deprecate
 class LogitsGeneratorForCausalLMV0(SolverGeneratorForCausalLM):
     def __init__(
             self,
@@ -216,7 +229,7 @@ class LogitsGeneratorForCausalLMV0(SolverGeneratorForCausalLM):
         self.model.eval()
         prep_outputs = self._prepare_for_generation(instructions, eos=True)
         forward_outputs = self._model_forward(prep_outputs.tokens)
-        return LogitsGeneratorOutputs(forward_outputs.logits)
+        return LogitsGeneratorOutputs(forward_outputs.logits, tokens_logps=None)
 
 
 class ActorGeneratorForCausalLM(SolverGeneratorForCausalLM):
