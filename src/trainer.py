@@ -385,7 +385,6 @@ class ParallelSolverReferenceDistillTrainer(ParallelSolverTrainer):
             tokenizer: Tokenizer,
             optimizer: torch.optim.Optimizer,
             max_seq_len: int,
-            reference_point: float,
             accumulation_steps: int = 1
     ):
         super().__init__(
@@ -395,19 +394,37 @@ class ParallelSolverReferenceDistillTrainer(ParallelSolverTrainer):
             max_seq_len=max_seq_len,
             accumulation_steps=accumulation_steps
         )
-        self.reference_point = reference_point
         self.criterion_ce = nn.CrossEntropyLoss(ignore_index=-100)
-        self.criterion_kl = KLDivLoss()
+        self.criterion_kl = KLDivLoss(output_scalar=False)
+        self.eps = 1e-12
 
-    def reference_kl_loss(self):
-        """ TODO: KL loss with reference point weighting """
+    def reference_kl_loss(self, logits, target_logits, ref_logps, labels, masks, temperature):
+        """ Compute KL loss with reference point weighting """
+        loss = self.criterion_kl.forward(
+            logits=logits,
+            targets=target_logits,
+            masks=masks,
+            T=temperature
+        )
+
+        target_logits = target_logits.to(logits)
+        labels = labels.to(logits.device)
+        masks = masks.to(logits.device)
+        target_logps = torch.log_softmax(target_logits.float(), dim=-1).type_as(target_logits)
+        target_logps = torch.gather(target_logps, dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
+        target_logps = ((target_logps.float() * masks).sum(-1) / (masks.sum(-1) + self.eps)).type_as(target_logps)
+        references = torch.sigmoid(target_logps - ref_logps).unsqueeze(-1)
+        loss = references * loss
+        loss = torch.masked_select(loss.view(-1), masks.view(-1))
+        return loss.mean()
 
     def distill(
             self,
             instructions: List[str],
             outputs: List[str],
             target_logits: torch.Tensor,
-            beta: float = 1.0,
+            ref_logps: float,
+            alpha: float = 1.0,
             temperature: float = 1.0
     ):
         self.model.train()
@@ -418,11 +435,13 @@ class ParallelSolverReferenceDistillTrainer(ParallelSolverTrainer):
             input=logits.view(-1, logits.size(-1)),
             target=example.labels.view(-1).to(logits.device)
         )
-        loss_kl = beta * self.criterion_kl.forward(
+        loss_kl = alpha * self.reference_kl_loss(
             logits=logits,
-            targets=target_logits,
+            target_logits=target_logits,
+            ref_logps=ref_logps,
+            labels=example.labels,
             masks=example.masks,
-            T=temperature
+            temperature=temperature
         )
         loss = loss_ce + loss_kl
         self._back_propagation(loss)

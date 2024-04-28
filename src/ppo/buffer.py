@@ -253,7 +253,7 @@ class LogitsRolloutBuffer:
             instructions: Union[List[str], np.ndarray] = None,
             outputs: Union[List[str], np.ndarray] = None,
             logits: torch.Tensor = None,
-            output_tokens_logps: np.ndarray = None
+            output_tokens_logps: Union[np.ndarray, torch.Tensor] = None
     ):
         self.logits = None
         self.instructions = None
@@ -306,7 +306,8 @@ class LogitsRolloutBuffer:
             instructions = np.array(instructions)
         if not isinstance(outputs, np.ndarray):
             outputs = np.array(outputs)
-        assert isinstance(output_tokens_logps, np.ndarray)
+        if not isinstance(output_tokens_logps, np.ndarray):
+            output_tokens_logps = output_tokens_logps.float().cpu().numpy()
         self.instructions = instructions
         self.outputs = outputs
         self.logits = logits

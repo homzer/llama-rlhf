@@ -14,9 +14,10 @@ class Loss(nn.Module):
 
 
 class KLDivLoss(Loss):
-    def __init__(self, eps=7e-5):
+    def __init__(self, eps=7e-5, output_scalar: bool = True):
         super().__init__()
         self.eps = eps
+        self.output_scalar = output_scalar
 
     def forward(
             self,
@@ -34,6 +35,7 @@ class KLDivLoss(Loss):
         Shape is identical to the shape of `logits` up to last dim.
         :return: scalar loss.
         """
+        bzs = logits.shape[0]
         logits = logits.view(-1, logits.size(-1))
         targets = targets.view(-1, targets.size(-1)).to(logits)
         estimates = torch.softmax(logits.float(), dim=-1).type_as(logits)
@@ -43,10 +45,16 @@ class KLDivLoss(Loss):
 
         loss = targets * (torch.log(targets) - torch.log(estimates))
         loss = torch.sum(loss, dim=-1)
-        if masks is not None:
-            masks = masks.view(-1).to(logits.device)
-            loss = torch.masked_select(loss, masks)
-        return torch.mean(loss)
+        if self.output_scalar:
+            if masks is not None:
+                masks = masks.view(-1).to(logits.device)
+                loss = torch.masked_select(loss, masks)
+            return loss.mean()
+        else:
+            if masks is not None:
+                masks = masks.view(-1).to(logits.device)
+                loss = loss * masks
+            return loss.view(bzs, -1)  # [b]
 
 
 class MSELoss(Loss):

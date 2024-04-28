@@ -196,10 +196,10 @@ class LogitsBufferCollector:
         assert len(instructions) == len(outputs)
         generator_outputs = self.generator.forward(instructions, outputs)
         return LogitsRolloutBuffer(
-            instructions=instructions, 
-            outputs=outputs, 
+            instructions=instructions,
+            outputs=outputs,
             logits=generator_outputs.logits,
-            output_tokens_logps=generator_outputs.tokens_logps.cpu().numpy()
+            output_tokens_logps=generator_outputs.tokens_logps
         )
 
 

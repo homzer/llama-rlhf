@@ -10,7 +10,7 @@ from src.entities import Timer, AverageMeter
 from src.models.modeling_utils import get_parallel_model
 from src.ppo.buffer import LogitsRolloutBuffer
 from src.ppo.collector import LogitsBufferCollector
-from src.trainer import ParallelSolverDistillTrainer
+from src.trainer import ParallelSolverReferenceDistillTrainer
 from src.utils import setup_model_parallel, set_barrier, json_load
 
 
@@ -33,7 +33,6 @@ def main(
         student_max_seq_len: int = 1024,
         teacher_max_seq_len: int = 1024,
         alpha: float = 1.0,
-        beta: float = 1.0,
         T: float = 1.0,
         max_batch_size: int = 1,
         lr: float = 1e-5,
@@ -74,6 +73,7 @@ def main(
         # compute reference point
         meter = AverageMeter()
         for data in rollout_buffer.get(1):
+            # with average logps
             for logps in (data.output_tokens_logps.sum(-1) / ((data.output_tokens_logps != 0).sum(-1) + 1e-12)):
                 if logps != 0:  # omit for zero
                     meter.forward(logps)
@@ -96,7 +96,7 @@ def main(
             lora_rank=student_lora_rank
         )
         optimizer = torch.optim.Adam(student.parameters(), lr=lr)
-        trainer = ParallelSolverDistillTrainer(
+        trainer = ParallelSolverReferenceDistillTrainer(
             model=student,
             tokenizer=student_tokenizer,
             optimizer=optimizer,
@@ -112,9 +112,9 @@ def main(
                 instructions=data.instructions,
                 outputs=data.outputs,
                 target_logits=data.logits,
+                ref_logps=ref_logps,
                 alpha=alpha,
-                beta=beta,
-                T=T
+                temperature=T
             )
             if trainer.step % 100 == 0:
                 print(f'step {trainer.step} of {len(rollout_buffer) // max_batch_size} ---------------')
