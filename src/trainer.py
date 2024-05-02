@@ -218,7 +218,7 @@ class ParallelSolverDistillTrainer(ParallelSolverTrainer):
             target_logits: torch.Tensor,
             alpha: float = 1.0,
             beta: float = 1.0,
-            T: float = 1.0
+            temperature: float = 1.0
     ):
         self.model.train()
         example = self.prepare_for_training(instructions=instructions, outputs=outputs)
@@ -232,7 +232,7 @@ class ParallelSolverDistillTrainer(ParallelSolverTrainer):
             logits=logits,
             targets=target_logits,
             masks=example.masks,
-            T=T
+            T=temperature
         )
         loss = loss_ce + loss_kl
         self._back_propagation(loss)
@@ -415,8 +415,9 @@ class ParallelSolverReferenceDistillTrainer(ParallelSolverTrainer):
         target_logps = ((target_logps.float() * masks).sum(-1) / (masks.sum(-1) + self.eps)).type_as(target_logps)
         references = torch.sigmoid(target_logps - ref_logps).unsqueeze(-1)
         loss = references * loss
-        loss = torch.masked_select(loss.view(-1), masks.view(-1))
-        return loss.mean()
+        loss = torch.masked_select(loss.view(-1), masks.view(-1)).mean()
+        Outputs = collections.namedtuple("Outputs", ['loss', 'references', 'target_logps'])
+        return Outputs(loss=loss, references=references, target_logps=target_logps)
 
     def distill(
             self,
@@ -435,7 +436,7 @@ class ParallelSolverReferenceDistillTrainer(ParallelSolverTrainer):
             input=logits.view(-1, logits.size(-1)),
             target=example.labels.view(-1).to(logits.device)
         )
-        loss_kl = alpha * self.reference_kl_loss(
+        kl_loss_outputs = self.reference_kl_loss(
             logits=logits,
             target_logits=target_logits,
             ref_logps=ref_logps,
@@ -443,10 +444,13 @@ class ParallelSolverReferenceDistillTrainer(ParallelSolverTrainer):
             masks=example.masks,
             temperature=temperature
         )
+        loss_kl = alpha * kl_loss_outputs.loss
         loss = loss_ce + loss_kl
         self._back_propagation(loss)
-        Output = collections.namedtuple('Output', ['loss', 'logits', 'loss_kl', 'loss_ce'])
-        return Output(logits=logits, loss=loss, loss_kl=loss_kl, loss_ce=loss_ce)
+        Output = collections.namedtuple('Output', [
+            'loss', 'logits', 'loss_kl', 'loss_ce', 'references', 'target_logps'])
+        return Output(logits=logits, loss=loss, loss_kl=loss_kl, loss_ce=loss_ce,
+                      references=kl_loss_outputs.references, target_logps=kl_loss_outputs.target_logps)
 
 
 class ParallelSolverDpoTrainer(ParallelSolverTrainer):

@@ -112,7 +112,7 @@ def main(
                 target_logits=data.logits,
                 alpha=alpha,
                 beta=beta,
-                T=T
+                temperature=T
             )
             if trainer.step % 100 == 0:
                 print(f'step {trainer.step} of {len(rollout_buffer) // max_batch_size} ---------------')

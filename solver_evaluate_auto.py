@@ -49,7 +49,7 @@ def main(
         tokenizer_file=tokenizer_file,
         lora_rank=-1
     )
-    checkpoints = sorted(Path(ckpt_dir).glob("epoch-*"))
+    checkpoints = sorted(Path(ckpt_dir).glob("epoch-*"), key=lambda x: int(x.name.replace('epoch-', "")))
     done_checkpoints = [checkpoint.name for checkpoint in Path(log_dir).glob("epoch-*")]
     assert len(checkpoints) > 0
     for checkpoint in checkpoints:

@@ -133,7 +133,8 @@ def get_parallel_model(
         tokenizer_file: str,
         lora_rank: int,
         dtype: str = 'float16',
-        lora_dtype: str = 'float32'
+        lora_dtype: str = 'float32',
+        use_clamp: bool = False
 ) -> (ParallelModule, Tokenizer):
     if lora_rank > 0:
         model_type = "lora-" + model_type
@@ -143,7 +144,8 @@ def get_parallel_model(
             world_size=world_size,
             dtype=dtype,
             r=lora_rank,
-            lora_dtype=lora_dtype
+            lora_dtype=lora_dtype,
+            use_clamp=use_clamp
         ).from_json(config_file)
     else:
         args = ARGS[model_type](
@@ -151,6 +153,7 @@ def get_parallel_model(
             local_rank=local_rank,
             world_size=world_size,
             dtype=dtype,
+            use_clamp=use_clamp
         ).from_json(config_file)
     model = MODELS[model_type](args)
     tokenizer = TOKENIZERS[model_type](tokenizer_file)

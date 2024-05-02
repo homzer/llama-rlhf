@@ -42,7 +42,8 @@ def main(
         lora_dtype: str = "float32",
         log_dir: str = None,
         seed: int = None,
-        chunk_size: int = 10000
+        chunk_size: int = 10000,
+        begin_epoch: int = 0
 ):
     if task is not None:
         assert label_file is not None
@@ -53,7 +54,7 @@ def main(
     datalist = json_load(train_file)
     epochs = len(datalist) // chunk_size
 
-    for epoch in range(epochs):
+    for epoch in range(begin_epoch, epochs):
         print(f"Epoch - {epoch} of {epochs}")
         dataset = MultiOutputsDataset(datalist[epoch * chunk_size: (epoch + 1) * chunk_size])
         if len(dataset) == 0:

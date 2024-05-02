@@ -99,7 +99,7 @@ class RewardLoss(Loss):
 
 
 class DpoLoss(Loss):
-    def __init__(self, beta=1.0, logits_norm: bool = True, label_smoothing: float = 0.0, eps=1e-5):
+    def __init__(self, beta=1.0, logits_norm: bool = False, label_smoothing: float = 0.0, eps=1e-5):
         super().__init__()
         self.beta = beta
         self.label_smoothing = label_smoothing
