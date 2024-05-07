@@ -94,7 +94,7 @@ class VerifierEvaluator:
                 ))
                 self.meter.forward(1 if c_reward > r_reward else 0)
         Output = collections.namedtuple('Output', ['acc', 'datalist'])
-        return Output(acc=self.meter.avg, datalist=datalist)
+        return Output(acc=self.meter.average, datalist=datalist)
 
 
 # ================================================================================ #
@@ -110,7 +110,7 @@ class Evaluator:
     def accuracy(self):
         if self.meter.step == 0:
             print("Warning, nothing to compute, returning accuracy is zero.")
-        return self.meter.avg
+        return self.meter.average
 
     def format_label(self, label: str) -> str:
         raise NotImplementedError

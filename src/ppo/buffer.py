@@ -343,6 +343,17 @@ class LogitsRolloutBuffer:
                     self.__flush()
         return self
 
+    def get_logps(self, batch_size: int) -> Generator[torch.Tensor, None, None]:
+        """ Only fetching output_tokens_logps. """
+        self.__flush()
+        size = len(self)
+        indices = np.arange(size)
+        start_idx = 0
+        while start_idx < size:
+            batch_indices = indices[start_idx: start_idx + batch_size]
+            yield torch.tensor(self.output_tokens_logps[batch_indices])
+            start_idx += batch_size
+
     def get(self, batch_size: int) -> Generator[LogitsRolloutBufferSample, None, None]:
         self.__flush()
         size = len(self)
@@ -360,7 +371,7 @@ class LogitsRolloutBuffer:
                 instructions=self.instructions[batch_indices],
                 outputs=self.outputs[batch_indices],
                 logits=logits,
-                output_tokens_logps=self.output_tokens_logps[batch_indices]
+                output_tokens_logps=torch.tensor(self.output_tokens_logps[batch_indices])
             )
             start_idx += batch_size
 

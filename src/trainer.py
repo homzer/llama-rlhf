@@ -396,9 +396,9 @@ class ParallelSolverReferenceDistillTrainer(ParallelSolverTrainer):
         )
         self.criterion_ce = nn.CrossEntropyLoss(ignore_index=-100)
         self.criterion_kl = KLDivLoss(output_scalar=False)
-        self.eps = 1e-12
+        self.eps = 1e-4
 
-    def reference_kl_loss(self, logits, target_logits, ref_logps, labels, masks, temperature):
+    def reference_kl_loss(self, logits, target_logits, target_logps, ref_logps, masks, temperature, scale):
         """ Compute KL loss with reference point weighting """
         loss = self.criterion_kl.forward(
             logits=logits,
@@ -407,27 +407,40 @@ class ParallelSolverReferenceDistillTrainer(ParallelSolverTrainer):
             T=temperature
         )
 
-        target_logits = target_logits.to(logits)
-        labels = labels.to(logits.device)
+        target_logps = target_logps.to(logits)
         masks = masks.to(logits.device)
-        target_logps = torch.log_softmax(target_logits.float(), dim=-1).type_as(target_logits)
-        target_logps = torch.gather(target_logps, dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
-        target_logps = ((target_logps.float() * masks).sum(-1) / (masks.sum(-1) + self.eps)).type_as(target_logps)
-        references = torch.sigmoid(target_logps - ref_logps).unsqueeze(-1)
-        loss = references * loss
+        norm_factor = masks.sum(-1)  # [b]
+        target_logps = ((target_logps * masks).sum(-1) / (norm_factor + self.eps)).type_as(target_logps)
+        target_logps[norm_factor == 0] = -10000.0
+        refs = torch.sigmoid((target_logps - ref_logps) * scale)
+        loss = refs.unsqueeze(-1) * loss
         loss = torch.masked_select(loss.view(-1), masks.view(-1)).mean()
-        Outputs = collections.namedtuple("Outputs", ['loss', 'references', 'target_logps'])
-        return Outputs(loss=loss, references=references, target_logps=target_logps)
+        Outputs = collections.namedtuple("Outputs", ['loss', 'refs'])
+        return Outputs(loss=loss, refs=refs)
 
     def distill(
             self,
             instructions: List[str],
             outputs: List[str],
             target_logits: torch.Tensor,
+            target_logps: torch.Tensor,
             ref_logps: float,
+            ref_logps_scale: float,
             alpha: float = 1.0,
             temperature: float = 1.0
     ):
+        """
+        Knowledge distillation with weighted reference point
+        :param ref_logps_scale: scaling factor
+        :param instructions:
+        :param outputs:
+        :param target_logits: [b, s, v]
+        :param target_logps: [b, s], log probs of label tokens
+        :param ref_logps: average of target_logps over a mini-batch
+        :param alpha:
+        :param temperature:
+        :return:
+        """
         self.model.train()
         example = self.prepare_for_training(instructions=instructions, outputs=outputs)
         logits = self.model.forward(example.tokens).logits
@@ -439,18 +452,17 @@ class ParallelSolverReferenceDistillTrainer(ParallelSolverTrainer):
         kl_loss_outputs = self.reference_kl_loss(
             logits=logits,
             target_logits=target_logits,
+            target_logps=target_logps,
+            scale=ref_logps_scale,
             ref_logps=ref_logps,
-            labels=example.labels,
             masks=example.masks,
             temperature=temperature
         )
         loss_kl = alpha * kl_loss_outputs.loss
         loss = loss_ce + loss_kl
         self._back_propagation(loss)
-        Output = collections.namedtuple('Output', [
-            'loss', 'logits', 'loss_kl', 'loss_ce', 'references', 'target_logps'])
-        return Output(logits=logits, loss=loss, loss_kl=loss_kl, loss_ce=loss_ce,
-                      references=kl_loss_outputs.references, target_logps=kl_loss_outputs.target_logps)
+        Output = collections.namedtuple('Output', ['loss', 'logits', 'loss_kl', 'loss_ce', 'refs'])
+        return Output(logits=logits, loss=loss, loss_kl=loss_kl, loss_ce=loss_ce, refs=kl_loss_outputs.refs)
 
 
 class ParallelSolverDpoTrainer(ParallelSolverTrainer):

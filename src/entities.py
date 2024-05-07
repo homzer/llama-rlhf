@@ -1,3 +1,4 @@
+import math
 import time
 
 import torch
@@ -85,7 +86,7 @@ class Timer:
             h2, m2, s2 = self.format_clock(self.avg_time * (self.total - self.ticktock))
             if self.ticktock % self.episode == 0:
                 print(
-                    f"STEP {self.ticktock}/{self.total} | USED: %02d:%02d:%02d | VAG %.2f s/it | "
+                    f"STEP {self.ticktock}/{self.total} | USED: %02d:%02d:%02d | AVG %.2f s/it | "
                     f"ETA: %02d:%02d:%02d" % (h1, m1, s1, self.avg_time, h2, m2, s2)
                 )
         self.last = time.time()
@@ -101,15 +102,41 @@ class Timer:
 
 class AverageMeter:
     def __init__(self):
-        self.avg = 0
+        self.average = 0
         self.step = 0
 
     def forward(self, x: int):
         """ Accumulate average computation """
         self.step += 1
-        self.avg = self.avg + 1 / self.step * (x - self.avg)
-        return self.avg
+        self.average = self.average + 1 / self.step * (x - self.average)
+        return self.average
 
     def reset(self):
-        self.avg = 0
+        self.average = 0
+        self.step = 0
+
+
+class VarianceMeter:
+    def __init__(self):
+        self.average_meter = AverageMeter()
+        self.sum_square = 0
+        self.variance = 0
+        self.step = 0
+
+    def std(self):
+        return math.sqrt(self.variance)
+
+    def forward(self, x: int):
+        """ Accumulate average computation """
+        self.average_meter.forward(x)
+        self.sum_square += x ** 2
+        self.step += 1
+        self.variance = self.sum_square / self.step - self.average_meter.average ** 2
+
+        return self.variance
+
+    def reset(self):
+        self.average_meter.reset()
+        self.sum_square = 0
+        self.variance = 0
         self.step = 0

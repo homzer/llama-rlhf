@@ -8,7 +8,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from src.dataset import MultiOutputsDataset
-from src.entities import Timer, AverageMeter
+from src.entities import Timer, AverageMeter, VarianceMeter
 from src.models.modeling_utils import get_parallel_model
 from src.ppo.buffer import LogitsRolloutBuffer
 from src.ppo.collector import LogitsBufferCollector
@@ -42,13 +42,14 @@ def main(
         seed: int = None,
         dtype: str = "float16",
         lora_dtype: str = "float32",
-        use_reference: bool = False
+        use_reference: bool = False,
+        begin_epoch: int = 0
 ):
     teacher_ckpt_dir = [teacher_ckpt_dir] if isinstance(teacher_ckpt_dir, str) else list(teacher_ckpt_dir)
     local_rank, world_size = setup_model_parallel(seed=seed)
     datalist = json_load(train_file)
     epochs = len(datalist) // chunk_size
-    for epoch in range(epochs):
+    for epoch in range(begin_epoch, epochs):
         print(f"Epoch - {epoch} of {epochs}")
         dataset = MultiOutputsDataset(datalist[epoch * chunk_size: (epoch + 1) * chunk_size])
         if len(dataset) == 0:
@@ -97,20 +98,22 @@ def main(
         )
         optimizer = torch.optim.Adam(student.parameters(), lr=lr)
         ref_logps = None
+        ref_logps_scale = None
         if use_reference:
             # compute reference point
             print("Computing reference log probs ......")
-            meter = AverageMeter()
-            timer = Timer(len(rollout_buffer), episode=64)
-            for data in rollout_buffer.get(1):
-                timer.step()
-                # with average logps
-                for logps in (data.output_tokens_logps.sum(-1) / ((data.output_tokens_logps != 0).sum(-1) + 1e-12)):
-                    logps = logps.item()
-                    if logps != 0:  # omit for zero
-                        meter.forward(logps)
-            ref_logps = meter.avg
-            print("Reference log probs: ", ref_logps, type(ref_logps))
+            average_meter = AverageMeter()
+            variance_meter = VarianceMeter()
+            for output_tokens_logps in rollout_buffer.get_logps(1):
+                for tokens_logps in output_tokens_logps:
+                    norm_factor = (tokens_logps != 0).sum(-1).item()
+                    if norm_factor != 0:  # omit for zero
+                        logps = (tokens_logps.sum(-1) / norm_factor).item()  # with average logps
+                        average_meter.forward(logps)
+                        variance_meter.forward(logps)
+            ref_logps = average_meter.average
+            ref_logps_scale = 1.0 / (variance_meter.std() * 0.4)
+            print("Reference log probs: ", ref_logps)
             trainer = ParallelSolverReferenceDistillTrainer(
                 model=student,
                 tokenizer=student_tokenizer,
@@ -135,15 +138,16 @@ def main(
                     instructions=data.instructions,
                     outputs=data.outputs,
                     target_logits=data.logits,
+                    target_logps=data.output_tokens_logps,
                     ref_logps=ref_logps,
+                    ref_logps_scale=ref_logps_scale,
                     alpha=alpha,
                     temperature=T
                 )
                 if trainer.step % 100 == 0:
                     print(f'step {trainer.step} of {len(rollout_buffer) // max_batch_size} ---------------')
                     print(f'CE LOSS: ', outputs.loss_ce.item(), 'KL LOSS: ', outputs.loss_kl.item())
-                    print(f'References: ', outputs.references)
-                    print('Ref Log Probs: ', ref_logps, 'Target Log Probs: ', outputs.target_logps)
+                    print(f'References: ', outputs.refs.detach().cpu().tolist())
                     trainer.predict(outputs.logits, data.instructions, data.outputs)
             else:
                 outputs = trainer.distill(

@@ -54,7 +54,7 @@ class KLDivLoss(Loss):
             if masks is not None:
                 masks = masks.view(-1).to(logits.device)
                 loss = loss * masks
-            return loss.view(bzs, -1)  # [b]
+            return loss.view(bzs, -1)  # [b, s]
 
 
 class MSELoss(Loss):
