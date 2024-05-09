@@ -69,7 +69,7 @@ def main(
             outputs = generator.forward(data, t=t, p=p)
             for output in outputs:
                 writer.write(json.dumps(
-                    {'instruction': output['output']}
+                    {'instruction': output}
                 ) + '\n')
 
 

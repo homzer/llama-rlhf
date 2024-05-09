@@ -227,15 +227,15 @@ def run(
             timer.step()
             outputs = generator.forward(data['instruction'])
             for i, output in enumerate(outputs):
-                score = SocialBenchDataset.compute_score(output['output'], data['label'][i], data['category'][i])
+                score = SocialBenchDataset.compute_score(output, data['label'][i], data['category'][i])
                 datalist.append(dict(
                     instruction=data['instruction'][i],
-                    output=output['output'],
+                    output=output,
                     score=score,
                     label=data['label'][i],
                     category=data['category'][i]
                 ))
-            print(outputs[0]['output'])
+            print(outputs[0])
             json_dump(datalist, os.path.join(log_dir, os.path.split(label_file)[-1]))
         scores = []
         for data in datalist:

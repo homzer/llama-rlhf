@@ -68,7 +68,7 @@ class Llama3Tokenizer(Tokenizer):
             self.end_header,
             self.end_of_turn
         }
-        self.skip_tokens = {self.begin_of_text, self.end_of_text}
+        self.skip_tokens = [self.begin_of_text, self.end_of_text]
         self.skip_tokens_ids = {self.special_tokens[token] for token in self.skip_tokens}
         super().__init__(self.vocab_size, self.bos_id, self.eos_id, self.pad_id)
 
@@ -133,6 +133,8 @@ class Llama3Tokenizer(Tokenizer):
 class Llama3ChatTokenizer(Llama3Tokenizer):
     def __init__(self, model_file: str):
         super().__init__(model_file)
+        self.eos_id = self.special_tokens[self.end_of_turn]
+        self.pad_id = self.special_tokens[self.end_of_text]
 
     def apply_chat_template(self, messages: List[dict]) -> str:
         """

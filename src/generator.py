@@ -19,7 +19,7 @@ class GeneratorForCausalLM:
         self.max_seq_len = max_seq_len
         self.tokenizer = tokenizer
 
-    def forward(self, instructions: List[str], t: float = 0.0, p: float = 0.5) -> List[dict]:
+    def forward(self, instructions: List[str], t: float = 0.0, p: float = 0.5) -> List[str]:
         self.model.eval()
         bsz = len(instructions)
         prompt_tokens = []
@@ -49,24 +49,18 @@ class GeneratorForCausalLM:
             tokens[:, cur_pos] = next_token
             prev_pos = cur_pos
             unfinished_sequences = unfinished_sequences * (
-                    next_token != self.tokenizer.eos_id).cuda().long()
+                    next_token != self.tokenizer.eos_id
+            ).cuda().long()
             if unfinished_sequences.max() == 0:
                 break
         decoded = []
         for i, tks in enumerate(tokens.tolist()):
             # cut to max gen len
-            tks = tks[: self.max_seq_len]
-            prompt_length = len(prompt_tokens[i])
-            instruction = self.tokenizer.decode(tks[:prompt_length])
-            tks = tks[prompt_length:]
+            tks = tks[len(prompt_tokens[i]):]
             # cut to eos tok if any
             if self.tokenizer.eos_id in tks:
                 tks = tks[: tks.index(self.tokenizer.eos_id)]
-            output = self.tokenizer.decode(tks)
-            decoded.append(dict(
-                instruction=instruction,
-                output=output
-            ))
+            decoded.append(self.tokenizer.decode(tks))
         self.model.flush()
         return decoded
 
