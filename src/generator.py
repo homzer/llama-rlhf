@@ -28,9 +28,11 @@ class GeneratorForCausalLM:
             prompt_tokens.append(x[: self.max_seq_len])
         min_prompt_size = min([len(t) for t in prompt_tokens])
         tokens = torch.full((bsz, self.max_seq_len), self.tokenizer.pad_id).cuda().long()
+        input_masks = torch.full((bsz, self.max_seq_len), False).cuda()
         for k, tks in enumerate(prompt_tokens):
-            tokens[k, : len(tks)] = torch.tensor(tks).long()
-        input_text_mask = tokens != self.tokenizer.pad_id
+            tokens[k, :len(tks)] = torch.tensor(tks).long()
+            input_masks[k, :len(tks)] = True
+        # input_text_mask = tokens != self.tokenizer.pad_id
         start_pos = min_prompt_size
         prev_pos = 0
         unfinished_sequences = torch.ones(size=[bsz], dtype=torch.long).cuda()
@@ -45,12 +47,12 @@ class GeneratorForCausalLM:
                 next_token = torch.argmax(logits, dim=-1)
             next_token = next_token.reshape(-1)
             # only replace token if prompt has already been generated
-            next_token = torch.where(input_text_mask[:, cur_pos], tokens[:, cur_pos], next_token)
+            next_token = torch.where(input_masks[:, cur_pos], tokens[:, cur_pos], next_token)
             tokens[:, cur_pos] = next_token
             prev_pos = cur_pos
             unfinished_sequences = unfinished_sequences * (
-                    next_token != self.tokenizer.eos_id
-            ).cuda().long()
+                    (next_token != self.tokenizer.eos_id) | input_masks[:, cur_pos]
+            )
             if unfinished_sequences.max() == 0:
                 break
         decoded = []
