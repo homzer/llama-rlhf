@@ -253,7 +253,8 @@ class LogitsRolloutBuffer:
             instructions: Union[List[str], np.ndarray] = None,
             outputs: Union[List[str], np.ndarray] = None,
             logits: torch.Tensor = None,
-            output_tokens_logps: Union[np.ndarray, torch.Tensor] = None
+            output_tokens_logps: Union[np.ndarray, torch.Tensor] = None,
+            logits_topk: int = 5
     ):
         self.logits = None
         self.instructions = None
@@ -269,7 +270,7 @@ class LogitsRolloutBuffer:
             assert logits is not None
             assert outputs is not None
             assert output_tokens_logps is not None
-            self._set(instructions, outputs, SlimLogits(logits=logits), output_tokens_logps)
+            self._set(instructions, outputs, SlimLogits(logits=logits, n=logits_topk), output_tokens_logps)
 
     def __flush(self):
         if self.__cache_instructions is not None:

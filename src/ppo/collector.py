@@ -187,7 +187,9 @@ class LogitsBufferCollector:
             model: Union[ModelForCausalLM, ParallelModelForCausalLM],
             tokenizer: Tokenizer,
             max_seq_len: int,
+            logits_topk: int = 5
     ):
+        self.logits_topk = logits_topk
         self.generator = LogitsGeneratorForCausalLM(
             model=model, tokenizer=tokenizer, max_seq_len=max_seq_len
         )
@@ -199,7 +201,8 @@ class LogitsBufferCollector:
             instructions=instructions,
             outputs=outputs,
             logits=generator_outputs.logits,
-            output_tokens_logps=generator_outputs.tokens_logps
+            output_tokens_logps=generator_outputs.tokens_logps,
+            logits_topk=self.logits_topk
         )
 
 

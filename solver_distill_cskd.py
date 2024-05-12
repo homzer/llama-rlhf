@@ -38,6 +38,7 @@ def main(
         T: float = 1.0,
         max_batch_size: int = 1,
         lr: float = 1e-5,
+        logits_topk: int = 10,
         chunk_size: int = 10000,
         seed: int = None,
         dtype: str = "float16",
@@ -69,7 +70,12 @@ def main(
         )
         # randomly sample a teacher checkpoint
         teacher.load(random.sample(teacher_ckpt_dir, 1)[0], merge_lora=True)
-        buffer_collector = LogitsBufferCollector(teacher, teacher_tokenizer, teacher_max_seq_len)
+        buffer_collector = LogitsBufferCollector(
+            model=teacher,
+            tokenizer=teacher_tokenizer,
+            max_seq_len=teacher_max_seq_len,
+            logits_topk=logits_topk
+        )
         rollout_buffer = LogitsRolloutBuffer()
         timer = Timer(len(dataloader), episode=10)
         for data in dataloader:
