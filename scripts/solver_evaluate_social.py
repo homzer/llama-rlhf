@@ -215,8 +215,7 @@ def run(
     model.load(ckpt_dir, merge_lora=True)
     generator = GeneratorForCausalLM(model, tokenizer, max_seq_len)
     os.makedirs(log_dir, exist_ok=True)
-    label_files = ['self_awareness.json', 'conversation_memory.json',
-                   'social_preference.json', 'emotional_perception.json'][begin:]
+    label_files = ['self_awareness.json', 'conversation_memory.json', 'social_preference.json', 'emotional_perception.json'][begin:]
     for label_file in label_files:
         label_file = os.path.join(label_dir, label_file)
         dataset = SocialBenchDataset(label_file, limit)
