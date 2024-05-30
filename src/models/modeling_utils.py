@@ -39,6 +39,8 @@ from src.tokenizers import (
 ARGS = {
     "llama-1-7b": LlamaArgs,
     "llama-1-13b": LlamaArgs,
+    "llama-1-7b-chat": LlamaArgs,
+    "llama-1-13b-chat": LlamaArgs,
     "llama-1-30b": LlamaArgs,
     "llama-2-7b": LlamaArgs,
     "llama-2-13b": LlamaArgs,
@@ -77,6 +79,8 @@ ARGS = {
 MODELS = {
     "llama-1-7b": Llama,
     "llama-1-13b": Llama,
+    "llama-1-7b-chat": Llama,
+    "llama-1-13b-chat": Llama,
     "llama-1-30b": Llama30B,
     "llama-2-7b": Llama,
     "llama-2-13b": Llama,
@@ -113,6 +117,8 @@ MODELS = {
 TOKENIZERS = {
     "llama-1-7b": LlamaTokenizer,
     "llama-1-13b": LlamaTokenizer,
+    "llama-1-7b-chat": LlamaChatTokenizer,
+    "llama-1-13b-chat": LlamaChatTokenizer,
     "llama-1-30b": LlamaTokenizer,
     "llama-2-7b": LlamaTokenizer,
     "llama-2-13b": LlamaTokenizer,

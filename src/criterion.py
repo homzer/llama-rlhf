@@ -124,6 +124,8 @@ class DpoLoss(Loss):
             reference_logits = self._norm(reference_logits) if self.logits_norm else reference_logits
             reference_log_probs = torch.log_softmax(reference_logits.float(), dim=-1).type_as(reference_logits)
             reference_log_probs = torch.gather(reference_log_probs, dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
+            # NaN might appear because the logits chosen by the label might be negative infinity.
+            reference_log_probs = torch.clamp(reference_log_probs, min=-1e5, max=1e5)
             reference_log_probs = (reference_log_probs * masks).sum(-1) / (masks.sum(-1) + self.eps)
 
         return log_probs, reference_log_probs

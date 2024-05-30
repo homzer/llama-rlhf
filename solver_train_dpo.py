@@ -151,7 +151,7 @@ def main(
             optimizer=optimizer,
             max_seq_len=policy_max_seq_len
         )
-        trainer.load(policy_ckpt_dir) if (
+        policy.load(policy_ckpt_dir, merge_lora=True) if (
                 epoch == 0
         ) else trainer.load(os.path.join(policy_save_dir, f"epoch-{epoch}"))
         timer = Timer(len(chosen_rollout_buffer) // max_batch_size, episode=100)

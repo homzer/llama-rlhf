@@ -132,7 +132,7 @@ def pickle_dump(obj, f):
     return f
 
 
-def setup_model_parallel(use_float16=True, seed=None) -> Tuple[int, int]:
+def setup_model_parallel(use_float16=False, seed=None) -> Tuple[int, int]:
     local_rank = int(os.environ.get("LOCAL_RANK", -1))
     world_size = int(os.environ.get("WORLD_SIZE", -1))
     if local_rank > 0:
