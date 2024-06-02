@@ -224,11 +224,11 @@ class ParallelSolverDistillTrainer(ParallelSolverTrainer):
         example = self.prepare_for_training(instructions=instructions, outputs=outputs)
         logits = self.model.forward(example.tokens).logits
 
-        loss_ce = alpha * self.criterion_ce.forward(
+        loss_ce = beta * self.criterion_ce.forward(
             input=logits.view(-1, logits.size(-1)),
             target=example.labels.view(-1).to(logits.device)
         )
-        loss_kl = beta * self.criterion_kl.forward(
+        loss_kl = alpha * self.criterion_kl.forward(
             logits=logits,
             targets=target_logits,
             masks=example.masks,
@@ -427,6 +427,7 @@ class ParallelSolverReferenceDistillTrainer(ParallelSolverTrainer):
             ref_logps: float,
             ref_logps_scale: float,
             alpha: float = 1.0,
+            beta: float = 1.0,
             temperature: float = 1.0
     ):
         """
@@ -437,7 +438,8 @@ class ParallelSolverReferenceDistillTrainer(ParallelSolverTrainer):
         :param target_logits: [b, s, v]
         :param target_logps: [b, s], log probs of label tokens
         :param ref_logps: average of target_logps over a mini-batch
-        :param alpha:
+        :param alpha: kl weight
+        :param beta: ce weight
         :param temperature:
         :return:
         """
@@ -445,7 +447,7 @@ class ParallelSolverReferenceDistillTrainer(ParallelSolverTrainer):
         example = self.prepare_for_training(instructions=instructions, outputs=outputs)
         logits = self.model.forward(example.tokens).logits
 
-        loss_ce = self.criterion_ce.forward(
+        loss_ce = beta * self.criterion_ce.forward(
             input=logits.view(-1, logits.size(-1)),
             target=example.labels.view(-1).to(logits.device)
         )

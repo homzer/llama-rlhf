@@ -148,7 +148,7 @@ def run(
                 instructions=reviser_data.instructions,
                 outputs=reviser_data.outputs,
                 target_logits=reviser_data.logits,
-                alpha=0.0
+                beta=0.0
             )
             if trainer.step % 100 == 0:
                 print(f'step {trainer.step} of {len(solver_rollout_buffer) // max_batch_size} ---------------')

@@ -35,6 +35,7 @@ def main(
         student_max_seq_len: int = 1024,
         teacher_max_seq_len: int = 1024,
         alpha: float = 1.0,
+        beta: float = 1.0,
         T: float = 1.0,
         max_batch_size: int = 1,
         lr: float = 1e-5,
@@ -148,6 +149,7 @@ def main(
                     ref_logps=ref_logps,
                     ref_logps_scale=ref_logps_scale,
                     alpha=alpha,
+                    beta=beta,
                     temperature=T
                 )
                 if trainer.step % 100 == 0:
@@ -160,7 +162,8 @@ def main(
                     instructions=data.instructions,
                     outputs=data.outputs,
                     target_logits=data.logits,
-                    beta=alpha,
+                    alpha=alpha,
+                    beta=beta,
                     temperature=T
                 )
                 if trainer.step % 100 == 0:
