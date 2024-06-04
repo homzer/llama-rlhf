@@ -63,36 +63,10 @@ def __splitting(state_dict, n) -> list:
     return new_state_dicts
 
 
-def __splitting_with_added_tokens(state_dict, n) -> list:
-    if 'output.weight' in state_dict:
-        name = 'output.weight'
-    elif 'lm_head.weight' in state_dict:
-        name = 'lm_head.weight'
-    else:
-        raise KeyError()
-    param = state_dict.pop(name)
-
-    state_dicts = __splitting(state_dict, n)
-
-    # row parallel
-    params = []
-    dim1 = param.shape[1]
-    assert dim1 % n == 0
-    split = dim1 // n
-    for i in range(n):
-        params.append(param[:, i * split: (i + 1) * split])
-
-    for i in range(n):
-        state_dicts[i][name] = params[i].clone()
-
-    return state_dicts
-
-
 def splitting(
         ckpt_file: Union[str, list] = 'config/13B/consolidated.00.pth',
         save_path: str = 'config/13B/4/',
-        n: int = 4,
-        num_added_tokens: int = 0
+        n: int = 4
 ):
     assert isinstance(ckpt_file, str) or isinstance(ckpt_file, list)
     if isinstance(ckpt_file, str):
@@ -110,10 +84,7 @@ def splitting(
                 for k in reader.keys():
                     state_dict[k] = reader[k]
 
-    if num_added_tokens == 0:
-        new_state_dicts = __splitting(state_dict, n)
-    else:
-        new_state_dicts = __splitting_with_added_tokens(state_dict, n)
+    new_state_dicts = __splitting(state_dict, n)
     os.makedirs(save_path, exist_ok=True)
     for i in range(n):
         torch.save(new_state_dicts[i], os.path.join(save_path, f'consolidated.0{i}.pth'))
@@ -149,6 +120,7 @@ def __merging(state_dict1, state_dict2) -> dict:
     new_state_dicts = OrderedDict()
 
     for name in state_dict1.keys():
+        assert 'lora' not in name, 'can not split a lora checkpoint, merge it first'
         if is_parallel(name):
             param1 = state_dict1[name]
             param2 = state_dict2[name]
@@ -301,18 +273,6 @@ def show(
         print(key, value.shape)
 
 
-def remove_added_tokens(
-        ckpt_file: str = "config/orca-2-13b/pytorch_model_renamed.bin"
-):
-    state_dict = torch.load(ckpt_file, map_location='cpu')
-    state_dict['output.weight'] = state_dict['output.weight'][:-2, ...].clone()
-    state_dict['tok_embeddings.weight'] = state_dict['tok_embeddings.weight'][:-2, ...].clone()
-
-    torch.save(state_dict, ckpt_file.replace(".bin", "_removed.bin"))
-    for key, value in state_dict.items():
-        print(key, value.shape)
-
-
 def merge_lora(
         ckpt_dir: str = 'config/13B/8/',
         save_dir: str = 'config/13B/8/merge'
@@ -357,24 +317,5 @@ def auto_split_huggingface_checkpoints(ckpt_dir: str, world_size: int, local_ran
     return pl_ckpt_dir
 
 
-def convert_dtype(
-        ckpt_file='consolidated.00.pth',
-        save_dir='',
-        dtype: str = 'float16'
-):
-    state_dict = torch.load(ckpt_file, map_location='cpu')
-    dt = None
-    if dtype == 'float16':
-        dt = torch.float16
-    elif dtype == 'float32':
-        dt = torch.float32
-    elif dtype == 'bfloat16':
-        dt = torch.bfloat16
-    for key, val in state_dict.items():
-        state_dict[key] = val.to(dt).clone()
-    os.makedirs(save_dir, exist_ok=True)
-    torch.save(state_dict, os.path.join(save_dir, ckpt_file.split('/')[-1]))
-
-
 if __name__ == '__main__':
-    fire.Fire(merge_lora)
+    fire.Fire()
