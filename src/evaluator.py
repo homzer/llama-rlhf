@@ -49,7 +49,7 @@ class SolverEvaluator:
                     result_dict[key] = data[key][i]
                 result_dict['output'] = output
                 datalist.append(result_dict)
-            print(data['instruction'][0] + outputs[0])
+            print(data['instruction'][0].strip() + '\n' + outputs[0])
             print("---" * 10)
 
         for data in datalist:  # TODO MATH

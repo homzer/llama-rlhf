@@ -38,6 +38,7 @@ class MultiOutputsDataset(JsonDataset):
 
     def __getitem__(self, i):
         data = self.datalist[i].copy()
+        # TODO: remove random sampling
         data['output'] = random.sample(data['output'], 1)[0] if self.randomize else data['output'][0]
         return data
 
