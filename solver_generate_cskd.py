@@ -46,15 +46,18 @@ def main(
     )
     model.load(ckpt_dir, merge_lora=True, sequential_load=sequential_load)
     generator = GeneratorForCausalLM(model, tokenizer, max_seq_len)
+    save_name = "results.jsonl"
     datalist = json_load(label_file)
     if begin is not None:
-        datalist = datalist[begin:] if end is None else datalist[begin: end]
-    elif os.path.exists(os.path.join(log_dir, "results.jsonl")):
-        datalist = datalist[len(json_load(os.path.join(log_dir, "results.jsonl"))):]
+        assert end is not None
+        datalist = datalist[begin: end]
+        save_name = f"results-{begin}-{end}.jsonl"
+    if os.path.exists(os.path.join(log_dir, save_name)):
+        datalist = datalist[len(json_load(os.path.join(log_dir, save_name))):]
     dataset = MultiOutputsDataset(datalist)
     dataloader = DataLoader(dataset, batch_size=max_batch_size)
     timer = Timer(len(dataloader))
-    with open(os.path.join(log_dir, 'results.jsonl'), 'a', encoding='utf-8') as writer:
+    with open(os.path.join(log_dir, save_name), 'a', encoding='utf-8') as writer:
         for data in dataloader:
             timer.step()
             outputs = generator.forward(data['instruction'], t=t, p=p)
