@@ -23,7 +23,9 @@ def main(
         tokenizer_file: str = None,
         config_file: str = None,
         seed: int = None,
-        sequential_load: bool = False
+        sequential_load: bool = False,
+        begin: int = None,
+        end: int = None
 ):
     os.makedirs(log_dir, exist_ok=True)
     local_rank, world_size = setup_model_parallel(seed=seed)
@@ -45,7 +47,9 @@ def main(
     model.load(ckpt_dir, merge_lora=True, sequential_load=sequential_load)
     generator = GeneratorForCausalLM(model, tokenizer, max_seq_len)
     datalist = json_load(label_file)
-    if os.path.exists(os.path.join(log_dir, "results.jsonl")):
+    if begin is not None:
+        datalist = datalist[begin:] if end is None else datalist[begin: end]
+    elif os.path.exists(os.path.join(log_dir, "results.jsonl")):
         datalist = datalist[len(json_load(os.path.join(log_dir, "results.jsonl"))):]
     dataset = MultiOutputsDataset(datalist)
     dataloader = DataLoader(dataset, batch_size=max_batch_size)
