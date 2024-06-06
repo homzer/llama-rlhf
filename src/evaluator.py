@@ -8,7 +8,7 @@ from tqdm import tqdm
 from src.dataset import PairwiseDataset, JsonDataset
 from src.entities import Timer, AverageMeter
 from src.generator import GeneratorForCausalLM, GeneratorForVerifier
-from src.math import math_equal
+from src.maths import math_equal
 from src.models.modeling import ModelForCausalLM, ParallelModelForCausalLM, Verifier, ParallelVerifier
 from src.tokenizers.tokenizer import Tokenizer
 

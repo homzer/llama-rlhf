@@ -277,9 +277,9 @@ def merge_lora(
         ckpt_dir: str = 'config/13B/8/',
         save_dir: str = 'config/13B/8/merge'
 ):
-    result_dicts = []
+    os.makedirs(save_dir, exist_ok=True)
     checkpoints = sorted(Path(ckpt_dir).glob("*.pth"))
-    for ckpt_file in checkpoints:
+    for i, ckpt_file in enumerate(checkpoints):
         result_dict = {}
         state_dict = torch.load(str(ckpt_file), map_location="cpu")
         for name, param in state_dict.items():
@@ -291,10 +291,6 @@ def merge_lora(
                 wa = state_dict[name]
                 wb = state_dict[name.replace('lora_a_', 'lora_b_')]
                 result_dict[origin] = (w + wb @ wa).clone().to(w.dtype)
-        result_dicts.append(result_dict)
-
-    os.makedirs(save_dir, exist_ok=True)
-    for i, result_dict in enumerate(result_dicts):
         torch.save(result_dict, os.path.join(save_dir, f'consolidated.0{i}.pth'))
 
 
