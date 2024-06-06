@@ -127,16 +127,27 @@ class ParallelModule(Module):
             checkpoints
         ), f"Loading a checkpoint for MP={len(checkpoints)} but world size is {self.world_size}"
         ckpt_path = checkpoints[self.local_rank]
-        state_dict = torch.load(str(ckpt_path), map_location="cpu")
-        if kwargs.get("merge_lora", False):
-            state_dict = merge_lora_state_dict(state_dict)
-        outputs = self.load_state_dict(state_dict, strict=False)
-        self.cuda(self.local_rank)
+        loading_outputs = None
+        if kwargs.get("sequential_load", False):  # For saving cpu memory
+            for i in range(self.world_size):
+                if i == self.local_rank:
+                    state_dict = torch.load(str(ckpt_path), map_location="cpu")
+                    if kwargs.get("merge_lora", False):
+                        state_dict = merge_lora_state_dict(state_dict)
+                    loading_outputs = self.load_state_dict(state_dict, strict=False)
+                    self.cuda(self.local_rank)
+                set_barrier()
+        else:
+            state_dict = torch.load(str(ckpt_path), map_location="cpu")
+            if kwargs.get("merge_lora", False):
+                state_dict = merge_lora_state_dict(state_dict)
+            loading_outputs = self.load_state_dict(state_dict, strict=False)
+            self.cuda(self.local_rank)
         set_barrier()
         if verbose:
-            for missing_key in outputs.missing_keys:
+            for missing_key in loading_outputs.missing_keys:
                 print(f"MISSING KEY: {missing_key}")
-            for unexpected_key in outputs.unexpected_keys:
+            for unexpected_key in loading_outputs.unexpected_keys:
                 print(f"UNEXPECTED KEY: {unexpected_key}")
             print(f'Loading done !')
 
