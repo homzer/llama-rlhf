@@ -1,5 +1,6 @@
 import math
 import time
+from typing import List
 
 import torch
 
@@ -8,26 +9,23 @@ class SlimLogits:
     def __init__(self, logits: torch.Tensor = None, n=5):
         self.n = n
         self.vocab_size = None
-        self.batch_size = None
         self.max_seq_len = None
         self.values = None
         self.indices = None
         if logits is not None:
             assert len(logits.shape) == 3
-            self.batch_size = logits.shape[0]
             self.max_seq_len = logits.shape[1]
             self.vocab_size = logits.shape[2]
             self._set(logits)
 
     def _set(self, logits: torch.Tensor):
         (batch_size, seq_len, vocab_size) = logits.shape
-        assert self.batch_size == batch_size
         assert self.vocab_size == vocab_size
         if logits.device.type == "cpu":
             logits = logits.float()  # topk is not implemented for half on cpu
         values, indices = torch.topk(logits, k=self.n)
-        self.values = values.detach().cpu()
-        self.indices = indices.detach().cpu()
+        self.values = values.detach().cpu()  # [b, s, n]
+        self.indices = indices.detach().cpu()  # [b, s, n]
 
     def extend(self, slim_logits: "SlimLogits"):
         """ Batch extend. """
@@ -48,9 +46,40 @@ class SlimLogits:
         ) else torch.cat([self.indices, slim_logits.indices], dim=0)
 
     def __len__(self):
-        if self.values is not None and self.indices is not None:
+        if self.values is not None:
             return len(self.values)
         return 0
+
+    def __getitem__(self, i) -> "SlimLogits":
+        slim_logits = SlimLogits()
+        slim_logits.max_seq_len = self.max_seq_len
+        slim_logits.n = self.n
+        slim_logits.vocab_size = self.vocab_size
+        slim_logits.values = self.values[None, i]
+        slim_logits.indices = self.indices[None, i]
+        return slim_logits
+
+    def to_dict(self) -> dict:
+        return {
+            "max_seq_len": self.max_seq_len,
+            "n": self.n,
+            "vocab_size": self.vocab_size,
+            "values": self.values.tolist(),
+            "indices": self.indices.tolist()
+        }
+
+    def from_dict(self, data: dict | List[dict]) -> "SlimLogits":
+        if isinstance(data, dict):
+            data = [data]
+        self.max_seq_len = data[0]['max_seq_len']
+        self.n = data[0]["n"]
+        self.vocab_size = data[0]["vocab_size"]
+        self.values = torch.tensor(data[0]["values"])
+        self.indices = torch.tensor(data[0]["indices"])
+        for i in range(1, len(data)):
+            self.values = torch.cat([self.values, torch.tensor(data[i]["values"])], dim=0)
+            self.indices = torch.cat([self.indices, torch.tensor(data[i]["indices"])], dim=0)
+        return self
 
     def fetch(self, i: int) -> torch.Tensor:
         assert 0 <= i < len(self), "Index out of range error"

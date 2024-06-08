@@ -16,6 +16,77 @@ from src.trainer import ParallelSolverReferenceDistillTrainer, ParallelSolverDis
 from src.utils import setup_model_parallel, set_barrier, json_load
 
 
+def compute_reference_point(rollout_buffer: LogitsRolloutBuffer) -> (float, float):
+    # compute reference point
+    print("Computing reference log probs ......")
+    average_meter = AverageMeter()
+    variance_meter = VarianceMeter()
+    for output_tokens_logps in rollout_buffer.get_logps(1):
+        for tokens_logps in output_tokens_logps:
+            norm_factor = (tokens_logps != 0).sum(-1).item()
+            if norm_factor != 0:  # omit for zero
+                logps = (tokens_logps.sum(-1) / norm_factor).item()  # with average logps
+                average_meter.forward(logps)
+                variance_meter.forward(logps)
+    ref_logps = average_meter.average
+    ref_logps_scale = 1.0 / (variance_meter.std() * 0.4)
+    return ref_logps, ref_logps_scale
+
+
+def get_teacher_buffer(
+        dataset: MultiOutputsDataset,
+        teacher_forward_batch_size: int,
+        teacher_model_type: str,
+        teacher_config_file: str,
+        local_rank: int,
+        world_size: int,
+        teacher_max_seq_len: int,
+        teacher_tokenizer_file: str,
+        dtype: str,
+        lora_dtype: str,
+        teacher_ckpt_dir: Union[str, list],
+        logits_topk: int,
+) -> LogitsRolloutBuffer:
+    teacher_ckpt_dir = [teacher_ckpt_dir] if isinstance(teacher_ckpt_dir, str) else list(teacher_ckpt_dir)
+    dataloader = DataLoader(dataset, batch_size=teacher_forward_batch_size)
+
+    teacher, teacher_tokenizer = get_parallel_model(
+        model_type=teacher_model_type,
+        config_file=teacher_config_file,
+        local_rank=local_rank,
+        world_size=world_size,
+        max_seq_len=teacher_max_seq_len,
+        tokenizer_file=teacher_tokenizer_file,
+        lora_rank=-1,
+        dtype=dtype,
+        lora_dtype=lora_dtype
+    )
+    # randomly sample a teacher checkpoint
+    teacher.load(random.sample(teacher_ckpt_dir, 1)[0], merge_lora=True)
+    buffer_collector = LogitsBufferCollector(
+        model=teacher,
+        tokenizer=teacher_tokenizer,
+        max_seq_len=teacher_max_seq_len,
+        logits_topk=logits_topk
+    )
+    rollout_buffer = LogitsRolloutBuffer()
+    timer = Timer(len(dataloader), episode=10)
+    for data in dataloader:
+        timer.step()
+        rollout_buffer.extend(
+            buffer_collector.forward(data['instruction'], data['output'])
+        )
+
+    teacher.cpu()
+    del teacher
+    del buffer_collector
+    torch.cuda.empty_cache()
+    gc.collect()
+    set_barrier()
+
+    return rollout_buffer
+
+
 def main(
         train_file: str,
 
@@ -45,52 +116,38 @@ def main(
         dtype: str = "float16",
         lora_dtype: str = "float32",
         use_reference: bool = False,
+        buffer_file: str = None,
         begin_epoch: int = 0
 ):
-    teacher_ckpt_dir = [teacher_ckpt_dir] if isinstance(teacher_ckpt_dir, str) else list(teacher_ckpt_dir)
+
     local_rank, world_size = setup_model_parallel(seed=seed)
     datalist = json_load(train_file)
     epochs = len(datalist) // chunk_size
     for epoch in range(begin_epoch, epochs):
         print(f"Epoch - {epoch} of {epochs}")
-        dataset = MultiOutputsDataset(datalist[epoch * chunk_size: (epoch + 1) * chunk_size])
-        if len(dataset) == 0:
-            return
-        dataloader = DataLoader(dataset, batch_size=teacher_forward_batch_size)
-
-        teacher, teacher_tokenizer = get_parallel_model(
-            model_type=teacher_model_type,
-            config_file=teacher_config_file,
-            local_rank=local_rank,
-            world_size=world_size,
-            max_seq_len=teacher_max_seq_len,
-            tokenizer_file=teacher_tokenizer_file,
-            lora_rank=-1,
-            dtype=dtype,
-            lora_dtype=lora_dtype
-        )
-        # randomly sample a teacher checkpoint
-        teacher.load(random.sample(teacher_ckpt_dir, 1)[0], merge_lora=True)
-        buffer_collector = LogitsBufferCollector(
-            model=teacher,
-            tokenizer=teacher_tokenizer,
-            max_seq_len=teacher_max_seq_len,
-            logits_topk=logits_topk
-        )
-        rollout_buffer = LogitsRolloutBuffer()
-        timer = Timer(len(dataloader), episode=10)
-        for data in dataloader:
-            timer.step()
-            rollout_buffer.extend(
-                buffer_collector.forward(data['instruction'], data['output'])
+        if buffer_file is None:
+            dataset = MultiOutputsDataset(datalist[epoch * chunk_size: (epoch + 1) * chunk_size])
+            if len(dataset) == 0:
+                return
+            rollout_buffer = get_teacher_buffer(
+                dataset=dataset,
+                teacher_forward_batch_size=teacher_forward_batch_size,
+                teacher_model_type=teacher_model_type,
+                teacher_config_file=teacher_config_file,
+                local_rank=local_rank,
+                world_size=world_size,
+                teacher_max_seq_len=teacher_max_seq_len,
+                teacher_tokenizer_file=teacher_tokenizer_file,
+                dtype=dtype,
+                lora_dtype=lora_dtype,
+                teacher_ckpt_dir=teacher_ckpt_dir,
+                logits_topk=logits_topk,
             )
-
-        teacher.cpu()
-        del teacher
-        del buffer_collector
-        torch.cuda.empty_cache()
-        gc.collect()
-        set_barrier()
+            if local_rank == 0:
+                rollout_buffer.save(student_save_dir, overwrite=(epoch == 0))
+        else:
+            rollout_buffer = LogitsRolloutBuffer()
+            rollout_buffer.load(buffer_file, start=epoch * chunk_size, stop=(epoch + 1) * chunk_size)
 
         student, student_tokenizer = get_parallel_model(
             model_type=student_model_type,
@@ -107,19 +164,7 @@ def main(
         ref_logps = None
         ref_logps_scale = None
         if use_reference:
-            # compute reference point
-            print("Computing reference log probs ......")
-            average_meter = AverageMeter()
-            variance_meter = VarianceMeter()
-            for output_tokens_logps in rollout_buffer.get_logps(1):
-                for tokens_logps in output_tokens_logps:
-                    norm_factor = (tokens_logps != 0).sum(-1).item()
-                    if norm_factor != 0:  # omit for zero
-                        logps = (tokens_logps.sum(-1) / norm_factor).item()  # with average logps
-                        average_meter.forward(logps)
-                        variance_meter.forward(logps)
-            ref_logps = average_meter.average
-            ref_logps_scale = 1.0 / (variance_meter.std() * 0.4)
+            ref_logps, ref_logps_scale = compute_reference_point(rollout_buffer)
             print("Reference log probs: ", ref_logps)
             trainer = ParallelSolverReferenceDistillTrainer(
                 model=student,

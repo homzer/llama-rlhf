@@ -1,5 +1,7 @@
 import collections
 import copy
+import json
+import os.path
 from typing import Generator, List, Union
 
 import numpy as np
@@ -272,6 +274,45 @@ class LogitsRolloutBuffer:
             assert output_tokens_logps is not None
             self._set(instructions, outputs, SlimLogits(logits=logits, n=logits_topk), output_tokens_logps)
 
+    def save(self, save_dir: str, overwrite: bool = True, self_clean: bool = False):
+        os.makedirs(save_dir, exist_ok=True)
+        save_file = os.path.join(save_dir, "buffer.jsonl")
+        print(f"Saving buffer to {save_file} ......")
+        with open(save_file, 'w' if overwrite else 'a', encoding='utf-8') as writer:
+            for i in range(len(self)):
+                writer.write(json.dumps(dict(
+                    instruction=self.instructions[i],
+                    output=self.outputs[i],
+                    logits=self.logits[i].to_dict(),
+                    output_tokens_logps=self.output_tokens_logps[i].tolist(),
+                ), ensure_ascii=False) + '\n')
+        if self_clean:
+            self.__reset()
+        print("Saving done!")
+
+    def load(self, buffer_file: str, start: int = 0, stop: int = None) -> "LogitsRolloutBuffer":
+        print(f"Loading buffer from {buffer_file} ......")
+        self.instructions = []
+        self.outputs = []
+        self.logits = []
+        self.output_tokens_logps = []
+        with open(buffer_file, 'r', encoding="utf-8") as reader:
+            for i, line in enumerate(reader):
+                if stop is not None and stop <= i:
+                    break
+                if start <= i:
+                    data = json.loads(line)
+                    self.instructions.append(data['instruction'])
+                    self.outputs.append(data['output'])
+                    self.logits.append(data['logits'])
+                    self.output_tokens_logps.append(data['output_tokens_logps'])
+        self.instructions = np.array(self.instructions)
+        self.outputs = np.array(self.outputs)
+        self.logits = SlimLogits().from_dict(self.logits)
+        self.output_tokens_logps = np.array(self.output_tokens_logps)
+        print("Loading done!")
+        return self
+
     def __flush(self):
         if self.__cache_instructions is not None:
             assert self.__cache_outputs is not None
@@ -291,6 +332,16 @@ class LogitsRolloutBuffer:
             assert self.__cache_outputs is None
             assert self.__cache_logits is None
             assert self.__cache_output_tokens_logps is None
+
+    def __reset(self):
+        self.logits = None
+        self.instructions = None
+        self.outputs = None
+        self.output_tokens_logps = None
+        self.__cache_logits = None
+        self.__cache_instructions = None
+        self.__cache_outputs = None
+        self.__cache_output_tokens_logps = None
 
     def __len__(self):
         self.__flush()
