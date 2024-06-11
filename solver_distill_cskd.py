@@ -97,11 +97,11 @@ def main(
         student_tokenizer_file: str,
         student_config_file: str,
 
-        teacher_ckpt_dir: Union[str, list],
-        teacher_model_type: str,
-        teacher_tokenizer_file: str,
-        teacher_config_file: str,
-        teacher_forward_batch_size: int,
+        teacher_ckpt_dir: Union[str, list] = None,
+        teacher_model_type: str = None,
+        teacher_tokenizer_file: str = None,
+        teacher_config_file: str = None,
+        teacher_forward_batch_size: int = None,
 
         student_max_seq_len: int = 1024,
         teacher_max_seq_len: int = 1024,

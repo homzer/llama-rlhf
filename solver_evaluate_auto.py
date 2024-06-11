@@ -51,7 +51,8 @@ def main(
     )
     checkpoints = sorted(Path(ckpt_dir).glob("epoch-*"), key=lambda x: int(x.name.replace('epoch-', "")))
     done_checkpoints = [checkpoint.name for checkpoint in Path(log_dir).glob("epoch-*")]
-    assert len(checkpoints) > 0
+    if len(checkpoints) == 0:
+        checkpoints = [Path(ckpt_dir)]
     for checkpoint in checkpoints:
         if checkpoint.name in done_checkpoints:
             continue

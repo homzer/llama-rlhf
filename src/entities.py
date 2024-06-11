@@ -68,17 +68,14 @@ class SlimLogits:
             "indices": self.indices.tolist()
         }
 
-    def from_dict(self, data: dict | List[dict]) -> "SlimLogits":
+    def from_dict(self, data: List[dict]) -> "SlimLogits":
         if isinstance(data, dict):
             data = [data]
         self.max_seq_len = data[0]['max_seq_len']
         self.n = data[0]["n"]
         self.vocab_size = data[0]["vocab_size"]
-        self.values = torch.tensor(data[0]["values"])
-        self.indices = torch.tensor(data[0]["indices"])
-        for i in range(1, len(data)):
-            self.values = torch.cat([self.values, torch.tensor(data[i]["values"])], dim=0)
-            self.indices = torch.cat([self.indices, torch.tensor(data[i]["indices"])], dim=0)
+        self.values = torch.stack([torch.tensor(d["values"]).squeeze(0) for d in data])
+        self.indices = torch.stack([torch.tensor(d["indices"]).squeeze(0) for d in data])
         return self
 
     def fetch(self, i: int) -> torch.Tensor:
