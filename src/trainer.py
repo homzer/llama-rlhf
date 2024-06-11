@@ -6,7 +6,7 @@ from typing import List
 import torch
 import torch.nn as nn
 
-from src.criterion import RewardLoss, KLDivLoss, DpoLoss
+from src.criterion import RewardLoss, KLDivLoss, DpoLoss, ReverseKLDivLoss, JSDivLoss
 from src.models.modeling import Module, ParallelModule, ParallelModelForCausalLM, ParallelVerifier
 from src.tokenizers import Tokenizer
 from src.utils import set_barrier, truncate
@@ -127,20 +127,6 @@ class ParallelSolverTrainer(ParallelTrainer):
         self.accumulation_steps = accumulation_steps
         self.step = 0
 
-    # def _truncating_strategy(self, instruction_ids, output_ids):
-    #     instruction_length = len(instruction_ids)
-    #     output_length = len(output_ids)
-    #     if instruction_length >= self.max_seq_len:
-    #         print(f'WARNING: Length of instruction {instruction_length} '
-    #               f'exceeds the max input length {self.max_seq_len}')
-    #         instruction_ids = instruction_ids[:self.max_seq_len]
-    #         instruction_length = len(instruction_ids)
-    #     sequence_length = instruction_length + output_length
-    #     if sequence_length > self.max_seq_len:
-    #         exceed_length = sequence_length - self.max_seq_len
-    #         output_ids = output_ids[:-exceed_length]
-    #     return instruction_ids, output_ids
-
     def _back_propagation(self, loss: torch.Tensor):
         self.step += 1
         loss = loss / self.accumulation_steps
@@ -199,7 +185,9 @@ class ParallelSolverDistillTrainer(ParallelSolverTrainer):
             tokenizer: Tokenizer,
             optimizer: torch.optim.Optimizer,
             max_seq_len: int,
-            accumulation_steps: int = 1
+            accumulation_steps: int = 1,
+            use_reverse_kl: bool = False,
+            use_js: bool = False
     ):
         super().__init__(
             model=model,
@@ -210,6 +198,10 @@ class ParallelSolverDistillTrainer(ParallelSolverTrainer):
         )
         self.criterion_ce = nn.CrossEntropyLoss(ignore_index=-100)
         self.criterion_kl = KLDivLoss()
+        if use_reverse_kl:
+            self.criterion_kl = ReverseKLDivLoss()
+        if use_js:
+            self.criterion_kl = JSDivLoss()
 
     def distill(
             self,
@@ -395,7 +387,7 @@ class ParallelSolverReferenceDistillTrainer(ParallelSolverTrainer):
             accumulation_steps=accumulation_steps
         )
         self.criterion_ce = nn.CrossEntropyLoss(ignore_index=-100)
-        self.criterion_kl = KLDivLoss(output_scalar=False)
+        self.criterion_kl = KLDivLoss(return_scalar=False)
         self.eps = 1e-4
 
     def reference_kl_loss(self, logits, target_logits, target_logps, ref_logps, masks, temperature, scale):

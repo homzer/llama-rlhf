@@ -117,9 +117,10 @@ def main(
         lora_dtype: str = "float32",
         use_reference: bool = False,
         buffer_file: str = None,
-        begin_epoch: int = 0
+        begin_epoch: int = 0,
+        use_reverse_kl: bool = False,
+        use_js: bool = False
 ):
-
     local_rank, world_size = setup_model_parallel(seed=seed)
     datalist = json_load(train_file)
     epochs = len(datalist) // chunk_size
@@ -164,6 +165,7 @@ def main(
         ref_logps = None
         ref_logps_scale = None
         if use_reference:
+            assert use_reverse_kl is False
             ref_logps, ref_logps_scale = compute_reference_point(rollout_buffer)
             print("Reference log probs: ", ref_logps)
             trainer = ParallelSolverReferenceDistillTrainer(
@@ -177,7 +179,9 @@ def main(
                 model=student,
                 tokenizer=student_tokenizer,
                 optimizer=optimizer,
-                max_seq_len=student_max_seq_len
+                max_seq_len=student_max_seq_len,
+                use_reverse_kl=use_reverse_kl,
+                use_js=use_js
             )
         trainer.load(student_ckpt_dir) if (
                 epoch == 0
