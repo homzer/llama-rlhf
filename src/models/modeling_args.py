@@ -187,6 +187,30 @@ class QwenArgsHf(Args):
         return super().from_json(filename)
 
 
+@dataclass
+class BaichuanArgs(Args):
+    max_seq_len: int
+    local_rank: int
+    world_size: int
+    dtype: str = "float16"
+
+    vocab_size: int = None
+    hidden_size: int = None
+    intermediate_size: int = None
+    num_hidden_layers: int = None
+    num_attention_heads: int = None
+    hidden_act: str = None
+    max_position_embeddings: int = None
+    initializer_range: int = None
+    rms_norm_eps: float = None
+    use_cache: bool = None
+
+    def from_json(self, filename: str):
+        if not filename.endswith(".json"):
+            filename = os.path.join(filename, "config.json")
+        return super().from_json(filename)
+
+
 class MistralMoeArgsHf(MistralArgsHf):
     num_local_experts: int
     num_experts_per_tok: int
