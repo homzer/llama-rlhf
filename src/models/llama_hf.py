@@ -218,14 +218,12 @@ class LlamaHf(ParallelModelForCausalLM):
 
     def load(self, ckpt_dir: str, verbose: bool = True, **kwargs):
         checkpoints = sorted(Path(ckpt_dir).glob("consolidated.*.pth"))
-        if len(checkpoints) != 0:  # normal loading
-            super().load(ckpt_dir, verbose, **kwargs)
-        else:  # splitting
-            pl_ckpt_dir = auto_split_huggingface_checkpoints(
+        if len(checkpoints) == 0:  # splitting
+            ckpt_dir = auto_split_huggingface_checkpoints(
                 ckpt_dir, world_size=self.world_size, local_rank=self.local_rank, verbose=verbose
             )
             set_barrier()
-            super().load(pl_ckpt_dir, verbose, **kwargs)
+        super().load(ckpt_dir, verbose=verbose, merge_lora=True)
 
     def flush(self):
         """ Clean cache in `LlamaAttention` module """

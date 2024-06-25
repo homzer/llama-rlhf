@@ -234,16 +234,14 @@ class Qwen(ParallelModelForCausalLM):
         return CausalLMOutputs(logits=logits_normalize(output), hidden_states=h)
 
     # Copied from llama_hf.LlamaHf.load
-    def load(self, ckpt_dir: str, verbose: bool = True, **kwargs):
+    def load(self, ckpt_dir: str, verbose: bool = True):
         checkpoints = sorted(Path(ckpt_dir).glob("consolidated.*.pth"))
-        if len(checkpoints) != 0:  # normal loading
-            super().load(ckpt_dir, verbose, **kwargs)
-        else:  # splitting
-            pl_ckpt_dir = auto_split_huggingface_checkpoints(
+        if len(checkpoints) == 0:  # splitting
+            ckpt_dir = auto_split_huggingface_checkpoints(
                 ckpt_dir, world_size=self.world_size, local_rank=self.local_rank, verbose=verbose
             )
             set_barrier()
-            super().load(pl_ckpt_dir, verbose, **kwargs)
+        super().load(ckpt_dir, verbose=verbose, merge_lora=True)
 
     # Copied from llama_hf.LlamaHf.flush
     def flush(self):
@@ -272,11 +270,9 @@ class QwenVerifier(ParallelVerifier):
 
     def load(self, ckpt_dir: str, verbose: bool = True):
         checkpoints = sorted(Path(ckpt_dir).glob("consolidated.*.pth"))
-        if len(checkpoints) != 0:  # normal loading
-            super().load(ckpt_dir, verbose=verbose, merge_lora=True)
-        else:  # splitting
-            pl_ckpt_dir = auto_split_huggingface_checkpoints(
+        if len(checkpoints) == 0:  # splitting
+            ckpt_dir = auto_split_huggingface_checkpoints(
                 ckpt_dir, world_size=self.world_size, local_rank=self.local_rank, verbose=verbose
             )
             set_barrier()
-            super().load(pl_ckpt_dir, verbose=verbose, merge_lora=True)
+        super().load(ckpt_dir, verbose=verbose, merge_lora=True)
