@@ -25,12 +25,12 @@ class Module(nn.Module):
     def init_weights(self):
         raise NotImplementedError
 
-    def load(self, ckpt_file: str, verbose: bool = True, **kwargs):
-        if verbose:
+    def load(self, ckpt_file: str, **kwargs):
+        if kwargs.get("verbose", True):
             print(f'Loading model from {ckpt_file} .....')
         state_dict = torch.load(ckpt_file, map_location='cpu')
         outputs = self.load_state_dict(state_dict, strict=False)
-        if verbose:
+        if kwargs.get("verbose", True):
             for missing_key in outputs.missing_keys:
                 print(f"MISSING KEY: {missing_key}")
             for unexpected_key in outputs.unexpected_keys:

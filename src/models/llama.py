@@ -197,7 +197,7 @@ class Llama(ParallelModelForCausalLM):
         ).type(self.args.dtype)
 
     def load(self, ckpt_dir: str, verbose: bool = True, merge_lora: bool = False, sequential_load: bool = False):
-        super().load(ckpt_dir, verbose, merge_lora=merge_lora, sequential_load=sequential_load)
+        super().load(ckpt_dir, verbose=verbose, merge_lora=merge_lora, sequential_load=sequential_load)
 
     def flush(self):
         """ Clean cache in `LlamaAttention` module """

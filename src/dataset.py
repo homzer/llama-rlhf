@@ -42,8 +42,9 @@ class JsonDatasetForChatTemplate(Dataset):
         data = self.dataset.__getitem__(i)
         assert "instruction" in data
         if isinstance(data["instruction"], str):
-            data["instruction"] = {"role": "user", "content": data["instruction"]}
-        assert isinstance(data["instruction"], dict)
+            data["instruction"] = [{"role": "user", "content": data["instruction"]}]
+        assert isinstance(data["instruction"], list)
+        assert isinstance(data["instruction"][0], dict)
         data["instruction"] = self.tokenizer.apply_chat_template(data["instruction"])
         return data
 
