@@ -44,7 +44,7 @@ def main(
     dataset = JsonDataset(label_file)
     if use_chat_template:
         dataset = JsonDatasetForChatTemplate(dataset, tokenizer)
-    model.load(ckpt_dir, merge_lora=True)
+    model.load(ckpt_dir)
     evaluator = SolverEvaluator(model, tokenizer, max_batch_size, max_seq_len)
     outputs = evaluator.forward(task, dataset, t=t, p=p)
     print("Evaluate Accuracy: ", outputs.acc, "Missing: ", outputs.missing)
