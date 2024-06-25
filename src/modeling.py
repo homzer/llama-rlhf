@@ -163,7 +163,7 @@ def get_parallel_model(
         max_seq_len: int,
         tokenizer_file: str,
         lora_rank: int,
-        dtype: str = 'float16',
+        dtype: str = 'bfloat16',  # float16 might be NaN
         lora_dtype: str = 'float32',
         use_clamp: bool = False
 ) -> (ParallelModule, Tokenizer):
