@@ -144,7 +144,7 @@ class ParallelModule(Module):
             loading_outputs = self.load_state_dict(state_dict, strict=False)
             self.cuda(self.local_rank)
         set_barrier()
-        if verbose:
+        if kwargs.get("verbose", True):
             for missing_key in loading_outputs.missing_keys:
                 print(f"MISSING KEY: {missing_key}")
             for unexpected_key in loading_outputs.unexpected_keys:
