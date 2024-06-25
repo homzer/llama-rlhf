@@ -7,9 +7,7 @@ from tqdm import tqdm
 
 from src.dataset import PairwiseDataset
 from src.evaluator import VerifierEvaluator
-from src.models.llama import LoraLlamaVerifier
-from src.models.modeling_args import LoraLlamaArgs
-from src.tokenizers import LlamaTokenizer
+from src.models.modeling_utils import get_parallel_verifier
 from src.trainer import ParallelVerifierTrainer
 from src.utils import setup_model_parallel, json_dump
 
@@ -18,39 +16,43 @@ def main(
         ckpt_dir: str,
         save_dir: str,
         train_file: str,
-        model_type: str = "7B",
+        model_type: str = "qwen-2-7b",
         max_seq_len: int = 512,
         max_batch_size: int = 1,
         lr: float = 1e-5,
         epochs: int = 1,
         lora_rank: int = 16,
-        tokenizer_path: str = None,
+        tokenizer_file: str = None,
         config_file: str = None,
         label_file: str = None,
         eval_batch_size: int = None,
         log_dir: str = None,
+        dtype: str = "bfloat16",
+        lora_dtype: str = "float32",
         seed: int = None
 ):
     os.makedirs(save_dir, exist_ok=True)
     os.makedirs(log_dir, exist_ok=True)
-    tokenizer_path = 'config/tokenizer.model' if tokenizer_path is None else tokenizer_path
-    config_file = f"config/{model_type}/params.json" if config_file is None else config_file
+    tokenizer_file = ckpt_dir if tokenizer_file is None else tokenizer_file
+    config_file = ckpt_dir if config_file is None else config_file
     local_rank, world_size = setup_model_parallel(
         use_float16=True, seed=seed
     )
-    params = LoraLlamaArgs(
-        max_seq_len=max_seq_len,
+    model, tokenizer = get_parallel_verifier(
+        model_type=model_type,
+        config_file=config_file,
         local_rank=local_rank,
         world_size=world_size,
-        r=lora_rank
-    ).from_json(config_file)
+        max_seq_len=max_seq_len,
+        tokenizer_file=tokenizer_file,
+        lora_rank=lora_rank,
+        dtype=dtype,
+        lora_dtype=lora_dtype
+    )
 
-    model = LoraLlamaVerifier(params)
-    model.init_weights()
     dataset = PairwiseDataset(f=train_file)
     dataloader = DataLoader(dataset, batch_size=max_batch_size)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    tokenizer = LlamaTokenizer(tokenizer_path)
     trainer = ParallelVerifierTrainer(
         model=model,
         tokenizer=tokenizer,

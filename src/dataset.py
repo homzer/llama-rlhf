@@ -125,7 +125,7 @@ class PairwiseDataset(JsonDataset):
         assert len(data['chosen']) != 0
         data['chosen'] = random.sample(data['chosen'], 1)[0]
 
-        if len(data['rejected']) == 0:
+        if len(data['rejected']) == 0:  # if no rejected sample, randomly sample one.
             rejection = random.sample(self.datalist, 1)[0]
             while len(rejection['rejected']) == 0:
                 rejection = random.sample(self.datalist, 1)[0]

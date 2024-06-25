@@ -169,14 +169,14 @@ class Llama(ParallelModelForCausalLM):
 
     def forward(self, tokens: torch.Tensor, start_pos=0, use_cache=False):
         tokens = tokens.to(next(self.parameters()).device)
-        _bsz, seqlen = tokens.shape
+        _bsz, seq_len = tokens.shape
         h = self.tok_embeddings(tokens)
         self.freqs_cis = self.freqs_cis.to(h.device)
-        freqs_cis = self.freqs_cis[start_pos: start_pos + seqlen]
+        freqs_cis = self.freqs_cis[start_pos: start_pos + seq_len]
 
         mask = None
-        if seqlen > 1:
-            mask = torch.full((1, 1, seqlen, seqlen), float("-inf"), device=tokens.device)
+        if seq_len > 1:
+            mask = torch.full((1, 1, seq_len, seq_len), float("-inf"), device=tokens.device)
             mask = torch.triu(mask, diagonal=start_pos + 1).type_as(h)
 
         for layer in self.layers:
@@ -226,14 +226,14 @@ class LlamaVerifier(ParallelVerifier):
 
     def forward(self, tokens: torch.Tensor) -> VerifierOutputs:
         tokens = tokens.to(next(self.parameters()).device)
-        _bsz, seqlen = tokens.shape
+        _bsz, seq_len = tokens.shape
         h = self.tok_embeddings(tokens)
         self.freqs_cis = self.freqs_cis.to(h.device)
-        freqs_cis = self.freqs_cis[: seqlen]
+        freqs_cis = self.freqs_cis[: seq_len]
 
         mask = None
-        if seqlen > 1:
-            mask = torch.full((1, 1, seqlen, seqlen), float("-inf"), device=tokens.device)
+        if seq_len > 1:
+            mask = torch.full((1, 1, seq_len, seq_len), float("-inf"), device=tokens.device)
             mask = torch.triu(mask, diagonal=1).type_as(h)
 
         for layer in self.layers:
@@ -251,8 +251,8 @@ class LlamaVerifier(ParallelVerifier):
         self.norm = RMSNorm(self.args.dim, eps=self.args.norm_eps).type(self.args.dtype)
         self.v_head = nn.Linear(self.args.dim, 1, bias=False).type(self.args.dtype)
 
-    def load(self, ckpt_dir: str, verbose: bool = True, merge_lora: bool = False):
-        super().load(ckpt_dir, verbose, merge_lora=merge_lora)
+    def load(self, ckpt_dir: str, verbose: bool = True):
+        super().load(ckpt_dir, verbose=verbose, merge_lora=True)
 
 
 class LoraLlamaAttention(LlamaAttention):

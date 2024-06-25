@@ -119,8 +119,8 @@ class ParallelModule(Module):
     def init_weights(self):
         raise NotImplementedError
 
-    def load(self, ckpt_dir: str, verbose: bool = True, **kwargs):
-        if verbose:
+    def load(self, ckpt_dir: str, **kwargs):
+        if kwargs.get("verbose", True):
             print(f'Loading model from {ckpt_dir} .....')
         checkpoints = sorted(Path(ckpt_dir).glob("consolidated.*.pth"))
         assert self.world_size == len(
@@ -216,9 +216,6 @@ class ParallelVerifier(ParallelModule):
     def __init__(self, local_rank, world_size):
         super().__init__(local_rank, world_size)
 
-    def init_weights(self):
-        raise NotImplementedError
-
     def forward(self, tokens: torch.Tensor) -> VerifierOutputs:
         raise NotImplementedError
 
@@ -231,7 +228,7 @@ class AttentionForCausalLM(nn.Module):
         self.cache_v = None
 
     def apply_cache(self, xk, xv, start_pos):
-        bsz, seqlen, n_heads, head_dim = xk.shape
+        bsz, seq_len, n_heads, head_dim = xk.shape
         if self.cache_k is None:
             self.cache_k = torch.zeros(
                 (bsz, self.max_seq_len, n_heads, head_dim)
@@ -243,11 +240,11 @@ class AttentionForCausalLM(nn.Module):
 
         self.cache_k = self.cache_k.to(xk)
         self.cache_v = self.cache_v.to(xv)
-        self.cache_k[:bsz, start_pos: start_pos + seqlen] = xk
-        self.cache_v[:bsz, start_pos: start_pos + seqlen] = xv
+        self.cache_k[:bsz, start_pos: start_pos + seq_len] = xk
+        self.cache_v[:bsz, start_pos: start_pos + seq_len] = xv
 
-        xk = self.cache_k[:bsz, : start_pos + seqlen]
-        xv = self.cache_v[:bsz, : start_pos + seqlen]
+        xk = self.cache_k[:bsz, : start_pos + seq_len]
+        xv = self.cache_v[:bsz, : start_pos + seq_len]
         return xk, xv
 
     @staticmethod

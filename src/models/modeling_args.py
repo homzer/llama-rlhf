@@ -159,7 +159,7 @@ class LoraMistralArgs(MistralArgs):
 
 
 @dataclass
-class QwenArgsHf(Args):
+class QwenArgs(Args):
     max_seq_len: int
     local_rank: int
     world_size: int

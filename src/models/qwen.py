@@ -11,14 +11,15 @@ from fairscale.nn.model_parallel.layers import (
 )
 
 from src.checkpoint import auto_split_huggingface_checkpoints
-from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs, AttentionForCausalLM
+from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs, AttentionForCausalLM, ParallelVerifier, \
+    VerifierOutputs
 from src.models.modeling_acts import Clamp, RMSNorm, RotaryEmbedding
-from src.models.modeling_args import QwenArgsHf
+from src.models.modeling_args import QwenArgs
 from src.utils import logits_normalize, set_barrier, compute_position_ids, apply_rotary_pos_emb
 
 
 class QwenAttention(AttentionForCausalLM):
-    def __init__(self, args: QwenArgsHf):
+    def __init__(self, args: QwenArgs):
         super().__init__(args.max_seq_len)
         self.args = args
         self.head_dim = args.hidden_size // args.num_attention_heads
@@ -112,7 +113,7 @@ class QwenAttention(AttentionForCausalLM):
 
 
 class QwenFeedForward(nn.Module):
-    def __init__(self, args: QwenArgsHf):
+    def __init__(self, args: QwenArgs):
         super().__init__()
         self.args = args
 
@@ -145,7 +146,7 @@ class QwenFeedForward(nn.Module):
 
 
 class QwenTransformerBlock(nn.Module):
-    def __init__(self, args: QwenArgsHf):
+    def __init__(self, args: QwenArgs):
         super().__init__()
         self.args = args
         self.self_attn = QwenAttention(args)
@@ -176,7 +177,7 @@ class QwenTransformerBlock(nn.Module):
 
 
 class QwenHead(nn.Module):
-    def __init__(self, args: QwenArgsHf):
+    def __init__(self, args: QwenArgs):
         super().__init__()
         self.args = args
 
@@ -210,7 +211,7 @@ class QwenHead(nn.Module):
 
 
 class Qwen(ParallelModelForCausalLM):
-    def __init__(self, args: QwenArgsHf):
+    def __init__(self, args: QwenArgs):
         super().__init__(args.local_rank, args.world_size)
         self.args = args
         self.model = QwenHead(args)
@@ -249,3 +250,33 @@ class Qwen(ParallelModelForCausalLM):
         for i in range(self.args.num_hidden_layers):
             self.model.layers[i].self_attn.flush()
         set_barrier()
+
+
+class QwenVerifier(ParallelVerifier):
+    def __init__(self, args: QwenArgs):
+        super().__init__(args.local_rank, args.world_size)
+        self.args = args
+        self.model = QwenHead(args)
+        self.v_head = None
+
+    def init_weights(self):
+        self.model.init_weights()
+        self.v_head = nn.Linear(
+            self.args.hidden_size, 1, bias=False
+        ).type(self.args.dtype)
+
+    def forward(self, tokens: torch.Tensor) -> VerifierOutputs:
+        h = self.model.forward(tokens)
+        scores = self.v_head(h.type_as(self.v_head.weight)).squeeze(-1)  # [b, s]
+        return VerifierOutputs(scores=scores)
+
+    def load(self, ckpt_dir: str, verbose: bool = True):
+        checkpoints = sorted(Path(ckpt_dir).glob("consolidated.*.pth"))
+        if len(checkpoints) != 0:  # normal loading
+            super().load(ckpt_dir, verbose=verbose, merge_lora=True)
+        else:  # splitting
+            pl_ckpt_dir = auto_split_huggingface_checkpoints(
+                ckpt_dir, world_size=self.world_size, local_rank=self.local_rank, verbose=verbose
+            )
+            set_barrier()
+            super().load(pl_ckpt_dir, verbose=verbose, merge_lora=True)
