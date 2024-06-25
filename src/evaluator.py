@@ -46,6 +46,7 @@ class SolverEvaluator:
             for i, output in enumerate(outputs):
                 result_dict = dict()
                 for key in data.keys():
+                    print(key, len(data[key]), i)
                     result_dict[key] = data[key][i]
                 result_dict['output'] = output
                 datalist.append(result_dict)
