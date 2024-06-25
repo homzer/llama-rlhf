@@ -23,8 +23,10 @@ class QwenAttention(AttentionForCausalLM):
         super().__init__(args.max_seq_len)
         self.args = args
         self.head_dim = args.hidden_size // args.num_attention_heads
+        assert args.num_attention_heads % args.world_size == 0
         self.num_local_heads = args.num_attention_heads // args.world_size
         self.num_key_value_heads = args.num_key_value_heads
+        assert self.num_key_value_heads % args.world_size == 0
         self.num_local_key_value_heads = self.num_key_value_heads // args.world_size
         self.n_rep = args.num_attention_heads // args.num_key_value_heads
 
@@ -78,15 +80,15 @@ class QwenAttention(AttentionForCausalLM):
             mask: Optional[torch.Tensor],
             use_cache=False
     ):
-        bsz, seqlen, _ = x.size()
+        bsz, seq_len, _ = x.size()
         xq, xk, xv = self.q_proj(x), self.k_proj(x), self.v_proj(x)
 
-        xq = xq.view(bsz, seqlen, self.num_local_heads, self.head_dim)
-        xk = xk.view(bsz, seqlen, self.num_local_key_value_heads, self.head_dim)
-        xv = xv.view(bsz, seqlen, self.num_local_key_value_heads, self.head_dim)
+        xq = xq.view(bsz, seq_len, self.num_local_heads, self.head_dim)
+        xk = xk.view(bsz, seq_len, self.num_local_key_value_heads, self.head_dim)
+        xv = xv.view(bsz, seq_len, self.num_local_key_value_heads, self.head_dim)
 
-        cos, sin = self.rotary_emb.forward(xv.transpose(1, 2), seq_len=seqlen + start_pos)
-        position_ids = compute_position_ids(start_pos, seqlen).to(x.device)
+        cos, sin = self.rotary_emb.forward(xv.transpose(1, 2), seq_len=seq_len + start_pos)
+        position_ids = compute_position_ids(start_pos, seq_len).to(x.device)
         xq, xk = apply_rotary_pos_emb(xq.transpose(1, 2), xk.transpose(1, 2), cos, sin, position_ids)
         xq = xq.transpose(1, 2)
         xk = xk.transpose(1, 2)
