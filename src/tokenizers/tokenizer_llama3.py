@@ -72,6 +72,9 @@ class Llama3Tokenizer(Tokenizer):
         self.skip_tokens_ids = {self.special_tokens[token] for token in self.skip_tokens}
         super().__init__(self.vocab_size, self.bos_id, self.eos_id, self.pad_id)
 
+    def apply_chat_template(self, messages: List[dict]) -> str:
+        raise NotImplementedError
+
     def encode(self, s: str, bos: bool = False, eos: bool = False) -> List[int]:
         assert type(s) is str
 
@@ -136,19 +139,15 @@ class Llama3ChatTokenizer(Llama3Tokenizer):
         self.eos_id = self.special_tokens[self.end_of_turn]
         self.pad_id = self.special_tokens[self.end_of_text]
 
-    def apply_chat_template(self, messages: List[dict]) -> str:
+    def apply_chat_template(self, messages: List[dict], speaker: str = "assistant") -> str:
         """
         :param messages: [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "greetings!"}]
+        :param speaker: str, default to `assistant`.
         :return:
         """
         s = ""
         for message in messages:
             s += f"{self.start_header}{message['role']}{self.end_header}\n\n" \
                  f"{message['content'].strip()}{self.end_of_turn}"
-        s += f"{self.start_header}assistant{self.end_header}\n\n"
+        s += f"{self.start_header}{speaker}{self.end_header}\n\n"
         return s
-
-    def encode(self, s: str, bos: bool = False, eos: bool = False) -> List[int]:
-        messages = [{"role": "user", "content": s}]
-        s = self.apply_chat_template(messages)
-        return super().encode(s, bos=bos, eos=eos)

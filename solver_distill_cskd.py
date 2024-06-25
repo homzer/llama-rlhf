@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 
 from src.dataset import MultiOutputsDataset
 from src.entities import Timer, AverageMeter, VarianceMeter
-from src.models.modeling_utils import get_parallel_model
+from src.modeling import get_parallel_model
 from src.ppo.buffer import LogitsRolloutBuffer
 from src.ppo.collector import LogitsBufferCollector
 from src.trainer import ParallelSolverReferenceDistillTrainer, ParallelSolverDistillTrainer

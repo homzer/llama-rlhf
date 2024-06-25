@@ -15,6 +15,9 @@ class GPT2Tokenizer(Tokenizer):
             pad_id=self.model.pad_token_id if self.model.pad_token_id else self.model.bos_token_id
         )
 
+    def apply_chat_template(self, messages: List[dict]) -> str:
+        raise NotImplementedError
+
     def encode(self, s: str, bos: bool = False, eos: bool = False) -> List[int]:
         t = []
         if bos:

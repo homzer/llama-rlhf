@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 from src.dataset import MultiOutputsDataset, JsonDataset
 from src.entities import Timer
 from src.evaluator import SolverEvaluator
-from src.models.modeling_utils import get_parallel_model
+from src.modeling import get_parallel_model
 from src.ppo.buffer import LogitsRolloutBuffer, OutputRolloutBuffer
 from src.ppo.collector import LogitsBufferCollector, OutputBufferCollector
 from src.trainer import ParallelSolverDpoTrainer

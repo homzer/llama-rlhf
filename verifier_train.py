@@ -7,7 +7,7 @@ from tqdm import tqdm
 
 from src.dataset import PairwiseDataset
 from src.evaluator import VerifierEvaluator
-from src.models.modeling_utils import get_parallel_verifier
+from src.modeling import get_parallel_verifier
 from src.trainer import ParallelVerifierTrainer
 from src.utils import setup_model_parallel, json_dump
 

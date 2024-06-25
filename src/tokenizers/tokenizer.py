@@ -8,6 +8,9 @@ class Tokenizer:
         self.eos_id = eos_id
         self.pad_id = pad_id
 
+    def apply_chat_template(self, messages: List[dict]) -> str:
+        raise NotImplementedError
+
     def encode(self, s: str, bos: bool = False, eos: bool = False) -> List[int]:
         raise NotImplementedError
 

@@ -5,6 +5,7 @@ import torch
 import numpy as np
 from torch.utils.data import Dataset
 
+from src.tokenizers import Tokenizer
 from src.utils import json_load, deduplicate_texts
 
 
@@ -26,6 +27,25 @@ class JsonDataset(Dataset):
         indices = torch.randperm(len(self))
         dataset = torch.utils.data.Subset(self, indices)
         return dataset
+
+
+class JsonDatasetForChatTemplate(Dataset):
+    def __init__(self, dataset: JsonDataset, tokenizer: Tokenizer):
+        self.dataset = dataset
+        self.tokenizer = tokenizer
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, i):
+        """ Applying chat template. """
+        data = self.dataset.__getitem__(i)
+        assert "instruction" in data
+        if isinstance(data["instruction"], str):
+            data["instruction"] = {"role": "user", "content": data["instruction"]}
+        assert isinstance(data["instruction"], dict)
+        data["instruction"] = self.tokenizer.apply_chat_template(data["instruction"])
+        return data
 
 
 class MultiOutputsDataset(JsonDataset):
