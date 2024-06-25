@@ -10,6 +10,15 @@ import torch
 from tqdm import tqdm
 
 
+def load_safetensors(f: str) -> OrderedDict:
+    state_dict = OrderedDict()
+    assert f.endswith(".safetensors")
+    with safetensors.safe_open(f, "pt", device="cpu") as reader:
+        for k in reader.keys():
+            state_dict[k] = reader.get_tensor(k)
+    return state_dict
+
+
 def is_parallel(name):
     return ('wq.wei' in name or 'q_proj.wei' in name or 'wq.bias' in name or 'q_proj.bias' in name) or \
            ('wk.wei' in name or 'k_proj.wei' in name or 'wk.bias' in name or 'k_proj.bias' in name) or \

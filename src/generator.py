@@ -27,15 +27,19 @@ class GeneratorForCausalLM:
             x = self.tokenizer.encode(x, bos=True, eos=False)
             prompt_tokens.append(x[: self.max_seq_len])
         min_prompt_size = min([len(t) for t in prompt_tokens])
-        tokens = torch.full((bsz, self.max_seq_len), self.tokenizer.pad_id).cuda().long()
-        input_masks = torch.full((bsz, self.max_seq_len), False).cuda()
+        tokens = torch.full((bsz, self.max_seq_len), self.tokenizer.pad_id).long()
+        input_masks = torch.full((bsz, self.max_seq_len), False)
+        unfinished_sequences = torch.ones(size=[bsz], dtype=torch.long)
+        if torch.cuda.is_available():
+            tokens = tokens.cuda()
+            input_masks = input_masks.cuda()
+            unfinished_sequences = unfinished_sequences.cuda()
         for k, tks in enumerate(prompt_tokens):
             tokens[k, :len(tks)] = torch.tensor(tks).long()
             input_masks[k, :len(tks)] = True
         # input_text_mask = tokens != self.tokenizer.pad_id
         start_pos = min_prompt_size
         prev_pos = 0
-        unfinished_sequences = torch.ones(size=[bsz], dtype=torch.long).cuda()
         for cur_pos in range(start_pos, self.max_seq_len):
             with torch.no_grad():
                 outputs = self.model.forward(tokens[:, prev_pos:cur_pos], prev_pos, use_cache=True)

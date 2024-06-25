@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from src.checkpoint import load_safetensors
 from src.utils import set_barrier, merge_lora_state_dict
 
 CausalLMOutputs = collections.namedtuple('CausalLMOutputs', ['logits', 'hidden_states'])
@@ -28,7 +29,10 @@ class Module(nn.Module):
     def load(self, ckpt_file: str, **kwargs):
         if kwargs.get("verbose", True):
             print(f'Loading model from {ckpt_file} .....')
-        state_dict = torch.load(ckpt_file, map_location='cpu')
+        if ckpt_file.endswith(".safetensors"):
+            state_dict = load_safetensors(ckpt_file)
+        else:
+            state_dict = torch.load(ckpt_file, map_location='cpu')
         outputs = self.load_state_dict(state_dict, strict=False)
         if kwargs.get("verbose", True):
             for missing_key in outputs.missing_keys:
