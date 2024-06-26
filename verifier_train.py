@@ -7,10 +7,9 @@ from tqdm import tqdm
 
 from src.dataset import PairwiseDataset
 from src.entities import Timer
-from src.evaluator import VerifierEvaluator
 from src.modeling import get_parallel_verifier
 from src.trainer import ParallelVerifierTrainer
-from src.utils import setup_model_parallel, json_dump
+from src.utils import setup_model_parallel
 
 
 def main(
