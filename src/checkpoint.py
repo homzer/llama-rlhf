@@ -45,7 +45,7 @@ def get_layer_id(name):
     return matches[0]
 
 
-def __splitting(state_dict, n) -> list:
+def splitting__(state_dict, n) -> list:
     new_state_dicts = [OrderedDict() for _ in range(n)]
     for name, param in state_dict.items():
         assert 'lora' not in name, 'can not split a lora checkpoint, merge it first'
@@ -93,7 +93,7 @@ def splitting(
                 for k in reader.keys():
                     state_dict[k] = reader[k]
 
-    new_state_dicts = __splitting(state_dict, n)
+    new_state_dicts = splitting__(state_dict, n)
     os.makedirs(save_path, exist_ok=True)
     for i in range(n):
         torch.save(new_state_dicts[i], os.path.join(save_path, f'consolidated.0{i}.pth'))
@@ -106,7 +106,7 @@ def auto_split_2_to_8(
     state_dicts = []
     for i in range(2):
         state_dict = torch.load(os.path.join(ckpt_dir, f"consolidated.0{i}.pth"), map_location="cpu")
-        state_dicts.extend(__splitting(state_dict, 4))
+        state_dicts.extend(splitting__(state_dict, 4))
     os.makedirs(save_dir, exist_ok=True)
     for i in range(8):
         torch.save(state_dicts[i], os.path.join(save_dir, f'consolidated.0{i}.pth'))
@@ -119,13 +119,13 @@ def auto_split_4_to_8(
     state_dicts = []
     for i in range(4):
         state_dict = torch.load(os.path.join(ckpt_dir, f"consolidated.0{i}.pth"), map_location="cpu")
-        state_dicts.extend(__splitting(state_dict, 2))
+        state_dicts.extend(splitting__(state_dict, 2))
     os.makedirs(save_dir, exist_ok=True)
     for i in range(8):
         torch.save(state_dicts[i], os.path.join(save_dir, f'consolidated.0{i}.pth'))
 
 
-def __merging(state_dict1, state_dict2) -> dict:
+def merging__(state_dict1, state_dict2) -> dict:
     new_state_dicts = OrderedDict()
 
     for name in state_dict1.keys():
@@ -153,7 +153,7 @@ def auto_merge_8_to_4(
     for i in [0, 2, 4, 6]:
         state_dict1 = torch.load(os.path.join(ckpt_dir, f"consolidated.0{i}.pth"), map_location="cpu")
         state_dict2 = torch.load(os.path.join(ckpt_dir, f"consolidated.0{i+1}.pth"), map_location="cpu")
-        state_dicts.append(__merging(state_dict1, state_dict2))
+        state_dicts.append(merging__(state_dict1, state_dict2))
     os.makedirs(save_dir, exist_ok=True)
     assert len(state_dicts) == 4
     for i in range(4):
@@ -168,7 +168,7 @@ def merging(
     state_dict1 = torch.load(ckpt_file1, map_location='cpu')
     state_dict2 = torch.load(ckpt_file2, map_location='cpu')
 
-    new_state_dicts = __merging(state_dict1, state_dict2)
+    new_state_dicts = merging__(state_dict1, state_dict2)
 
     for name, param in new_state_dicts.items():
         print(name, param.shape)

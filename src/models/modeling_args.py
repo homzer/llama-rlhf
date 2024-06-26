@@ -211,6 +211,8 @@ class BaichuanArgs(Args):
     rms_norm_eps: float = None
     use_cache: bool = None
 
+    use_clamp: bool = False
+
     def from_json(self, filename: str):
         if not filename.endswith(".json"):
             filename = os.path.join(filename, "config.json")
