@@ -26,6 +26,7 @@ def main(
         config_file: str = None,
         dtype: str = "bfloat16",
         lora_dtype: str = "float32",
+        use_chat_template: bool = False,
         seed: int = None
 ):
     os.makedirs(save_dir, exist_ok=True)
@@ -45,7 +46,8 @@ def main(
     )
 
     dataset = PairwiseDataset(f=train_file)
-    dataset = ChatTemplateDataset(dataset, tokenizer)
+    if use_chat_template:
+        dataset = ChatTemplateDataset(dataset, tokenizer)
     dataloader = DataLoader(dataset, batch_size=max_batch_size)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     trainer = ParallelVerifierTrainer(

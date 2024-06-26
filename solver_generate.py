@@ -1,5 +1,3 @@
-import os
-
 import fire
 from torch.utils.data import DataLoader
 
