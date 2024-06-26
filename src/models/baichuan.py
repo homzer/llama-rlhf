@@ -11,7 +11,8 @@ from fairscale.nn.model_parallel.layers import (
 )
 
 from src.checkpoint_baichuan import auto_split_huggingface_checkpoints
-from src.models.modeling import AttentionForCausalLM, ParallelModelForCausalLM, CausalLMOutputs
+from src.models.modeling import AttentionForCausalLM, ParallelModelForCausalLM, CausalLMOutputs, ParallelVerifier, \
+    VerifierOutputs
 from src.models.modeling_acts import RotaryEmbedding, Clamp, RMSNorm
 from src.models.modeling_args import BaichuanArgs
 from src.utils import set_barrier, compute_position_ids, apply_rotary_pos_emb, logits_normalize
@@ -235,4 +236,32 @@ class Baichuan(ParallelModelForCausalLM):
         for i in range(self.args.num_hidden_layers):
             self.model.layers[i].self_attn.flush()
         set_barrier()
+
+
+class BaichuanVerifier(ParallelVerifier):
+    def __init__(self, args: BaichuanArgs):
+        super().__init__(args.local_rank, args.world_size)
+        self.args = args
+        self.model = BaichuanHead(args)
+        self.v_head = None
+
+    def init_weights(self):
+        self.model.init_weights()
+        self.v_head = nn.Linear(
+            self.args.hidden_size, 1, bias=False
+        ).type(self.args.dtype)
+
+    def forward(self, tokens: torch.Tensor) -> VerifierOutputs:
+        h = self.model.forward(tokens)
+        scores = self.v_head(h.type_as(self.v_head.weight)).squeeze(-1)  # [b, s]
+        return VerifierOutputs(scores=scores)
+
+    def load(self, ckpt_dir: str, verbose: bool = True):
+        checkpoints = sorted(Path(ckpt_dir).glob("consolidated.*.pth"))
+        if len(checkpoints) == 0:  # splitting
+            ckpt_dir = auto_split_huggingface_checkpoints(
+                ckpt_dir, world_size=self.world_size, local_rank=self.local_rank, verbose=verbose
+            )
+            set_barrier()
+        super().load(ckpt_dir, verbose=verbose, merge_lora=True)
 

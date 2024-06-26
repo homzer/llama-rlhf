@@ -15,7 +15,7 @@ from src.models import (
     Qwen,
     QwenVerifier,
     Llama3,
-    LoraLlama3, LoraQwen, LoraQwenVerifier, Baichuan
+    LoraLlama3, LoraQwen, LoraQwenVerifier, Baichuan, BaichuanVerifier
 )
 from src.models.modeling_args import (
     LlamaArgs,
@@ -127,7 +127,8 @@ VERIFIERS = {
     "llama-2-7b": LlamaVerifier,
     "lora-llama-2-7b": LoraLlamaVerifier,
     "qwen-2-7b": QwenVerifier,
-    "lora-qwen-2-7b": LoraQwenVerifier
+    "lora-qwen-2-7b": LoraQwenVerifier,
+    "baichuan-2-7b-chat": BaichuanVerifier
 }
 
 TOKENIZERS = {
