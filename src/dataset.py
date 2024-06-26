@@ -132,7 +132,7 @@ class EvoMultiOutputsDataset(MultiOutputsDataset):
 
 
 class PairwiseDataset(JsonDataset):
-    def __init__(self, f, randomize: bool = True):
+    def __init__(self, f, randomize: bool = False):
         super().__init__(f)
         assert "chosen" in self.datalist[0].keys()
         assert type(self.datalist[0]['chosen']) is list

@@ -92,15 +92,15 @@ def compute_position_ids(start_pos: int, seq_length: int):
     return position_ids
 
 
-def json_dump(obj, f, indent=None):
+def json_dump(obj, f, indent=None, ensure_ascii=False):
     if str(f).endswith(".json"):
         with open(f, 'w', encoding='utf-8') as writer:
-            writer.write(json.dumps(obj, indent=indent))
+            writer.write(json.dumps(obj, indent=indent, ensure_ascii=ensure_ascii))
     elif str(f).endswith(".jsonl"):
         with open(f, 'w', encoding='utf-8') as writer:
             assert type(obj) is list
             for data in obj:
-                writer.write(json.dumps(data) + '\n')
+                writer.write(json.dumps(data, ensure_ascii=ensure_ascii) + '\n')
     else:
         raise ValueError(f"Unexpected file type: {str(f)}")
 
