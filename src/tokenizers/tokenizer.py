@@ -9,6 +9,10 @@ class Tokenizer:
         self.pad_id = pad_id
 
     def apply_chat_template(self, messages: List[dict]) -> str:
+        """
+        :param messages: [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "greetings!"}]
+        :return: str
+        """
         raise NotImplementedError
 
     def encode(self, s: str, bos: bool = False, eos: bool = False) -> List[int]:

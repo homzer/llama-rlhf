@@ -244,11 +244,9 @@ class BaichuanTokenizer(Tokenizer):
         )
 
     def apply_chat_template(self, messages: List[dict]) -> str:
-        """
-        :param messages: [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "greetings!"}]
-        :return:
-        """
-        return self.model.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        # TODO: template: ###{content}\n### Response:\n
+        assert len(messages) == 1  # only support 1 message currently
+        return f"###{messages[0]['content']}\n### Response:\n"
 
     def encode(self, s: str, bos: bool = False, eos: bool = False) -> List[int]:
         encode = self.model.encode(s)
