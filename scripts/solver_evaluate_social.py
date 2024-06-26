@@ -202,7 +202,7 @@ def run(
         limit: int = None,
         begin: int = 0
 ):
-    local_rank, world_size = setup_model_parallel(use_float16=True)
+    local_rank, world_size = setup_model_parallel()
     model, tokenizer = get_parallel_model(
         model_type=model_type,
         config_file=config_file,

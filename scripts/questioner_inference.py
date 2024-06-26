@@ -40,7 +40,7 @@ def main(
         seed: int = None,
 ):
     local_rank, world_size = setup_model_parallel(
-        use_float16=True, seed=seed)
+        seed=seed)
     if lora_rank < 0:
         params = LlamaArgs(
             max_seq_len=max_seq_len,

@@ -6,6 +6,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from src.dataset import PairwiseDataset
+from src.entities import Timer
 from src.evaluator import VerifierEvaluator
 from src.modeling import get_parallel_verifier
 from src.trainer import ParallelVerifierTrainer
@@ -24,8 +25,6 @@ def main(
         lora_rank: int = 16,
         tokenizer_file: str = None,
         config_file: str = None,
-        label_file: str = None,
-        eval_batch_size: int = None,
         log_dir: str = None,
         dtype: str = "bfloat16",
         lora_dtype: str = "float32",
@@ -35,9 +34,7 @@ def main(
     os.makedirs(log_dir, exist_ok=True)
     tokenizer_file = ckpt_dir if tokenizer_file is None else tokenizer_file
     config_file = ckpt_dir if config_file is None else config_file
-    local_rank, world_size = setup_model_parallel(
-        use_float16=True, seed=seed
-    )
+    local_rank, world_size = setup_model_parallel(seed=seed)
     model, tokenizer = get_parallel_verifier(
         model_type=model_type,
         config_file=config_file,
@@ -58,9 +55,9 @@ def main(
         tokenizer=tokenizer,
         optimizer=optimizer
     )
-    evaluator = VerifierEvaluator(model, tokenizer, eval_batch_size, max_seq_len)
     trainer.load(ckpt_dir)
     for epoch in range(epochs):
+        timer = Timer(len(dataloader), episode=100)
         for data in tqdm(dataloader):
             outputs = trainer.forward(
                 instructions=data['instruction'],
@@ -70,11 +67,7 @@ def main(
             if trainer.step % 100 == 0:
                 print(f'step {trainer.step} of {len(dataloader)} -------------------------------')
                 print("LOSS: ", outputs.loss.item())
-        outputs = evaluator.forward(PairwiseDataset(label_file))
-        print('Evaluate Accuracy: ', outputs.acc)
-        json_dump(outputs.datalist, os.path.join(
-            log_dir, f'results-epoch-{epoch + 1}-{round(outputs.acc, 4)}.jsonl')
-        )
+            timer.step()
         trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))
 
 

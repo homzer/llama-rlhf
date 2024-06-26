@@ -36,7 +36,7 @@ def main(
     tokenizer_path = 'config/tokenizer.model' if tokenizer_path is None else tokenizer_path
     config_file = f"config/{model_type}/params.json" if config_file is None else config_file
     local_rank, world_size = setup_model_parallel(
-        use_float16=True, seed=seed
+        seed=seed
     )
     params = LoraLlamaArgs(
         max_seq_len=max_seq_len,

@@ -37,7 +37,7 @@ def main(
         os.makedirs(log_dir, exist_ok=True)
     config_file = f"config/{model_type}/params.json" if config_file is None else config_file
     local_rank, world_size = setup_model_parallel(
-        use_float16=use_float16, seed=seed
+        seed=seed
     )
 
     model, tokenizer = get_parallel_model(

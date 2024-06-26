@@ -32,9 +32,7 @@ def main(
         config_file: str = None,
         seed: int = None
 ):
-    local_rank, world_size = setup_model_parallel(
-        use_float16=True, seed=seed
-    )
+    local_rank, world_size = setup_model_parallel(seed=seed)
     if tokenizer_file is None:
         tokenizer_file = ckpt_dir
     if config_file is None:

@@ -46,7 +46,7 @@ def main(
     config_file = f"config/{model_type}/params.json" if config_file is None else config_file
     seed = 1 if seed is None else seed
     local_rank, world_size = setup_model_parallel(
-        use_float16=True, seed=seed
+        seed=seed
     )
     params = LoraLlamaArgs(
         max_seq_len=max_seq_len,

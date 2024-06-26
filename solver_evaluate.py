@@ -25,7 +25,7 @@ def main(
         seed: int = None
 ):
     local_rank, world_size = setup_model_parallel(
-        use_float16=True, seed=seed
+        seed=seed
     )
     if tokenizer_file is None:
         tokenizer_file = ckpt_dir

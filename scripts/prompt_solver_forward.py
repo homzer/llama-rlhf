@@ -50,7 +50,7 @@ def main(
         use_float16: bool = True
 ):
     local_rank, world_size = setup_model_parallel(
-        use_float16=use_float16, seed=seed
+        seed=seed
     )
     if local_rank == 0:
         os.makedirs(save_dir, exist_ok=True)

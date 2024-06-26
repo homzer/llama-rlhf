@@ -28,7 +28,7 @@ def main(
     if log_dir is not None:
         os.makedirs(log_dir, exist_ok=True)
     local_rank, world_size = setup_model_parallel(
-        use_float16=use_float16, seed=seed
+        seed=seed
     )
     rollout_buffer = torch.load(train_file)
 

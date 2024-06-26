@@ -24,7 +24,7 @@ def main(
         seed: int = None
 ):
     local_rank, world_size = setup_model_parallel(
-        use_float16=True, seed=seed
+        seed=seed
     )
 
     model, tokenizer = get_parallel_model(

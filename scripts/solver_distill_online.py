@@ -50,7 +50,7 @@ def main(
         assert log_dir is not None
         os.makedirs(log_dir, exist_ok=True)
     local_rank, world_size = setup_model_parallel(
-        use_float16=use_float16, seed=seed
+        seed=seed
     )
     dataset = MultiOutputsDataset(train_file)
     dataloader = DataLoader(dataset, batch_size=teacher_forward_batch_size)

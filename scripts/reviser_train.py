@@ -42,7 +42,7 @@ def main(
     dataset = ReviseDataset(f=train_file)
     dataloader = DataLoader(dataset, batch_size=max_batch_size)
     local_rank, world_size = setup_model_parallel(
-        use_float16=True, seed=seed
+        seed=seed
     )
     params = LoraLlamaArgs(
         max_seq_len=max_seq_len,
