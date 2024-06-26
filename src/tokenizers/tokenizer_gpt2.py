@@ -29,3 +29,6 @@ class GPT2Tokenizer(Tokenizer):
 
     def decode(self, t: List[int]) -> str:
         return self.model.decode(t, skip_special_tokens=True)
+
+    def save(self, save_dir: str):
+        self.model.save_pretrained(save_dir)

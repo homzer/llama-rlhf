@@ -33,12 +33,5 @@ class QwenTokenizer(Tokenizer):
     def decode(self, t: List[int]) -> str:
         return self.model.decode(t, skip_special_tokens=True)
 
-
-# class QwenChatTokenizer(QwenTokenizer):
-#     def __init__(self, model_dir: str):
-#         super().__init__(model_dir)
-#
-#     def encode(self, s: str, bos: bool = False, eos: bool = False) -> List[int]:
-#         assert eos is False  # TODO
-#         s = self.apply_chat_template([{"role": "user", "content": s}])
-#         return super().encode(s, bos, eos)
+    def save(self, save_dir: str):
+        self.model.save_pretrained(save_dir)

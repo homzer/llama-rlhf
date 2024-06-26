@@ -10,6 +10,7 @@ class LlamaTokenizer(Tokenizer):
     def __init__(self, model_file: str):
         if not model_file.endswith("tokenizer.model"):
             model_file = os.path.join(model_file, "tokenizer.model")
+        self.model_file = model_file
         self.model = SentencePieceProcessor()
         self.model.Init(model_file=model_file)
         super().__init__(
@@ -46,6 +47,10 @@ class LlamaTokenizer(Tokenizer):
 
     def tokenize(self, s: str, bos: bool = False, eos: bool = False):
         return self.model.Encode(s, out_type=str, add_bos=bos, add_eos=eos)
+
+    def save(self, save_dir: str):
+        os.makedirs(save_dir, exist_ok=True)
+        os.system(f"cp {self.model_file} {os.path.join(save_dir, 'tokenizer.model')}")
 
 
 # class LlamaChatTokenizer(LlamaTokenizer):

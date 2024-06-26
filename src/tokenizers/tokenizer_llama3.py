@@ -21,6 +21,7 @@ class Llama3Tokenizer(Tokenizer):
         if not model_file.endswith("tokenizer.model"):
             model_file = os.path.join(model_file, "tokenizer.model")
         assert os.path.isfile(model_file), model_file
+        self.model_file = model_file
         mergeable_ranks = load_tiktoken_bpe(model_file)
         num_base_tokens = len(mergeable_ranks)
         self.begin_of_text = "<|begin_of_text|>"
@@ -105,6 +106,10 @@ class Llama3Tokenizer(Tokenizer):
         # Skip special tokens
         t = [x for x in t if x not in self.skip_tokens_ids]
         return self.model.decode(t)
+
+    def save(self, save_dir: str):
+        os.makedirs(save_dir, exist_ok=True)
+        os.system(f"cp {self.model_file} {os.path.join(save_dir, 'tokenizer.model')}")
 
     @staticmethod
     def _split_whitespaces_or_nonwhitespaces(

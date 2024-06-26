@@ -16,3 +16,6 @@ class Tokenizer:
 
     def decode(self, t: List[int]) -> str:
         raise NotImplementedError
+
+    def save(self, save_dir: str):
+        raise NotImplementedError

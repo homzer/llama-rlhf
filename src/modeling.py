@@ -77,7 +77,7 @@ ARGS = {
     "qwen-2-7b": QwenArgs,
     "lora-qwen-2-7b": LoraQwenArgs,
 
-    "baichuan-2-7b": BaichuanArgs
+    "baichuan-2-7b-chat": BaichuanArgs
 }
 
 
@@ -120,7 +120,7 @@ MODELS = {
     "qwen-2-7b": Qwen,
     "lora-qwen-2-7b": LoraQwen,
 
-    "baichuan-2-7b": Baichuan
+    "baichuan-2-7b-chat": Baichuan
 }
 
 VERIFIERS = {
@@ -151,7 +151,7 @@ TOKENIZERS = {
     "qwen-72b": QwenTokenizer,
     "qwen-2-7b": QwenTokenizer,
 
-    "baichuan-2-7b": BaichuanTokenizer
+    "baichuan-2-7b-chat": BaichuanTokenizer
 }
 
 
