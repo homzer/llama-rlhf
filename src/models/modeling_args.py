@@ -187,6 +187,7 @@ class QwenArgs(Args):
         return super().from_json(filename)
 
 
+@dataclass
 class LoraQwenArgs(QwenArgs):
     r: int = None  # Rank of lora
     lora_dtype: str = "float32"
