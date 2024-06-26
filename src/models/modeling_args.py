@@ -187,6 +187,11 @@ class QwenArgs(Args):
         return super().from_json(filename)
 
 
+class LoraQwenArgs(QwenArgs):
+    r: int = None  # Rank of lora
+    lora_dtype: str = "float32"
+
+
 @dataclass
 class BaichuanArgs(Args):
     max_seq_len: int

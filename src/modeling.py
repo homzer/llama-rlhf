@@ -15,7 +15,7 @@ from src.models import (
     Qwen,
     QwenVerifier,
     Llama3,
-    LoraLlama3
+    LoraLlama3, LoraQwen, LoraQwenVerifier
 )
 from src.models.modeling_args import (
     LlamaArgs,
@@ -24,7 +24,7 @@ from src.models.modeling_args import (
     LoraMistralArgs,
     QwenArgs,
     MistralArgsHf,
-    MistralMoeArgsHf
+    MistralMoeArgsHf, LoraQwenArgs
 )
 from src.tokenizers import (
     Tokenizer,
@@ -74,7 +74,8 @@ ARGS = {
     "qwen-7b-chat": QwenArgs,
     "qwen-14b-chat": QwenArgs,
     "qwen-72b-chat": QwenArgs,
-    "qwen-2-7b": QwenArgs
+    "qwen-2-7b": QwenArgs,
+    "lora-qwen-2-7b": LoraQwenArgs
 }
 
 
@@ -114,13 +115,15 @@ MODELS = {
     "qwen-7b-chat": Qwen,
     "qwen-14b-chat": Qwen,
     "qwen-72b-chat": Qwen,
-    "qwen-2-7b": Qwen
+    "qwen-2-7b": Qwen,
+    "lora-qwen-2-7b": LoraQwen
 }
 
 VERIFIERS = {
     "llama-2-7b": LlamaVerifier,
     "lora-llama-2-7b": LoraLlamaVerifier,
     "qwen-2-7b": QwenVerifier,
+    "lora-qwen-2-7b": LoraQwenVerifier
 }
 
 TOKENIZERS = {
@@ -134,17 +137,8 @@ TOKENIZERS = {
     "llama-3-70b": Llama3Tokenizer,
     "llama-3-8b-instruct": Llama3ChatTokenizer,
     "llama-3-70b-instruct": Llama3ChatTokenizer,
-    "lora-llama-1-7b": LlamaTokenizer,
-    "lora-llama-1-13b": LlamaTokenizer,
-    "lora-llama-2-7b": LlamaTokenizer,
-    "lora-llama-2-13b": LlamaTokenizer,
-    "lora-llama-1-30b": LlamaTokenizer,
-    "lora-llama-2-70b": LlamaTokenizer,
-    "lora-llama-3-8b": Llama3Tokenizer,
-    "lora-llama-3-70b": Llama3Tokenizer,
 
     "mistral-7b": MistralTokenizer,
-    "lora-mistral-7b": MistralTokenizer,
     "mistral-7b-instruct-v0.2": MistralChatTokenizer,
     "mixtral-8x7b-instruct-v0.1": MistralChatTokenizer,
 
@@ -168,8 +162,7 @@ def get_parallel_model(
         use_clamp: bool = False
 ) -> (ParallelModule, Tokenizer):
     if lora_rank > 0:
-        model_type = "lora-" + model_type
-        args = ARGS[model_type](
+        args = ARGS["lora-" + model_type](
             max_seq_len=max_seq_len,
             local_rank=local_rank,
             world_size=world_size,
@@ -178,8 +171,7 @@ def get_parallel_model(
             lora_dtype=lora_dtype,
             use_clamp=use_clamp
         ).from_json(config_file)
-        model = MODELS[model_type](args)
-        tokenizer = TOKENIZERS[model_type](tokenizer_file)
+        model = MODELS["lora-" + model_type](args)
     else:
         args = ARGS[model_type](
             max_seq_len=max_seq_len,
@@ -189,7 +181,7 @@ def get_parallel_model(
             use_clamp=use_clamp
         ).from_json(config_file)
         model = MODELS[model_type](args)
-        tokenizer = TOKENIZERS[model_type](tokenizer_file)
+    tokenizer = TOKENIZERS[model_type](tokenizer_file)
     model.init_weights()
     return model, tokenizer
 

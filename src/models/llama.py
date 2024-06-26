@@ -268,12 +268,14 @@ class LoraLlamaAttention(LlamaAttention):
         self.lora_a_wo = None
         self.lora_b_wo = None
 
-    def forward(self,
-                x: torch.Tensor,
-                start_pos: int,
-                freqs_cis: torch.Tensor,
-                mask: Optional[torch.Tensor],
-                use_cache=False):
+    def forward(
+            self,
+            x: torch.Tensor,
+            start_pos: int,
+            freqs_cis: torch.Tensor,
+            mask: Optional[torch.Tensor],
+            use_cache=False
+    ):
         bsz, seqlen, _ = x.shape
         xq = self.wq(x) + apply_lora(x, self.lora_a_wq, self.lora_b_wq)
         xk = self.wk(x) + apply_lora(x, self.lora_a_wk, self.lora_b_wk)

@@ -9,4 +9,4 @@ from src.models.mistral_hf import MistralHf
 from src.models.mistral_moe_hf import MistralMoeHf
 from src.models.openchat import OpenChat
 from src.models.gpt2 import GPT2
-from src.models.qwen import Qwen, QwenVerifier
+from src.models.qwen import Qwen, QwenVerifier, LoraQwenVerifier, LoraQwen

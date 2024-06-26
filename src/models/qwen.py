@@ -3,6 +3,7 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
+import torch.nn.init as init
 import torch.nn.functional as F
 from fairscale.nn.model_parallel.layers import (
     RowParallelLinear,
@@ -14,8 +15,8 @@ from src.checkpoint import auto_split_huggingface_checkpoints
 from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs, AttentionForCausalLM, ParallelVerifier, \
     VerifierOutputs
 from src.models.modeling_acts import Clamp, RMSNorm, RotaryEmbedding
-from src.models.modeling_args import QwenArgs
-from src.utils import logits_normalize, set_barrier, compute_position_ids, apply_rotary_pos_emb
+from src.models.modeling_args import QwenArgs, LoraQwenArgs
+from src.utils import logits_normalize, set_barrier, compute_position_ids, apply_rotary_pos_emb, apply_lora
 
 
 class QwenAttention(AttentionForCausalLM):
@@ -252,6 +253,224 @@ class Qwen(ParallelModelForCausalLM):
         set_barrier()
 
 
+class LoraQwenAttention(QwenAttention):
+    def __init__(self, args: LoraQwenArgs):
+        super().__init__(args)
+        self.args = args
+        self.lora_a_q_proj = None
+        self.lora_b_q_proj = None
+        self.lora_a_k_proj = None
+        self.lora_b_k_proj = None
+        self.lora_a_v_proj = None
+        self.lora_b_v_proj = None
+        self.lora_a_o_proj = None
+        self.lora_b_o_proj = None
+    
+    def forward(
+            self,
+            x: torch.Tensor,
+            start_pos: int,
+            mask: Optional[torch.Tensor],
+            use_cache=False
+    ):
+        bsz, seq_len, _ = x.size()
+        xq = self.q_proj(x) + apply_lora(x, self.lora_a_q_proj, self.lora_b_q_proj)
+        xk = self.k_proj(x) + apply_lora(x, self.lora_a_k_proj, self.lora_b_k_proj)
+        xv = self.v_proj(x) + apply_lora(x, self.lora_a_v_proj, self.lora_b_v_proj)
+
+        xq = xq.view(bsz, seq_len, self.num_local_heads, self.head_dim)
+        xk = xk.view(bsz, seq_len, self.num_local_key_value_heads, self.head_dim)
+        xv = xv.view(bsz, seq_len, self.num_local_key_value_heads, self.head_dim)
+
+        cos, sin = self.rotary_emb.forward(xv.transpose(1, 2), seq_len=seq_len + start_pos)
+        position_ids = compute_position_ids(start_pos, seq_len).to(x.device)
+        xq, xk = apply_rotary_pos_emb(xq.transpose(1, 2), xk.transpose(1, 2), cos, sin, position_ids)
+        xq = xq.transpose(1, 2)
+        xk = xk.transpose(1, 2)
+
+        if use_cache:
+            xk, xv = self.apply_cache(xk, xv, start_pos)
+
+        xk = self.repeat_kv(xk)
+        xv = self.repeat_kv(xv)
+
+        output = self.apply_attention(xq, xk, xv, mask)
+        return self.o_proj(output) + apply_lora(output, self.lora_a_o_proj, self.lora_b_o_proj)
+    
+    def init_weights(self):
+        super().init_weights()
+        
+        self.lora_a_q_proj = nn.Linear(
+            self.args.hidden_size,
+            self.args.r,
+            bias=False
+        ).type(self.args.lora_dtype)
+        self.lora_b_q_proj = ColumnParallelLinear(
+            self.args.r,
+            self.args.num_attention_heads * self.head_dim,
+            bias=False,
+            gather_output=False,
+            init_method=init.zeros_
+        ).type(self.args.lora_dtype)
+        self.lora_a_k_proj = nn.Linear(
+            self.args.hidden_size,
+            self.args.r,
+            bias=False
+        ).type(self.args.lora_dtype)
+        self.lora_b_k_proj = ColumnParallelLinear(
+            self.args.r,
+            self.num_key_value_heads * self.head_dim,
+            bias=False,
+            gather_output=False,
+            init_method=init.zeros_
+        ).type(self.args.lora_dtype)
+        self.lora_a_v_proj = nn.Linear(
+            self.args.hidden_size,
+            self.args.r,
+            bias=False
+        ).type(self.args.lora_dtype)
+        self.lora_b_v_proj = ColumnParallelLinear(
+            self.args.r,
+            self.num_key_value_heads * self.head_dim,
+            bias=False,
+            gather_output=False,
+            init_method=init.zeros_
+        ).type(self.args.lora_dtype)
+        self.lora_a_o_proj = RowParallelLinear(
+            self.args.num_attention_heads * self.head_dim,
+            self.args.r,
+            bias=False,
+            input_is_parallel=True,
+            init_method=init.xavier_normal_
+        ).type(self.args.lora_dtype)
+        self.lora_b_o_proj = nn.Linear(
+            self.args.r,
+            self.args.hidden_size,
+            bias=False
+        ).type(self.args.lora_dtype)
+        init.zeros_(self.lora_b_o_proj.weight)
+
+
+class LoraQwenFeedForward(QwenFeedForward):
+    def __init__(self, args: LoraQwenArgs):
+        super().__init__(args)
+        self.args = args
+
+        self.lora_a_gate_proj = None
+        self.lora_b_gate_proj = None
+        self.lora_a_down_proj = None
+        self.lora_b_down_proj = None
+        self.lora_a_up_proj = None
+        self.lora_b_up_proj = None
+
+    def forward(self, x):
+        x1 = self.gate_proj(x) + apply_lora(x, self.lora_a_gate_proj, self.lora_b_gate_proj)
+        x3 = self.up_proj(x) + apply_lora(x, self.lora_a_up_proj, self.lora_b_up_proj)
+        out = F.silu(x1) + x3
+        return self.down_proj(out) + apply_lora(out, self.lora_a_down_proj, self.lora_b_down_proj)
+
+    def init_weights(self):
+        super().init_weights()
+        self.lora_a_gate_proj = nn.Linear(
+            self.args.hidden_size,
+            self.args.r,
+            bias=False
+        ).type(self.args.lora_dtype)
+        self.lora_b_gate_proj = ColumnParallelLinear(
+            self.args.r,
+            self.args.intermediate_size,
+            bias=False,
+            gather_output=False,
+            init_method=init.zeros_
+        ).type(self.args.lora_dtype)
+        self.lora_a_down_proj = RowParallelLinear(
+            self.args.intermediate_size,
+            self.args.r,
+            bias=False,
+            input_is_parallel=True,
+            init_method=init.xavier_normal_
+        ).type(self.args.lora_dtype)
+        self.lora_b_down_proj = nn.Linear(
+            self.args.r,
+            self.args.hidden_size,
+            bias=False
+        ).type(self.args.lora_dtype)
+        self.lora_a_up_proj = nn.Linear(
+            self.args.hidden_size,
+            self.args.r,
+            bias=False
+        ).type(self.args.lora_dtype)
+        self.lora_b_up_proj = ColumnParallelLinear(
+            self.args.r,
+            self.args.intermediate_size,
+            bias=False,
+            gather_output=False,
+            init_method=init.zeros_
+        ).type(self.args.lora_dtype)
+
+
+class LoraQwenTransformerBlock(QwenTransformerBlock):
+    def __init__(self, args: LoraQwenArgs):
+        super().__init__(args)
+        self.args = args
+        self.self_attn = LoraQwenAttention(args)
+        self.mlp = LoraQwenFeedForward(args)
+
+
+class LoraQwenHead(QwenHead):
+    def __init__(self, args: LoraQwenArgs):
+        super().__init__(args)
+        self.args = args
+        self.layers = nn.ModuleList()
+        for layer_id in range(args.num_hidden_layers):
+            self.layers.append(LoraQwenTransformerBlock(args))
+
+
+class LoraQwen(Qwen):
+    def __init__(self, args: LoraQwenArgs):
+        super().__init__(args)
+        self.args = args
+        self.model = LoraQwenHead(args)
+        self.lora_a_lm_head = None
+        self.lora_b_lm_head = None
+
+    def forward(
+            self,
+            tokens: torch.Tensor,
+            start_pos: int = 0,
+            use_cache: bool = False
+    ) -> CausalLMOutputs:
+        h = self.model.forward(tokens, start_pos, use_cache)
+        output = self.lm_head(h) + apply_lora(h, self.lora_a_lm_head, self.lora_b_lm_head)
+        return CausalLMOutputs(logits=logits_normalize(output), hidden_states=h)
+
+    def init_weights(self):
+        super().init_weights()
+
+        self.lora_a_lm_head = nn.Linear(
+            self.args.hidden_size,
+            self.args.r,
+            bias=False
+        ).type(self.args.lora_dtype)
+        self.lora_b_lm_head = ColumnParallelLinear(
+            self.args.r,
+            self.args.vocab_size,
+            bias=False,
+            gather_output=True,
+            init_method=init.zeros_
+        ).type(self.args.lora_dtype)
+
+        self._freeze()
+
+    def _freeze(self):
+        """ Freeze all parameters but lora ones. """
+        frozen_names = []
+        for name, param in self.named_parameters():
+            if 'lora' not in name:
+                param.requires_grad_(False)
+                frozen_names.append(name)
+
+
 class QwenVerifier(ParallelVerifier):
     def __init__(self, args: QwenArgs):
         super().__init__(args.local_rank, args.world_size)
@@ -278,3 +497,22 @@ class QwenVerifier(ParallelVerifier):
             )
             set_barrier()
         super().load(ckpt_dir, verbose=verbose, merge_lora=True)
+
+
+class LoraQwenVerifier(QwenVerifier):
+    def __init__(self, args: LoraQwenArgs):
+        super().__init__(args)
+        self.args = args
+        self.model = LoraQwenHead(args)
+
+    def init_weights(self):
+        super().init_weights()
+        self._freeze()
+
+    def _freeze(self):
+        """ Freeze all parameters but lora ones. """
+        frozen_names = []
+        for name, param in self.named_parameters():
+            if 'lora' not in name and 'v_head' not in name:
+                param.requires_grad_(False)
+                frozen_names.append(name)
