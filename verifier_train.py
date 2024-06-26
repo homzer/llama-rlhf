@@ -24,13 +24,11 @@ def main(
         lora_rank: int = 16,
         tokenizer_file: str = None,
         config_file: str = None,
-        log_dir: str = None,
         dtype: str = "bfloat16",
         lora_dtype: str = "float32",
         seed: int = None
 ):
     os.makedirs(save_dir, exist_ok=True)
-    os.makedirs(log_dir, exist_ok=True)
     tokenizer_file = ckpt_dir if tokenizer_file is None else tokenizer_file
     config_file = ckpt_dir if config_file is None else config_file
     local_rank, world_size = setup_model_parallel(seed=seed)
