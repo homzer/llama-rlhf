@@ -22,6 +22,7 @@ def main(
         tokenizer_file: str = None,
         config_file: str = None,
         use_chat_template: bool = False,
+        dtype: str = "bfloat16",
         seed: int = None
 ):
     local_rank, world_size = setup_model_parallel(
@@ -39,7 +40,8 @@ def main(
         world_size=world_size,
         max_seq_len=max_seq_len,
         tokenizer_file=tokenizer_file,
-        lora_rank=lora_rank
+        lora_rank=lora_rank,
+        dtype=dtype
     )
     dataset = JsonDataset(label_file)
     if use_chat_template:

@@ -10,15 +10,17 @@ from src.checkpoint import splitting__
 
 
 def process_w_pack(state_dict: OrderedDict) -> OrderedDict:
-    for name in state_dict.keys():
+    new_state_dict = OrderedDict()
+    for name, param in state_dict.items():
         if 'W_pack' in name:
-            param = state_dict.pop(name)  # [3h, h]
             h = param.shape[1]
             assert param.shape[0] / h == 3
-            state_dict[name.replace("W_pack", "q_proj")] = param[: h].clone()
-            state_dict[name.replace("W_pack", "k_proj")] = param[h: 2 * h].clone()
-            state_dict[name.replace("W_pack", "v_proj")] = param[2 * h:].clone()
-    return state_dict
+            new_state_dict[name.replace("W_pack", "q_proj")] = param[: h].clone()
+            new_state_dict[name.replace("W_pack", "k_proj")] = param[h: 2 * h].clone()
+            new_state_dict[name.replace("W_pack", "v_proj")] = param[2 * h:].clone()
+        else:
+            new_state_dict[name] = param
+    return new_state_dict
 
 
 # Copied from src.checkpoint.splitting
