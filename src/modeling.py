@@ -199,8 +199,7 @@ def get_parallel_verifier(
         use_clamp: bool = False
 ) -> (ParallelModule, Tokenizer):
     if lora_rank > 0:
-        model_type = "lora-" + model_type
-        args = ARGS[model_type](
+        args = ARGS["lora-" + model_type](
             max_seq_len=max_seq_len,
             local_rank=local_rank,
             world_size=world_size,
@@ -209,8 +208,7 @@ def get_parallel_verifier(
             lora_dtype=lora_dtype,
             use_clamp=use_clamp
         ).from_json(config_file)
-        model = VERIFIERS[model_type](args)
-        tokenizer = TOKENIZERS[model_type](tokenizer_file)
+        model = VERIFIERS["lora-" + model_type](args)
     else:
         args = ARGS[model_type](
             max_seq_len=max_seq_len,
@@ -220,6 +218,6 @@ def get_parallel_verifier(
             use_clamp=use_clamp
         ).from_json(config_file)
         model = VERIFIERS[model_type](args)
-        tokenizer = TOKENIZERS[model_type](tokenizer_file)
+    tokenizer = TOKENIZERS[model_type](tokenizer_file)
     model.init_weights()
     return model, tokenizer
