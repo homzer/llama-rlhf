@@ -50,7 +50,7 @@ def main(
     timer = Timer(len(dataloader))
     for data in dataloader:
         outputs = generator.forward(data['instruction'], t=t, p=p)
-        print(data['instruction'][-1] + "\n" + outputs[0])
+        print(data['instruction'][-1] + "\n" + outputs[-1])
         timer.step()
 
 
