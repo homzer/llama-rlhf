@@ -23,6 +23,8 @@ class BaichuanAttention(AttentionForCausalLM):
         self.args = args
         self.hidden_size = args.hidden_size
         self.num_heads = args.num_attention_heads
+        assert args.num_attention_heads % args.world_size == 0
+        self.num_local_heads = args.num_attention_heads // args.world_size
         self.head_dim = args.hidden_size // args.num_attention_heads
 
         assert self.head_dim * self.num_heads == self.hidden_size
@@ -78,9 +80,9 @@ class BaichuanAttention(AttentionForCausalLM):
         bsz, seq_len, _ = x.size()
         xq, xk, xv = self.q_proj(x), self.k_proj(x), self.v_proj(x)
 
-        xq = xq.view(bsz, seq_len, self.num_heads, self.head_dim)
-        xk = xk.view(bsz, seq_len, self.num_heads, self.head_dim)
-        xv = xv.view(bsz, seq_len, self.num_heads, self.head_dim)
+        xq = xq.view(bsz, seq_len, self.num_local_heads, self.head_dim)
+        xk = xk.view(bsz, seq_len, self.num_local_heads, self.head_dim)
+        xv = xv.view(bsz, seq_len, self.num_local_heads, self.head_dim)
 
         cos, sin = self.rotary_emb.forward(xv.transpose(1, 2), seq_len=seq_len + start_pos)
         position_ids = compute_position_ids(start_pos, seq_len).to(x.device)
