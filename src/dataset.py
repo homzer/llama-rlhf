@@ -29,7 +29,7 @@ class JsonDataset(Dataset):
         return dataset
 
 
-class JsonDatasetForChatTemplate(Dataset):
+class ChatTemplateDataset(Dataset):
     def __init__(self, dataset: JsonDataset, tokenizer: Tokenizer):
         self.dataset = dataset
         self.tokenizer = tokenizer

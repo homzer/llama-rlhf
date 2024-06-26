@@ -178,6 +178,8 @@ def get_parallel_model(
             lora_dtype=lora_dtype,
             use_clamp=use_clamp
         ).from_json(config_file)
+        model = MODELS[model_type](args)
+        tokenizer = TOKENIZERS[model_type](tokenizer_file)
     else:
         args = ARGS[model_type](
             max_seq_len=max_seq_len,
@@ -186,8 +188,8 @@ def get_parallel_model(
             dtype=dtype,
             use_clamp=use_clamp
         ).from_json(config_file)
-    model = MODELS[model_type](args)
-    tokenizer = TOKENIZERS[model_type](tokenizer_file)
+        model = MODELS[model_type](args)
+        tokenizer = TOKENIZERS[model_type](tokenizer_file)
     model.init_weights()
     return model, tokenizer
 
@@ -215,6 +217,8 @@ def get_parallel_verifier(
             lora_dtype=lora_dtype,
             use_clamp=use_clamp
         ).from_json(config_file)
+        model = VERIFIERS[model_type](args)
+        tokenizer = TOKENIZERS[model_type](tokenizer_file)
     else:
         args = ARGS[model_type](
             max_seq_len=max_seq_len,
@@ -223,7 +227,7 @@ def get_parallel_verifier(
             dtype=dtype,
             use_clamp=use_clamp
         ).from_json(config_file)
-    model = VERIFIERS[model_type](args)
-    tokenizer = TOKENIZERS[model_type](tokenizer_file)
+        model = VERIFIERS[model_type](args)
+        tokenizer = TOKENIZERS[model_type](tokenizer_file)
     model.init_weights()
     return model, tokenizer

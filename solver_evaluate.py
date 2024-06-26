@@ -2,7 +2,7 @@ import os
 
 import fire
 
-from src.dataset import JsonDataset, JsonDatasetForChatTemplate
+from src.dataset import JsonDataset, ChatTemplateDataset
 from src.evaluator import SolverEvaluator
 from src.modeling import get_parallel_model
 from src.utils import setup_model_parallel, json_dump
@@ -43,7 +43,7 @@ def main(
     )
     dataset = JsonDataset(label_file)
     if use_chat_template:
-        dataset = JsonDatasetForChatTemplate(dataset, tokenizer)
+        dataset = ChatTemplateDataset(dataset, tokenizer)
     model.load(ckpt_dir)
     evaluator = SolverEvaluator(model, tokenizer, max_batch_size, max_seq_len)
     outputs = evaluator.forward(task, dataset, t=t, p=p)

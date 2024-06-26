@@ -5,7 +5,7 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from src.dataset import PairwiseDataset
+from src.dataset import PairwiseDataset, ChatTemplateDataset
 from src.entities import Timer
 from src.modeling import get_parallel_verifier
 from src.trainer import ParallelVerifierTrainer
@@ -45,6 +45,7 @@ def main(
     )
 
     dataset = PairwiseDataset(f=train_file)
+    dataset = ChatTemplateDataset(dataset, tokenizer)
     dataloader = DataLoader(dataset, batch_size=max_batch_size)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     trainer = ParallelVerifierTrainer(
