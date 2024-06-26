@@ -21,7 +21,7 @@ def main(
         max_batch_size: int = 1,
         lr: float = 1e-5,
         epochs: int = 1,
-        lora_rank: int = 16,
+        lora_rank: int = -1,
         tokenizer_file: str = None,
         config_file: str = None,
         dtype: str = "bfloat16",
