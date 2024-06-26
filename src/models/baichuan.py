@@ -203,9 +203,12 @@ class Baichuan(ParallelModelForCausalLM):
 
     def init_weights(self):
         self.model.init_weights()
-        self.lm_head = ColumnParallelLinear(
-            self.args.hidden_size, self.args.vocab_size, bias=False, init_method=lambda x: x
+        self.lm_head = nn.Linear(  # TODO: For added tokens
+            self.args.hidden_size, self.args.vocab_size, bias=False
         ).type(self.args.dtype)
+        # self.lm_head = ColumnParallelLinear(
+        #     self.args.hidden_size, self.args.vocab_size, bias=False, init_method=lambda x: x
+        # ).type(self.args.dtype)
 
     def forward(
             self,

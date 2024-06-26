@@ -6,7 +6,51 @@ from typing import Union
 import safetensors
 import torch
 
-from src.checkpoint import splitting__
+
+def is_parallel(name):
+    return ('wq.wei' in name or 'q_proj.wei' in name or 'wq.bias' in name or 'q_proj.bias' in name) or \
+        ('wk.wei' in name or 'k_proj.wei' in name or 'wk.bias' in name or 'k_proj.bias' in name) or \
+        ('wv.wei' in name or 'v_proj.wei' in name or 'wv.bias' in name or 'v_proj.bias' in name) or \
+        ('wo.wei' in name or 'o_proj.wei' in name) or \
+        ('w1.wei' in name or 'gate_proj.wei' in name or 'w1.bias' in name or 'gate_proj.bias' in name) or \
+        ('w2.wei' in name or 'down_proj.wei' in name) or \
+        ('w3.wei' in name or 'up_proj.wei' in name or 'w3.bias' in name or 'up_proj.bias' in name) or \
+        ('tok_embeddings.wei' in name or 'embed_tokens.wei' in name)
+
+
+def is_col_parallel(name):
+    return ('wq' in name or 'q_proj' in name) or \
+        ('wk' in name or 'k_proj' in name) or \
+        ('wv' in name or 'v_proj' in name) or \
+        ('w1' in name or 'gate_proj' in name) or \
+        ('w3' in name or 'up_proj' in name)
+
+
+def splitting__(state_dict, n) -> list:
+    new_state_dicts = [OrderedDict() for _ in range(n)]
+    for name, param in state_dict.items():
+        assert 'lora' not in name, 'can not split a lora checkpoint, merge it first'
+        param = param.cpu()
+        if is_parallel(name):
+            params = []
+            if is_col_parallel(name):
+                dim0 = param.shape[0]
+                assert dim0 % n == 0
+                split = dim0 // n
+                for i in range(n):
+                    params.append(param[i * split: (i + 1) * split])
+            else:
+                dim1 = param.shape[1]
+                assert dim1 % n == 0
+                split = dim1 // n
+                for i in range(n):
+                    params.append(param[:, i * split: (i + 1) * split])
+            for i in range(n):
+                new_state_dicts[i][name] = params[i].clone()
+        else:
+            for i in range(n):
+                new_state_dicts[i][name] = param.clone()
+    return new_state_dicts
 
 
 def process_w_pack(state_dict: OrderedDict) -> OrderedDict:
