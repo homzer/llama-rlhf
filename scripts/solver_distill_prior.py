@@ -4,7 +4,7 @@ import fire
 import torch
 
 from src.entities import Timer
-from src.models.modeling_utils import get_parallel_model
+from src.modeling import get_parallel_model
 from src.trainer import ParallelSolverTripleDistillTrainer
 from src.utils import setup_model_parallel
 

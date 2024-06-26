@@ -4,7 +4,7 @@ import fire
 
 from prompt_solver_forward import PromptDataset
 from src.evaluator import SolverEvaluator
-from src.models.modeling_utils import get_parallel_model
+from src.modeling import get_parallel_model
 from src.utils import setup_model_parallel, json_dump
 
 

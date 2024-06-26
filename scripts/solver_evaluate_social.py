@@ -9,7 +9,7 @@ from torch.utils.data import Dataset, DataLoader
 
 from src.entities import Timer
 from src.generator import GeneratorForCausalLM
-from src.models.modeling_utils import get_parallel_model
+from src.modeling import get_parallel_model
 from src.utils import json_load, json_dump, setup_model_parallel
 
 PROMPT_EN = """

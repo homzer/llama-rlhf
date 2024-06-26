@@ -200,7 +200,7 @@ def get_parallel_verifier(
         max_seq_len: int,
         tokenizer_file: str,
         lora_rank: int,
-        dtype: str = 'float16',
+        dtype: str = 'bfloat16',
         lora_dtype: str = 'float32',
         use_clamp: bool = False
 ) -> (ParallelModule, Tokenizer):

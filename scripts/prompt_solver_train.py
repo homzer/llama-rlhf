@@ -9,7 +9,7 @@ from prompt_solver_forward import PromptMultiOutputsDataset
 from src.dataset import JsonDataset
 from src.entities import Timer
 from src.evaluator import SolverEvaluator
-from src.models.modeling_utils import get_parallel_model
+from src.modeling import get_parallel_model
 from src.trainer import ParallelSolverTrainer
 from src.utils import setup_model_parallel, json_dump
 
