@@ -85,20 +85,6 @@ class GeneratorForVerifier:
         self.reduce = reduce
         assert self.reduce in ["mean", "last"]
 
-    # def _truncating_strategy(self, instruction_ids, output_ids):
-    #     instruction_length = len(instruction_ids)
-    #     output_length = len(output_ids)
-    #     if instruction_length >= self.max_seq_len:
-    #         print(f'WARNING: Length of instruction {instruction_length} '
-    #               f'exceeds the max input length {self.max_seq_len}')
-    #         instruction_ids = instruction_ids[:self.max_seq_len]
-    #         instruction_length = len(instruction_ids)
-    #     sequence_length = instruction_length + output_length
-    #     if sequence_length > self.max_seq_len:
-    #         exceed_length = sequence_length - self.max_seq_len
-    #         output_ids = output_ids[:-exceed_length]
-    #     return instruction_ids, output_ids
-
     def _prepare_for_generation(
             self,
             instructions: Union[List[str], List[List[int]]],
@@ -134,6 +120,7 @@ class GeneratorForVerifier:
         examples = self._prepare_for_generation(instructions, outputs)
         with torch.no_grad():
             tokens_scores = self.model.forward(examples.tokens).scores
+        tokens_scores = tokens_scores.detach().cpu()
         result_tokens_scores = []
         for i, score in enumerate(tokens_scores):
             result_tokens_scores.append(torch.masked_select(score, examples.masks[i]).tolist())
