@@ -302,7 +302,7 @@ class LoraBaichuanAttention(BaichuanAttention):
         ).type(self.args.lora_dtype)
         self.lora_b_k_proj = ColumnParallelLinear(
             self.args.r,
-            self.num_key_value_heads * self.head_dim,
+            self.args.num_attention_heads * self.head_dim,
             bias=False,
             gather_output=False,
             init_method=init.zeros_
@@ -314,7 +314,7 @@ class LoraBaichuanAttention(BaichuanAttention):
         ).type(self.args.lora_dtype)
         self.lora_b_v_proj = ColumnParallelLinear(
             self.args.r,
-            self.num_key_value_heads * self.head_dim,
+            self.args.num_attention_heads * self.head_dim,
             bias=False,
             gather_output=False,
             init_method=init.zeros_
