@@ -180,6 +180,8 @@ class LastTokenScoreLoss(Loss):
         bzs = scores.shape[0]
         loss = 0
         for i in range(bzs):
+            if len(masks[i].nonzero()) == 0:
+                continue
             last_token_id = masks[i].nonzero()[-1].item()
             score = torch.sigmoid(scores[i][last_token_id])
             loss += (score - labels[i]) ** 2
