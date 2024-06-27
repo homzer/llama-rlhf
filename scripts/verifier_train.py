@@ -10,7 +10,7 @@ from src.evaluator import VerifierEvaluator
 from src.models.llama import LoraLlamaVerifier
 from src.models.modeling_args import LoraLlamaArgs
 from src.tokenizers import LlamaTokenizer
-from src.trainer import ParallelVerifierTrainer
+from src.trainer import ParallelVerifierPairwiseTrainer
 from src.utils import setup_model_parallel, json_dump
 
 
@@ -51,7 +51,7 @@ def main(
     dataloader = DataLoader(dataset, batch_size=max_batch_size)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     tokenizer = LlamaTokenizer(tokenizer_path)
-    trainer = ParallelVerifierTrainer(
+    trainer = ParallelVerifierPairwiseTrainer(
         model=model,
         tokenizer=tokenizer,
         optimizer=optimizer

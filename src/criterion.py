@@ -1,3 +1,5 @@
+from typing import Union, List
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -139,7 +141,7 @@ class MSELoss(Loss):
         return loss.mean()
 
 
-class RewardLoss(Loss):
+class PairwiseScoreLoss(Loss):
     def __init__(self):
         super().__init__()
 
@@ -163,6 +165,25 @@ class RewardLoss(Loss):
 
         loss = - torch.log(torch.sigmoid(c_rewards - r_rewards)).mean()
         return loss
+
+
+class LastTokenScoreLoss(Loss):
+    def __init__(self):
+        super().__init__()
+
+    def forward(
+            self,
+            scores: torch.Tensor,  # [b, s]
+            masks: torch.Tensor,  # [b, s]
+            labels: Union[torch.Tensor, List[int]]  # [b]
+    ):
+        bzs = scores.shape[0]
+        loss = 0
+        for i in range(bzs):
+            last_token_id = masks[i].nonzero()[-1].item()
+            score = torch.sigmoid(scores[i][last_token_id])
+            loss += (score - labels[i]) ** 2
+        return loss / bzs
 
 
 class DpoLoss(Loss):

@@ -5,10 +5,10 @@ import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from src.dataset import PairwiseDataset, ChatTemplateDataset
+from src.dataset import ChatTemplateDataset, JsonDataset
 from src.entities import Timer
 from src.modeling import get_parallel_verifier
-from src.trainer import ParallelVerifierPairwiseTrainer
+from src.trainer import ParallelVerifierPointwiseTrainer
 from src.utils import setup_model_parallel
 
 
@@ -45,12 +45,12 @@ def main(
         lora_dtype=lora_dtype
     )
 
-    dataset = PairwiseDataset(f=train_file)
+    dataset = JsonDataset(f=train_file)
     if use_chat_template:
         dataset = ChatTemplateDataset(dataset, tokenizer)
     dataloader = DataLoader(dataset, batch_size=max_batch_size)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    trainer = ParallelVerifierPairwiseTrainer(
+    trainer = ParallelVerifierPointwiseTrainer(
         model=model,
         tokenizer=tokenizer,
         optimizer=optimizer
@@ -61,8 +61,8 @@ def main(
         for data in tqdm(dataloader):
             outputs = trainer.forward(
                 instructions=data['instruction'],
-                chosen=data['chosen'],
-                rejected=data['rejected']
+                outputs=data['output'],
+                labels=data['label']
             )
             if trainer.step % 100 == 0:
                 print(f'step {trainer.step} of {len(dataloader)} -------------------------------')

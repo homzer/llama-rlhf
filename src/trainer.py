@@ -6,7 +6,7 @@ from typing import List
 import torch
 import torch.nn as nn
 
-from src.criterion import RewardLoss, KLDivLoss, DpoLoss, ReverseKLDivLoss, JSDivLoss
+from src.criterion import PairwiseScoreLoss, KLDivLoss, DpoLoss, ReverseKLDivLoss, JSDivLoss, LastTokenScoreLoss
 from src.models.modeling import Module, ParallelModule, ParallelModelForCausalLM, ParallelVerifier
 from src.tokenizers import Tokenizer
 from src.utils import set_barrier, truncate
@@ -530,7 +530,6 @@ class ParallelVerifierTrainer(ParallelTrainer):
         self.max_seq_len = self.model.args.max_seq_len
         self.tokenizer = tokenizer
         self.optimizer = optimizer
-        self.criterion = RewardLoss()
         self.accumulation_steps = accumulation_steps
         self.step = 0
 
@@ -556,6 +555,23 @@ class ParallelVerifierTrainer(ParallelTrainer):
         Output = collections.namedtuple('Outputs', ['tokens', 'masks'])
         return Output(tokens=tokens, masks=masks)
 
+
+class ParallelVerifierPairwiseTrainer(ParallelVerifierTrainer):
+    def __init__(
+            self,
+            model: ParallelVerifier,
+            tokenizer: Tokenizer,
+            optimizer: torch.optim.Optimizer,
+            accumulation_steps: int = 1
+    ):
+        super().__init__(
+            model=model,
+            tokenizer=tokenizer,
+            optimizer=optimizer,
+            accumulation_steps=accumulation_steps
+        )
+        self.criterion = PairwiseScoreLoss()
+
     def forward(self, instructions: List[str], chosen: List[str], rejected: List[str]):
         self.model.train()
         c_examples = self.prepare_for_training(instructions, chosen)
@@ -573,3 +589,35 @@ class ParallelVerifierTrainer(ParallelTrainer):
 
         Output = collections.namedtuple('Output', ['loss'])
         return Output(loss=loss)
+
+
+class ParallelVerifierPointwiseTrainer(ParallelVerifierTrainer):
+    def __init__(
+            self,
+            model: ParallelVerifier,
+            tokenizer: Tokenizer,
+            optimizer: torch.optim.Optimizer,
+            accumulation_steps: int = 1
+    ):
+        super().__init__(
+            model=model,
+            tokenizer=tokenizer,
+            optimizer=optimizer,
+            accumulation_steps=accumulation_steps
+        )
+        self.criterion = LastTokenScoreLoss()
+
+    def forward(self, instructions: List[str], outputs: List[str], labels: List[int]):
+        self.model.train()
+        examples = self.prepare_for_training(instructions, outputs)
+        scores = self.model.forward(examples.tokens).scores
+        loss = self.criterion.forward(
+            scores=scores,
+            masks=examples.masks.to(scores.device),
+            labels=labels
+        )
+        self._back_propagation(loss)
+
+        Output = collections.namedtuple('Output', ['loss'])
+        return Output(loss=loss)
+
