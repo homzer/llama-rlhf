@@ -58,7 +58,7 @@ def main(
     trainer.load(ckpt_dir)
     for epoch in range(epochs):
         timer = Timer(len(dataloader), episode=100)
-        for data in tqdm(dataloader):
+        for data in dataloader:
             outputs = trainer.forward(
                 instructions=data['instruction'],
                 outputs=data['output'],
