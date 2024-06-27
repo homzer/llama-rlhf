@@ -35,6 +35,7 @@ def main(
         lora_rank=-1,
         dtype=dtype
     )
+    model.load(ckpt_dir)
 
     dataset = PairwiseDataset(f=label_file)
     if use_chat_template:
