@@ -160,6 +160,35 @@ def auto_merge_8_to_4(
         torch.save(state_dicts[i], os.path.join(save_dir, f'consolidated.0{i}.pth'))
 
 
+def auto_merge_8_to_1(
+        ckpt_dir: str,
+        save_file: str = "pytorch_model.bin",
+):
+    state_dict = merging__(
+        merging__(
+            merging__(
+                torch.load(os.path.join(ckpt_dir, "consolidated.00.pth"), map_location="cpu"),
+                torch.load(os.path.join(ckpt_dir, "consolidated.01.pth"), map_location="cpu")
+            ),
+            merging__(
+                torch.load(os.path.join(ckpt_dir, "consolidated.02.pth"), map_location="cpu"),
+                torch.load(os.path.join(ckpt_dir, "consolidated.03.pth"), map_location="cpu")
+            )
+        ),
+        merging__(
+            merging__(
+                torch.load(os.path.join(ckpt_dir, "consolidated.04.pth"), map_location="cpu"),
+                torch.load(os.path.join(ckpt_dir, "consolidated.05.pth"), map_location="cpu")
+            ),
+            merging__(
+                torch.load(os.path.join(ckpt_dir, "consolidated.06.pth"), map_location="cpu"),
+                torch.load(os.path.join(ckpt_dir, "consolidated.07.pth"), map_location="cpu")
+            )
+        )
+    )
+    torch.save(state_dict, save_file)
+
+
 def merging(
         ckpt_file1: str = 'config/13B/consolidated.00.pth',
         ckpt_file2: str = 'config/13B/consolidated.01.pth',

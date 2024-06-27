@@ -78,21 +78,21 @@ class VerifierEvaluator:
         self.meter.reset()
         datalist = []
         for data in tqdm(dataloader):
-            chosen_outs = self.generator.forward(data['instruction'], data['chosen'])
-            rejected_outs = self.generator.forward(data['instruction'], data['rejected'])
+            chosen_outputs = self.generator.forward(data['instruction'], data['chosen'])
+            rejected_outputs = self.generator.forward(data['instruction'], data['rejected'])
             for i in range(len(data['instruction'])):
-                c_reward = chosen_outs.scores[i]
-                r_reward = rejected_outs.scores[i]
+                chosen_score = chosen_outputs.scores[i]
+                rejected_score = rejected_outputs.scores[i]
                 datalist.append(dict(
                     instruction=data['instruction'][i],
                     chosen=data['chosen'][i],
                     rejected=data['rejected'][i],
-                    chosen_reward=c_reward,
-                    rejected_reward=r_reward,
-                    chosen_tokens_rewards=chosen_outs.tokens_scores[i],
-                    rejected_tokens_rewards=rejected_outs.tokens_scores[i]
+                    chosen_score=chosen_score,
+                    rejected_score=rejected_score,
+                    chosen_tokens_scores=chosen_outputs.tokens_scores[i],
+                    rejected_tokens_scores=rejected_outputs.tokens_scores[i]
                 ))
-                self.meter.forward(1 if c_reward > r_reward else 0)
+                self.meter.forward(1 if chosen_score > rejected_score else 0)
         Output = collections.namedtuple('Output', ['acc', 'datalist'])
         return Output(acc=self.meter.average, datalist=datalist)
 
