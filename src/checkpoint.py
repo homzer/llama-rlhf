@@ -164,6 +164,7 @@ def auto_merge_8_to_1(
         ckpt_dir: str,
         save_file: str = "pytorch_model.bin",
 ):
+    os.makedirs(os.path.split(save_file)[0], exist_ok=True)
     state_dict = merging__(
         merging__(
             merging__(
