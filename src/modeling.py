@@ -15,7 +15,7 @@ from src.models import (
     Qwen,
     QwenVerifier,
     Llama3,
-    LoraLlama3, LoraQwen, LoraQwenVerifier, Baichuan, BaichuanVerifier
+    LoraLlama3, LoraQwen, LoraQwenVerifier, Baichuan, BaichuanVerifier, LoraBaichuanVerifier, LoraBaichuan
 )
 from src.models.modeling_args import (
     LlamaArgs,
@@ -24,7 +24,7 @@ from src.models.modeling_args import (
     LoraMistralArgs,
     QwenArgs,
     MistralArgsHf,
-    MistralMoeArgsHf, LoraQwenArgs, BaichuanArgs
+    MistralMoeArgsHf, LoraQwenArgs, BaichuanArgs, LoraBaichuanArgs
 )
 from src.tokenizers import (
     Tokenizer,
@@ -77,7 +77,8 @@ ARGS = {
     "qwen-2-7b": QwenArgs,
     "lora-qwen-2-7b": LoraQwenArgs,
 
-    "baichuan-2-7b-chat": BaichuanArgs
+    "baichuan-2-7b-chat": BaichuanArgs,
+    "lora-baichuan-2-7b-chat": LoraBaichuanArgs
 }
 
 
@@ -120,7 +121,8 @@ MODELS = {
     "qwen-2-7b": Qwen,
     "lora-qwen-2-7b": LoraQwen,
 
-    "baichuan-2-7b-chat": Baichuan
+    "baichuan-2-7b-chat": Baichuan,
+    "lora-baichuan-2-7b-chat": LoraBaichuan
 }
 
 VERIFIERS = {
@@ -128,7 +130,8 @@ VERIFIERS = {
     "lora-llama-2-7b": LoraLlamaVerifier,
     "qwen-2-7b": QwenVerifier,
     "lora-qwen-2-7b": LoraQwenVerifier,
-    "baichuan-2-7b-chat": BaichuanVerifier
+    "baichuan-2-7b-chat": BaichuanVerifier,
+    "lora-baichuan-2-7b-chat": LoraBaichuanVerifier
 }
 
 TOKENIZERS = {

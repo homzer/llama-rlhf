@@ -219,6 +219,12 @@ class BaichuanArgs(Args):
         return super().from_json(filename)
 
 
+@dataclass
+class LoraBaichuanArgs(BaichuanArgs):
+    r: int = None  # Rank of lora
+    lora_dtype: str = "float32"
+
+
 class MistralMoeArgsHf(MistralArgsHf):
     num_local_experts: int
     num_experts_per_tok: int
