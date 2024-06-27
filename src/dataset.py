@@ -132,42 +132,60 @@ class EvoMultiOutputsDataset(MultiOutputsDataset):
 
 
 class PairwiseDataset(JsonDataset):
-    def __init__(self, f, randomize: bool = False):
+    def __init__(self, f):
         super().__init__(f)
         assert "chosen" in self.datalist[0].keys()
-        assert type(self.datalist[0]['chosen']) is list
-        assert "rejected" in self.datalist[0].keys()
-        assert type(self.datalist[0]['rejected']) is list
-        self.randomize = randomize
+        if isinstance(self.datalist[0]['chosen'], list):
+            print("Warming, chosen is a list, only first element will be used.")
+            for data in self.datalist:
+                data["chosen"] = data["chosen"][0]
+        if isinstance(self.datalist[0]['rejected'], list):
+            print("Warming, rejected is a list, only first element will be used.")
+            for data in self.datalist:
+                data["rejected"] = data["rejected"][0]
 
     def __getitem__(self, i):
         data = self.datalist[i].copy()
-        # at least one ground truth answer
-        assert len(data['chosen']) != 0
-        data['chosen'] = random.sample(data['chosen'], 1)[0]
-
-        if len(data['rejected']) == 0:  # if no rejected sample, randomly sample one.
-            rejection = random.sample(self.datalist, 1)[0]
-            while len(rejection['rejected']) == 0:
-                rejection = random.sample(self.datalist, 1)[0]
-            data['rejected'].extend(rejection['rejected'])
-
-        # 10% the time using random sampled rejection or chosen response
-        if self.randomize and random.randint(1, 10) == 1:
-            if random.randint(1, 2) == 1:
-                rejection = random.sample(self.datalist, 1)[0]
-                while len(rejection['rejected']) == 0:
-                    rejection = random.sample(self.datalist, 1)[0]
-                data['rejected'] = random.sample(rejection['rejected'], 1)[0]
-            else:
-                j = random.randint(0, len(self.datalist) - 1)
-                while j == i:
-                    j = random.randint(0, len(self.datalist) - 1)
-                data['rejected'] = random.sample(self.datalist[j]['chosen'], 1)[0]
-        else:  # 90% the time using origin rejection
-            data['rejected'] = random.sample(data['rejected'], 1)[0]
-
         return data
+
+
+# class PairwiseDataset(JsonDataset):
+#     def __init__(self, f, randomize: bool = False):
+#         super().__init__(f)
+#         assert "chosen" in self.datalist[0].keys()
+#         assert type(self.datalist[0]['chosen']) is list
+#         assert "rejected" in self.datalist[0].keys()
+#         assert type(self.datalist[0]['rejected']) is list
+#         self.randomize = randomize
+#
+#     def __getitem__(self, i):
+#         data = self.datalist[i].copy()
+#         # at least one ground truth answer
+#         assert len(data['chosen']) != 0
+#         data['chosen'] = random.sample(data['chosen'], 1)[0]
+#
+#         if len(data['rejected']) == 0:  # if no rejected sample, randomly sample one.
+#             rejection = random.sample(self.datalist, 1)[0]
+#             while len(rejection['rejected']) == 0:
+#                 rejection = random.sample(self.datalist, 1)[0]
+#             data['rejected'].extend(rejection['rejected'])
+#
+#         # 10% the time using random sampled rejection or chosen response
+#         if self.randomize and random.randint(1, 10) == 1:
+#             if random.randint(1, 2) == 1:
+#                 rejection = random.sample(self.datalist, 1)[0]
+#                 while len(rejection['rejected']) == 0:
+#                     rejection = random.sample(self.datalist, 1)[0]
+#                 data['rejected'] = random.sample(rejection['rejected'], 1)[0]
+#             else:
+#                 j = random.randint(0, len(self.datalist) - 1)
+#                 while j == i:
+#                     j = random.randint(0, len(self.datalist) - 1)
+#                 data['rejected'] = random.sample(self.datalist[j]['chosen'], 1)[0]
+#         else:  # 90% the time using origin rejection
+#             data['rejected'] = random.sample(data['rejected'], 1)[0]
+#
+#         return data
 
 
 class ReviseDataset(JsonDataset):

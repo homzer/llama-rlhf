@@ -73,7 +73,6 @@ class VerifierEvaluator:
 
     def forward(self, dataset: PairwiseDataset):
         print("Evaluating ...")
-        dataset.randomize = False
         dataloader = DataLoader(dataset, batch_size=self.batch_size)
         self.meter.reset()
         datalist = []
@@ -88,9 +87,7 @@ class VerifierEvaluator:
                     chosen=data['chosen'][i],
                     rejected=data['rejected'][i],
                     chosen_score=chosen_score,
-                    rejected_score=rejected_score,
-                    chosen_tokens_scores=chosen_outputs.tokens_scores[i],
-                    rejected_tokens_scores=rejected_outputs.tokens_scores[i]
+                    rejected_score=rejected_score
                 ))
                 self.meter.forward(1 if chosen_score > rejected_score else 0)
         Output = collections.namedtuple('Output', ['acc', 'datalist'])
