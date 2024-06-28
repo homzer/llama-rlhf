@@ -19,7 +19,8 @@ def main(
         config_file: str = None,
         dtype: str = "bfloat16",
         use_chat_template: bool = False,
-        seed: int = None
+        seed: int = None,
+        rm_reduce_strategy: str = "mean"
 ):
     os.makedirs(log_dir, exist_ok=True)
     tokenizer_file = ckpt_dir if tokenizer_file is None else tokenizer_file
@@ -41,7 +42,7 @@ def main(
     if use_chat_template:
         dataset = ChatTemplateDataset(dataset, tokenizer)
 
-    evaluator = VerifierEvaluator(model, tokenizer, max_batch_size, max_seq_len)
+    evaluator = VerifierEvaluator(model, tokenizer, max_batch_size, max_seq_len, reduce=rm_reduce_strategy)
     evaluator_outputs = evaluator.forward(dataset)
     print("Accuracy: ", evaluator_outputs.acc)
     json_dump(evaluator_outputs.datalist, os.path.join(log_dir, "results.json"), indent=4)

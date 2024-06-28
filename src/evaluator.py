@@ -65,9 +65,10 @@ class VerifierEvaluator:
             model: Union[Verifier, ParallelVerifier],
             tokenizer: Tokenizer,
             batch_size: int,
-            max_seq_len: int
+            max_seq_len: int,
+            reduce: str = "mean"
     ):
-        self.generator = GeneratorForVerifier(model, tokenizer, max_seq_len)
+        self.generator = GeneratorForVerifier(model, tokenizer, max_seq_len, reduce=reduce)
         self.meter = AverageMeter()
         self.batch_size = batch_size
 

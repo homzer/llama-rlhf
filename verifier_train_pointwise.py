@@ -3,7 +3,6 @@ import os
 import fire
 import torch
 from torch.utils.data import DataLoader
-from tqdm import tqdm
 
 from src.dataset import ChatTemplateDataset, JsonDataset
 from src.entities import Timer
