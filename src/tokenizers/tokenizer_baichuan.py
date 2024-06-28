@@ -20,7 +20,7 @@ PRETRAINED_VOCAB_FILES_MAP = {
 PRETRAINED_POSITIONAL_EMBEDDINGS_SIZES = {}
 
 
-class _BaichuanTokenizer(PreTrainedTokenizer):
+class BaiChuanTokenizer(PreTrainedTokenizer):
     """
     Construct a Baichuan tokenizer. Based on byte-level Byte-Pair-Encoding.
 
@@ -235,7 +235,7 @@ class _BaichuanTokenizer(PreTrainedTokenizer):
 
 class BaichuanTokenizer(Tokenizer):
     def __init__(self, model_dir: str):
-        self.model = _BaichuanTokenizer.from_pretrained(model_dir)
+        self.model = BaiChuanTokenizer.from_pretrained(model_dir)
         super().__init__(
             vocab_size=self.model.vocab_size,
             bos_id=self.model.bos_token_id,  # 1

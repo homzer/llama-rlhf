@@ -85,6 +85,7 @@ class GeneratorForVerifier:
         self.reduce = reduce
         assert self.reduce in ["mean", "last"]
 
+    # TODO: Duplicated code with src.trainer.ParallelVerifierTrainer.prepare_for_training()
     def _prepare_for_generation(
             self,
             instructions: Union[List[str], List[List[int]]],
