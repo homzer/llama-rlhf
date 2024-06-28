@@ -130,6 +130,6 @@ class GeneratorForVerifier:
             scores = []
             for i, score in enumerate(tokens_scores):
                 ids = examples.masks[i].nonzero()
-                scores.append(score[ids[-1].item() if len(ids) > 0 else -1].item())
+                scores.append(torch.sigmoid(score[ids[-1].item() if len(ids) > 0 else -1]).item())  # TODO
         Output = collections.namedtuple('Output', ['scores', 'tokens_scores'])
         return Output(scores=scores, tokens_scores=result_tokens_scores)
