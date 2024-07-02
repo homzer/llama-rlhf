@@ -40,10 +40,12 @@ class SlimLogits:
 
         self.values = slim_logits.values if (
                 self.values is None
-        ) else torch.cat([self.values, slim_logits.values], dim=0)
+        ) else torch.stack([*self.values, *slim_logits.values])
+        # torch.cat([self.values, slim_logits.values], dim=0)
         self.indices = slim_logits.indices if (
                 self.indices is None
-        ) else torch.cat([self.indices, slim_logits.indices], dim=0)
+        ) else torch.stack([*self.indices, *slim_logits.indices])
+        # torch.cat([self.indices, slim_logits.indices], dim=0)
 
     def __len__(self):
         if self.values is not None:

@@ -318,11 +318,16 @@ class LogitsRolloutBuffer:
             assert self.__cache_outputs is not None
             assert self.__cache_logits is not None
             assert self.__cache_output_tokens_logps is not None
-            self.instructions = np.concatenate([self.instructions, self.__cache_instructions], axis=0)
-            self.outputs = np.concatenate([self.outputs, self.__cache_outputs], axis=0)
+            # self.instructions = np.concatenate([self.instructions, self.__cache_instructions], axis=0)
+            self.instructions = np.stack([*self.instructions, *self.__cache_instructions], axis=0)
+            # self.outputs = np.concatenate([self.outputs, self.__cache_outputs], axis=0)
+            self.outputs = np.stack([*self.outputs, *self.__cache_outputs], axis=0)
             self.logits.extend(self.__cache_logits)
-            self.output_tokens_logps = np.concatenate(
-                [self.output_tokens_logps, self.__cache_output_tokens_logps], axis=0
+            # self.output_tokens_logps = np.concatenate(
+            #     [self.output_tokens_logps, self.__cache_output_tokens_logps], axis=0
+            # )
+            self.output_tokens_logps = np.stack(
+                [*self.output_tokens_logps, *self.__cache_output_tokens_logps], axis=0
             )
             self.__cache_logits = None
             self.__cache_instructions = None
@@ -381,15 +386,24 @@ class LogitsRolloutBuffer:
                     self.__cache_logits = rollout_buffer.logits
                     self.__cache_output_tokens_logps = rollout_buffer.output_tokens_logps
                 else:
-                    self.__cache_instructions = np.concatenate(
-                        [self.__cache_instructions, rollout_buffer.instructions], axis=0
+                    # self.__cache_instructions = np.concatenate(
+                    #     [self.__cache_instructions, rollout_buffer.instructions], axis=0
+                    # )
+                    self.__cache_instructions = np.stack(
+                        [*self.__cache_instructions, *rollout_buffer.instructions], axis=0
                     )
-                    self.__cache_outputs = np.concatenate(
-                        [self.__cache_instructions, rollout_buffer.outputs], axis=0
+                    # self.__cache_outputs = np.concatenate(
+                    #     [self.__cache_instructions, rollout_buffer.outputs], axis=0
+                    # )
+                    self.__cache_outputs = np.stack(
+                        [*self.__cache_instructions, *rollout_buffer.outputs], axis=0
                     )
                     self.__cache_logits.extend(rollout_buffer.logits)
-                    self.__cache_output_tokens_logps = np.concatenate(
-                        [self.__cache_output_tokens_logps, rollout_buffer.output_tokens_logps], axis=0
+                    # self.__cache_output_tokens_logps = np.concatenate(
+                    #     [self.__cache_output_tokens_logps, rollout_buffer.output_tokens_logps], axis=0
+                    # )
+                    self.__cache_output_tokens_logps = np.stack(
+                        [*self.__cache_output_tokens_logps, *rollout_buffer.output_tokens_logps], axis=0
                     )
                 if len(self.__cache_instructions) > 1000:
                     self.__flush()
