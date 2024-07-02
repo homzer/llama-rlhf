@@ -189,7 +189,7 @@ class LastTokenScoreLoss(Loss):
 
 
 class DpoLoss(Loss):
-    def __init__(self, beta=1.0, logits_norm: bool = False, label_smoothing: float = 0.0, eps=1e-5):
+    def __init__(self, beta=0.1, logits_norm: bool = False, label_smoothing: float = 0.0, eps=1e-5):
         super().__init__()
         self.beta = beta
         self.label_smoothing = label_smoothing
@@ -206,7 +206,7 @@ class DpoLoss(Loss):
         if masks is None:
             masks = torch.ones_like(log_probs)
         masks = masks.to(logits.device)
-        log_probs = (log_probs * masks).sum(-1) / (masks.sum(-1) + self.eps)
+        log_probs = (log_probs * masks).sum(-1)  # / (masks.sum(-1) + self.eps)
 
         reference_log_probs = 0
         if reference_logits is not None:
@@ -216,7 +216,7 @@ class DpoLoss(Loss):
             reference_log_probs = torch.gather(reference_log_probs, dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
             # NaN might appear because the logits chosen by the label might be negative infinity.
             reference_log_probs = torch.clamp(reference_log_probs, min=-1e5, max=1e5)
-            reference_log_probs = (reference_log_probs * masks).sum(-1) / (masks.sum(-1) + self.eps)
+            reference_log_probs = (reference_log_probs * masks).sum(-1)  # / (masks.sum(-1) + self.eps)
 
         return log_probs, reference_log_probs
 
@@ -263,6 +263,7 @@ class DpoLoss(Loss):
         )
 
         log_probs = (chosen_log_probs - rejected_log_probs) - (reference_chosen_log_probs - reference_rejected_log_probs)
+        # (chosen_log_probs - reference_chosen_log_probs) - (rejected_log_probs - reference_rejected_log_probs)
         loss = (
             - F.logsigmoid(self.beta * log_probs) * (1 - self.label_smoothing)
             - F.logsigmoid(- self.beta * log_probs) * self.label_smoothing
