@@ -260,7 +260,10 @@ class AttentionForCausalLM(nn.Module):
         scores = torch.matmul(xq, xk.transpose(2, 3)) / math.sqrt(head_dim)
         if mask is not None:
             scores = scores + mask  # (bs, n_local_heads, slen, cache_len + slen)
-        scores = F.softmax(scores.float(), dim=-1).type_as(xq)
+        if scores.dtype == torch.float16:
+            scores = F.softmax(scores.float(), dim=-1).type_as(xq)
+        else:
+            scores = F.softmax(scores, dim=-1)
         output = torch.matmul(scores, xv)  # (bs, n_local_heads, slen, head_dim)
         output = output.transpose(1, 2).contiguous().view(bsz, seqlen, -1)
         return output
