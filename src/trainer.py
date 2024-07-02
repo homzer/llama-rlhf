@@ -466,6 +466,7 @@ class ParallelSolverDpoTrainer(ParallelSolverTrainer):
             tokenizer: Tokenizer,
             optimizer: torch.optim.Optimizer,
             max_seq_len: int,
+            ce_coef: float = 1.0,
             accumulation_steps: int = 1
     ):
         super().__init__(
@@ -475,6 +476,7 @@ class ParallelSolverDpoTrainer(ParallelSolverTrainer):
             max_seq_len=max_seq_len,
             accumulation_steps=accumulation_steps
         )
+        self.ce_coef = ce_coef
         self.criterion_ce = nn.CrossEntropyLoss(ignore_index=-100)
         self.criterion_dpo = DpoLoss()
 
@@ -503,7 +505,7 @@ class ParallelSolverDpoTrainer(ParallelSolverTrainer):
             reference_rejected_logits=reference_rejected_logits
         )
 
-        ce_loss = self.criterion_ce.forward(
+        ce_loss = self.ce_coef * self.criterion_ce.forward(
             input=chosen_logits.view(-1, chosen_logits.size(-1)),
             target=chosen_examples.labels.view(-1).to(chosen_logits.device)
         )
