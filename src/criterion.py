@@ -220,6 +220,7 @@ class DpoLoss(Loss):
             # NaN might appear because the logits chosen by the label might be negative infinity.
             ref_log_probs = torch.clamp(ref_log_probs, min=-1e5, max=1e5)
         if ref_log_probs is not None:
+            ref_log_probs = ref_log_probs.to(logits)
             ref_log_probs = (ref_log_probs * masks).sum(-1)  # / (masks.sum(-1) + self.eps)
         else:
             ref_log_probs = 0.0
