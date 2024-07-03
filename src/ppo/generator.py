@@ -198,7 +198,9 @@ class LogitsGeneratorForCausalLM:
         logits = self._model_forward(prep_outputs.tokens).logits
         
         # retrieve token probs
-        tokens_logps = torch.log_softmax(logits.float(), dim=-1).type_as(logits)
+        tokens_logps = torch.log_softmax(
+            logits.float() if logits.dtype == torch.float16 else logits, dim=-1
+        ).type_as(logits)
         labels = prep_outputs.labels.to(logits.device).long()
         labels[labels == -100] = 0
         tokens_logps = torch.gather(tokens_logps, dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)

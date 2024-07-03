@@ -198,7 +198,9 @@ class DpoLoss(Loss):
 
     def _prepare_for_loss(self, logits, labels, masks, reference_logits):
         logits = self._norm(logits) if self.logits_norm else logits
-        log_probs = torch.log_softmax(logits.float(), dim=-1).type_as(logits)
+        log_probs = torch.log_softmax(
+            logits.float() if logits.dtype == torch.float16 else logits, dim=-1
+        ).type_as(logits)
         labels = labels.to(logits.device).long()
         labels[labels == -100] = 0
         # [b, s]
@@ -212,7 +214,9 @@ class DpoLoss(Loss):
         if reference_logits is not None:
             reference_logits = reference_logits.to(logits)
             reference_logits = self._norm(reference_logits) if self.logits_norm else reference_logits
-            reference_log_probs = torch.log_softmax(reference_logits.float(), dim=-1).type_as(reference_logits)
+            reference_log_probs = torch.log_softmax(
+                reference_logits.float() if reference_logits.dtype == torch.float16 else reference_logits, dim=-1
+            ).type_as(reference_logits)
             reference_log_probs = torch.gather(reference_log_probs, dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
             # NaN might appear because the logits chosen by the label might be negative infinity.
             reference_log_probs = torch.clamp(reference_log_probs, min=-1e5, max=1e5)
