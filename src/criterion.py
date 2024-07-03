@@ -196,7 +196,7 @@ class DpoLoss(Loss):
         self.eps = eps
         self.logits_norm = logits_norm
 
-    def _prepare_for_loss(self, logits, labels, masks, reference_logits):
+    def _prepare_for_loss(self, logits, labels, masks, ref_log_probs=None, ref_logits=None):
         logits = self._norm(logits) if self.logits_norm else logits
         log_probs = torch.log_softmax(
             logits.float() if logits.dtype == torch.float16 else logits, dim=-1
@@ -210,19 +210,21 @@ class DpoLoss(Loss):
         masks = masks.to(logits.device)
         log_probs = (log_probs * masks).sum(-1)  # / (masks.sum(-1) + self.eps)
 
-        reference_log_probs = 0
-        if reference_logits is not None:
-            reference_logits = reference_logits.to(logits)
-            reference_logits = self._norm(reference_logits) if self.logits_norm else reference_logits
-            reference_log_probs = torch.log_softmax(
-                reference_logits.float() if reference_logits.dtype == torch.float16 else reference_logits, dim=-1
-            ).type_as(reference_logits)
-            reference_log_probs = torch.gather(reference_log_probs, dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
+        if ref_log_probs is None and ref_logits is not None:
+            ref_logits = ref_logits.to(logits)
+            ref_logits = self._norm(ref_logits) if self.logits_norm else ref_logits
+            ref_log_probs = torch.log_softmax(
+                ref_logits.float() if ref_logits.dtype == torch.float16 else ref_logits, dim=-1
+            ).type_as(ref_logits)
+            ref_log_probs = torch.gather(ref_log_probs, dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
             # NaN might appear because the logits chosen by the label might be negative infinity.
-            reference_log_probs = torch.clamp(reference_log_probs, min=-1e5, max=1e5)
-            reference_log_probs = (reference_log_probs * masks).sum(-1)  # / (masks.sum(-1) + self.eps)
+            ref_log_probs = torch.clamp(ref_log_probs, min=-1e5, max=1e5)
+        if ref_log_probs is not None:
+            ref_log_probs = (ref_log_probs * masks).sum(-1)  # / (masks.sum(-1) + self.eps)
+        else:
+            ref_log_probs = 0.0
 
-        return log_probs, reference_log_probs
+        return log_probs, ref_log_probs
 
     def _norm(self, x: torch.Tensor, dim: int = -1):
         return x / (x.std(dim=dim, keepdim=True) + self.eps)
@@ -235,8 +237,10 @@ class DpoLoss(Loss):
             rejected_labels: torch.Tensor,
             chosen_masks: torch.Tensor = None,
             rejected_masks: torch.Tensor = None,
-            reference_chosen_logits: torch.Tensor = None,
-            reference_rejected_logits: torch.Tensor = None,
+            ref_chosen_log_probs: torch.Tensor = None,
+            ref_rejected_log_probs: torch.Tensor = None,
+            ref_chosen_logits: torch.Tensor = None,
+            ref_rejected_logits: torch.Tensor = None,
     ):
         """
         Compute Dpo loss.
@@ -246,28 +250,32 @@ class DpoLoss(Loss):
         :param rejected_labels: [batch_size, seq_len], rejected token ids.
         :param chosen_masks: [batch_size, seq_len] with values of `True` or `False`.
         :param rejected_masks: [batch_size, seq_len] with values of `True` or `False`.
-        :param reference_chosen_logits: [batch_size, seq_len, vocab_size] from reference model.
-        :param reference_rejected_logits: [batch_size, seq_len, vocab_size] from reference model.
+        :param ref_chosen_logits: [batch_size, seq_len, vocab_size] from reference model.
+        :param ref_rejected_logits: [batch_size, seq_len, vocab_size] from reference model.
+        :param ref_chosen_log_probs: [batch_size, seq_len] from reference model. If not provided, computed from ref_chosen_logits.
+        :param ref_rejected_log_probs: [batch_size, seq_len] from reference model. If not provided, computed from ref_rejected_logits.
         :return: Scalar loss tensor.
         """
-        assert not ((reference_chosen_logits is None) ^ (reference_rejected_logits is None))
+        assert not ((ref_chosen_logits is None) ^ (ref_rejected_logits is None))
 
-        chosen_log_probs, reference_chosen_log_probs = self._prepare_for_loss(
+        chosen_log_probs, ref_chosen_log_probs = self._prepare_for_loss(
             logits=chosen_logits,
             labels=chosen_labels,
             masks=chosen_masks,
-            reference_logits=reference_chosen_logits
+            ref_log_probs=ref_chosen_log_probs,
+            ref_logits=ref_chosen_logits
         )
 
-        rejected_log_probs, reference_rejected_log_probs = self._prepare_for_loss(
+        rejected_log_probs, ref_rejected_log_probs = self._prepare_for_loss(
             logits=rejected_logits,
             labels=rejected_labels,
             masks=rejected_masks,
-            reference_logits=reference_rejected_logits
+            ref_log_probs=ref_rejected_log_probs,
+            ref_logits=ref_rejected_logits
         )
 
-        log_probs = (chosen_log_probs - rejected_log_probs) - (reference_chosen_log_probs - reference_rejected_log_probs)
-        # (chosen_log_probs - reference_chosen_log_probs) - (rejected_log_probs - reference_rejected_log_probs)
+        log_probs = (chosen_log_probs - rejected_log_probs) - (ref_chosen_log_probs - ref_rejected_log_probs)
+        # (chosen_log_probs - ref_chosen_log_probs) - (rejected_log_probs - ref_rejected_log_probs)
         loss = (
             - F.logsigmoid(self.beta * log_probs) * (1 - self.label_smoothing)
             - F.logsigmoid(- self.beta * log_probs) * self.label_smoothing

@@ -485,6 +485,8 @@ class ParallelSolverDpoTrainer(ParallelSolverTrainer):
             instructions: List[str],
             chosen: List[str],
             rejected: List[str],
+            reference_chosen_log_probs: torch.Tensor = None,
+            reference_rejected_log_probs: torch.Tensor = None,
             reference_chosen_logits: torch.Tensor = None,
             reference_rejected_logits: torch.Tensor = None
     ):
@@ -501,8 +503,10 @@ class ParallelSolverDpoTrainer(ParallelSolverTrainer):
             rejected_labels=rejected_examples.labels,
             chosen_masks=chosen_examples.masks,
             rejected_masks=rejected_examples.masks,
-            reference_chosen_logits=reference_chosen_logits,
-            reference_rejected_logits=reference_rejected_logits
+            ref_chosen_log_probs=reference_chosen_log_probs,
+            ref_rejected_log_probs=reference_rejected_log_probs,
+            ref_chosen_logits=reference_chosen_logits,
+            ref_rejected_logits=reference_rejected_logits
         )
 
         ce_loss = self.ce_coef * self.criterion_ce.forward(
