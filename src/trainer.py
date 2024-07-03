@@ -517,7 +517,7 @@ class ParallelSolverDpoTrainer(ParallelSolverTrainer):
             )
             loss += ce_loss
         else:
-            ce_loss = 0
+            ce_loss = torch.tensor(0)
 
         self._back_propagation(loss)
 
