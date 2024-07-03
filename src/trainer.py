@@ -508,13 +508,17 @@ class ParallelSolverDpoTrainer(ParallelSolverTrainer):
             ref_chosen_logits=reference_chosen_logits,
             ref_rejected_logits=reference_rejected_logits
         )
+        loss = dpo_loss
 
-        ce_loss = self.ce_coef * self.criterion_ce.forward(
-            input=chosen_logits.view(-1, chosen_logits.size(-1)),
-            target=chosen_examples.labels.view(-1).to(chosen_logits.device)
-        )
+        if self.ce_coef != 0:
+            ce_loss = self.ce_coef * self.criterion_ce.forward(
+                input=chosen_logits.view(-1, chosen_logits.size(-1)),
+                target=chosen_examples.labels.view(-1).to(chosen_logits.device)
+            )
+            loss += ce_loss
+        else:
+            ce_loss = 0
 
-        loss = dpo_loss + ce_loss
         self._back_propagation(loss)
 
         Output = collections.namedtuple('Output', ['logits', 'loss', 'loss_dpo', 'loss_ce'])
