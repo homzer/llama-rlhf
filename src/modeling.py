@@ -68,17 +68,11 @@ ARGS = {
     "mistral-7b-instruct-v0.2": MistralArgsHf,
     "mixtral-8x7b-instruct-v0.1": MistralMoeArgsHf,
 
-    "qwen-7b": QwenArgs,
-    "qwen-14b": QwenArgs,
-    "qwen-72b": QwenArgs,
-    "qwen-7b-chat": QwenArgs,
-    "qwen-14b-chat": QwenArgs,
-    "qwen-72b-chat": QwenArgs,
-    "qwen-2-7b": QwenArgs,
-    "lora-qwen-2-7b": LoraQwenArgs,
+    "qwen": QwenArgs,
+    "lora-qwen": LoraQwenArgs,
 
-    "baichuan-2-7b-chat": BaichuanArgs,
-    "lora-baichuan-2-7b-chat": LoraBaichuanArgs
+    "baichuan": BaichuanArgs,
+    "lora-baichuan": LoraBaichuanArgs
 }
 
 
@@ -112,26 +106,20 @@ MODELS = {
     "mistral-7b-instruct-v0.2": MistralHf,
     "mixtral-8x7b-instruct-v0.1": MistralMoeHf,
 
-    "qwen-7b": Qwen,
-    "qwen-14b": Qwen,
-    "qwen-72b": Qwen,
-    "qwen-7b-chat": Qwen,
-    "qwen-14b-chat": Qwen,
-    "qwen-72b-chat": Qwen,
-    "qwen-2-7b": Qwen,
-    "lora-qwen-2-7b": LoraQwen,
+    "qwen": Qwen,
+    "lora-qwen": LoraQwen,
 
-    "baichuan-2-7b-chat": Baichuan,
-    "lora-baichuan-2-7b-chat": LoraBaichuan
+    "baichuan": Baichuan,
+    "lora-baichuan": LoraBaichuan
 }
 
 VERIFIERS = {
     "llama-2-7b": LlamaVerifier,
     "lora-llama-2-7b": LoraLlamaVerifier,
-    "qwen-2-7b": QwenVerifier,
-    "lora-qwen-2-7b": LoraQwenVerifier,
-    "baichuan-2-7b-chat": BaichuanVerifier,
-    "lora-baichuan-2-7b-chat": LoraBaichuanVerifier
+    "qwen": QwenVerifier,
+    "lora-qwen": LoraQwenVerifier,
+    "baichuan": BaichuanVerifier,
+    "lora-baichuan": LoraBaichuanVerifier
 }
 
 TOKENIZERS = {
@@ -150,12 +138,8 @@ TOKENIZERS = {
     "mistral-7b-instruct-v0.2": MistralChatTokenizer,
     "mixtral-8x7b-instruct-v0.1": MistralChatTokenizer,
 
-    "qwen-7b": QwenTokenizer,
-    "qwen-14b": QwenTokenizer,
-    "qwen-72b": QwenTokenizer,
-    "qwen-2-7b": QwenTokenizer,
-
-    "baichuan-2-7b-chat": BaichuanTokenizer
+    "qwen": QwenTokenizer,
+    "baichuan": BaichuanTokenizer
 }
 
 

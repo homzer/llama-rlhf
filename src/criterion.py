@@ -188,6 +188,52 @@ class LastTokenScoreLoss(Loss):
         return loss / bzs
 
 
+class SimPoLoss(Loss):
+    def __init__(self, beta: float = 2.0, gamma: float = 1.0, eps: float = 1e-5):
+        super().__init__()
+        self.beta = beta
+        self.gamma = gamma
+        self.eps = eps
+
+    def prepare_for_loss(self, logits, labels, masks):
+        log_probs = torch.log_softmax(
+            logits.float() if logits.dtype == torch.float16 else logits, dim=-1
+        ).type_as(logits)
+        labels = labels.to(logits.device).long()
+        labels[labels == -100] = 0
+        # [b, s]
+        log_probs = torch.gather(log_probs, dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
+        if masks is None:
+            masks = torch.ones_like(log_probs)
+        masks = masks.to(logits.device)
+        log_probs = (log_probs * masks).sum(-1) / (masks.sum(-1) + self.eps)  # [b]
+        return log_probs
+
+    def forward(
+            self,
+            chosen_logits: torch.Tensor,
+            rejected_logits: torch.Tensor,
+            chosen_labels: torch.Tensor,
+            rejected_labels: torch.Tensor,
+            chosen_masks: torch.Tensor = None,
+            rejected_masks: torch.Tensor = None,
+    ):
+        chosen_log_probs = self.prepare_for_loss(
+            logits=chosen_logits,
+            labels=chosen_labels,
+            masks=chosen_masks,
+        )
+
+        rejected_log_probs = self.prepare_for_loss(
+            logits=rejected_logits,
+            labels=rejected_labels,
+            masks=rejected_masks,
+        )
+
+        loss = - F.logsigmoid(self.beta * (chosen_log_probs - rejected_log_probs) - self.gamma)
+        return loss.mean()
+
+
 class DpoLoss(Loss):
     def __init__(self, beta=0.1, logits_norm: bool = False, label_smoothing: float = 0.0, eps=1e-5):
         super().__init__()
@@ -196,7 +242,7 @@ class DpoLoss(Loss):
         self.eps = eps
         self.logits_norm = logits_norm
 
-    def _prepare_for_loss(self, logits, labels, masks, ref_log_probs=None, ref_logits=None):
+    def prepare_for_loss(self, logits, labels, masks, ref_log_probs=None, ref_logits=None):
         logits = self._norm(logits) if self.logits_norm else logits
         log_probs = torch.log_softmax(
             logits.float() if logits.dtype == torch.float16 else logits, dim=-1
@@ -259,7 +305,7 @@ class DpoLoss(Loss):
         """
         assert not ((ref_chosen_logits is None) ^ (ref_rejected_logits is None))
 
-        chosen_log_probs, ref_chosen_log_probs = self._prepare_for_loss(
+        chosen_log_probs, ref_chosen_log_probs = self.prepare_for_loss(
             logits=chosen_logits,
             labels=chosen_labels,
             masks=chosen_masks,
@@ -267,7 +313,7 @@ class DpoLoss(Loss):
             ref_logits=ref_chosen_logits
         )
 
-        rejected_log_probs, ref_rejected_log_probs = self._prepare_for_loss(
+        rejected_log_probs, ref_rejected_log_probs = self.prepare_for_loss(
             logits=rejected_logits,
             labels=rejected_labels,
             masks=rejected_masks,
