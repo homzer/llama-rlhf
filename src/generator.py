@@ -86,7 +86,7 @@ class GeneratorForVerifier:
         assert self.reduce in ["mean", "last"]
 
     # TODO: Duplicated code with src.trainer.ParallelVerifierTrainer.prepare_for_training()
-    def _prepare_for_generation(
+    def prepare_for_generation(
             self,
             instructions: Union[List[str], List[List[int]]],
             outputs: Union[List[str], List[List[int]]]
@@ -118,7 +118,7 @@ class GeneratorForVerifier:
 
     def forward(self, instructions: Union[List[str], List[List[int]]], outputs: Union[List[str], List[List[int]]]):
         self.model.eval()
-        examples = self._prepare_for_generation(instructions, outputs)
+        examples = self.prepare_for_generation(instructions, outputs)
         with torch.no_grad():
             tokens_scores = self.model.forward(examples.tokens).scores
         tokens_scores = tokens_scores.detach().cpu()
