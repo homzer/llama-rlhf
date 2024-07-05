@@ -154,22 +154,7 @@ class LogitsGeneratorForCausalLM:
         self.max_seq_len = max_seq_len
         self.tokenizer = tokenizer
 
-    # def _truncating_strategy(self, instruction_ids, output_ids):
-    #     """ TODO: duplicated code with `Trainer` """
-    #     instruction_length = len(instruction_ids)
-    #     output_length = len(output_ids)
-    #     if instruction_length >= self.max_seq_len:
-    #         print(f'WARNING: Length of instruction {instruction_length} '
-    #               f'exceeds the max input length {self.max_seq_len}')
-    #         instruction_ids = instruction_ids[:self.max_seq_len]
-    #         instruction_length = len(instruction_ids)
-    #     sequence_length = instruction_length + output_length
-    #     if sequence_length > self.max_seq_len:
-    #         exceed_length = sequence_length - self.max_seq_len
-    #         output_ids = output_ids[:-exceed_length]
-    #     return instruction_ids, output_ids
-
-    def _prepare_for_generation(self, instructions, outputs):
+    def prepare_for_generation(self, instructions, outputs):
         """ TODO: duplicated code with `ParallelSolverTrainer().prepare_for_generation()` """
         bsz = len(instructions)
         tokens = torch.full((bsz, self.max_seq_len), self.tokenizer.pad_id).long()
@@ -185,7 +170,7 @@ class LogitsGeneratorForCausalLM:
         Output = collections.namedtuple('Outputs', ['tokens', 'labels', 'masks'])
         return Output(tokens=tokens, labels=labels, masks=masks)
 
-    def _model_forward(self, tokens):
+    def model_forward(self, tokens):
         with torch.no_grad():
             outputs = self.model.forward(tokens)
 
@@ -194,8 +179,8 @@ class LogitsGeneratorForCausalLM:
 
     def forward(self, instructions: List[str], outputs: List[str]) -> LogitsGeneratorOutputs:
         self.model.eval()
-        prep_outputs = self._prepare_for_generation(instructions, outputs)
-        logits = self._model_forward(prep_outputs.tokens).logits
+        prep_outputs = self.prepare_for_generation(instructions, outputs)
+        logits = self.model_forward(prep_outputs.tokens).logits
         
         # retrieve token probs
         tokens_logps = torch.log_softmax(
@@ -207,31 +192,6 @@ class LogitsGeneratorForCausalLM:
         tokens_logps = tokens_logps * prep_outputs.masks.to(logits.device)  # [b, s]
         
         return LogitsGeneratorOutputs(logits, tokens_logps)
-
-
-# TODO: Deprecate
-class LogitsGeneratorForCausalLMV0(SolverGeneratorForCausalLM):
-    def __init__(
-            self,
-            model: Union[ModelForCausalLM, ParallelModelForCausalLM],
-            tokenizer: Tokenizer,
-            max_seq_len: int,
-    ):
-        super().__init__(model=model, tokenizer=tokenizer, max_seq_len=max_seq_len)
-
-    def _model_forward(self, tokens, input_masks=None, start_pos=None, t=0.0, p=0.8):
-        tokens = tokens.clone()
-        with torch.no_grad():
-            outputs = self.model.forward(tokens)
-
-        Outputs = collections.namedtuple('Outputs', ['logits'])
-        return Outputs(logits=outputs.logits)
-
-    def forward(self, instructions: List[str], t: float = 0.0, p: float = 0.8) -> LogitsGeneratorOutputs:
-        self.model.eval()
-        prep_outputs = self._prepare_for_generation(instructions, eos=True)
-        forward_outputs = self._model_forward(prep_outputs.tokens)
-        return LogitsGeneratorOutputs(forward_outputs.logits, tokens_logps=None)
 
 
 class ActorGeneratorForCausalLM(SolverGeneratorForCausalLM):

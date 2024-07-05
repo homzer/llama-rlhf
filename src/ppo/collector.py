@@ -13,13 +13,12 @@ from src.ppo.buffer import (
     ActorRolloutBuffer,
     SolverRolloutBuffer,
     LogitsRolloutBuffer,
-    LogitsRolloutBufferV0, OutputRolloutBuffer)
+    OutputRolloutBuffer)
 from src.ppo.generator import (
     CriticGeneratorForCausalLM,
     ActorGeneratorForCausalLM,
     SolverGeneratorForCausalLM,
-    LogitsGeneratorForCausalLM,
-    LogitsGeneratorForCausalLMV0)
+    LogitsGeneratorForCausalLM)
 from src.ppo.policy import AbstractPolicyForCausalLM, AbstractParallelPolicyForCausalLM
 from src.tokenizers.tokenizer import Tokenizer
 
@@ -204,20 +203,3 @@ class LogitsBufferCollector:
             output_tokens_logps=generator_outputs.tokens_logps,
             logits_topk=self.logits_topk
         )
-
-
-# TODO: Deprecate
-class LogitsBufferCollectorV0:
-    def __init__(
-            self,
-            model: Union[ModelForCausalLM, ParallelModelForCausalLM],
-            tokenizer: Tokenizer,
-            max_seq_len: int
-    ):
-        self.generator = LogitsGeneratorForCausalLMV0(
-            model=model, tokenizer=tokenizer, max_seq_len=max_seq_len
-        )
-
-    def forward(self, instructions: List[str]) -> LogitsRolloutBufferV0:
-        outputs = self.generator.forward(instructions)
-        return LogitsRolloutBufferV0(instructions=instructions, logits=outputs.logits)
