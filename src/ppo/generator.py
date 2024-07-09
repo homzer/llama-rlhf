@@ -10,7 +10,7 @@ from src.tokenizers import Tokenizer
 from src.utils import sample_top_p, truncate
 
 ActionGeneratorOutputs = collections.namedtuple("ActionGeneratorOutputs", [
-    'outputs', 'hidden_states', 'obs', 'actions', 'action_logits', 'action_masks'
+    'outputs', 'obs', 'actions', 'action_logits', 'action_masks'
 ])
 
 SolverGeneratorOutputs = collections.namedtuple("SolverGeneratorOutputs", [
@@ -207,21 +207,16 @@ class ActorGeneratorForCausalLM(SolverGeneratorForCausalLM):
         bsz = tokens.shape[0]
         prev_pos = 0
         tokens = tokens.clone()
-        hidden_states = None
         unfinished_sequences = torch.ones(size=[bsz], dtype=torch.long, device=self.model.device())
-        # logits = torch.zeros((*tokens.shape, self.vocab_size))
         tokens_logits = torch.zeros(tokens.shape)
         for cur_pos in range(start_pos, self.max_seq_len):
+            if torch.all(input_masks[:, cur_pos][unfinished_sequences == 1]):
+                print(f"Skipping {cur_pos} ...")
+                continue  # nothing to be generated
             with torch.no_grad():
                 outputs = self.model.forward(
                     tokens[:, prev_pos: cur_pos], prev_pos, use_cache=True
                 )
-            if hidden_states is None:
-                hidden_states = torch.zeros(
-                    (*tokens.shape, outputs.hidden_states.shape[-1]),
-                    device=self.model.device()
-                )
-            hidden_states[:, prev_pos: cur_pos, :] = outputs.hidden_states
             # logits = logits.to(outputs.logits)
             # logits[:, prev_pos: cur_pos, :] = outputs.logits
             next_tokens = sampling_strategy(outputs.logits, t, p)
@@ -242,9 +237,8 @@ class ActorGeneratorForCausalLM(SolverGeneratorForCausalLM):
                 break
 
         self.model.flush()
-        Outputs = collections.namedtuple("Outputs", [
-            'tokens', 'hidden_states', 'tokens_logits'])
-        return Outputs(tokens=tokens, hidden_states=hidden_states, tokens_logits=tokens_logits)
+        Outputs = collections.namedtuple("Outputs", ['tokens', 'tokens_logits'])
+        return Outputs(tokens=tokens, tokens_logits=tokens_logits)
 
     def forward(self, instructions: List[str], t: float = 0.0, p: float = 0.8) -> ActionGeneratorOutputs:
         self.model.eval()
@@ -261,7 +255,6 @@ class ActorGeneratorForCausalLM(SolverGeneratorForCausalLM):
         output_tokens[:, :-1] = forward_outputs.tokens[:, 1:]
         return ActionGeneratorOutputs(
             outputs=outputs,
-            hidden_states=forward_outputs.hidden_states,
             obs=forward_outputs.tokens,
             actions=output_tokens,
             action_logits=forward_outputs.tokens_logits,

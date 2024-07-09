@@ -11,7 +11,7 @@ from src.modeling import get_parallel_model, get_parallel_verifier
 from src.ppo.buffer import CriticRolloutBuffer, RolloutBuffer, ActorRolloutBuffer
 from src.ppo.collector import CriticBufferCollector, ActorBufferCollector
 from src.ppo.trainer import ParallelActorTrainerForCausalLM, ParallelCriticTrainerForCausalLM
-from src.utils import setup_model_parallel, set_barrier, masked_mean
+from src.utils import setup_model_parallel, set_barrier, masked_mean, json_load
 
 
 def run(
@@ -35,7 +35,7 @@ def run(
         max_batch_size: int = 1,
         max_eval_batch_size: int = 12,
         max_seq_len: int = 4096,
-        epochs: int = 1,
+        chunk_size: int = 1000,
         inner_epochs: int = 2,
         lr: float = 1e-5,
         dtype: str = "bfloat16",
@@ -54,8 +54,11 @@ def run(
     verifier_config_file = verifier_config_file if verifier_config_file else verifier_ckpt_dir
     verifier_tokenizer_file = verifier_tokenizer_file if verifier_tokenizer_file else verifier_ckpt_dir
 
-    dataset = JsonDataset(f=train_file)
+    datalist = json_load(train_file)
+    epochs = len(datalist) // chunk_size
     for epoch in range(epochs):
+        print(f"Epoch - {epoch} of {epochs}")
+        dataset = JsonDataset(f=datalist[epoch * chunk_size: (epoch + 1) * chunk_size])
         # Collecting actor buffer
         actor, actor_tokenizer = get_parallel_model(
             model_type=actor_model_type,
