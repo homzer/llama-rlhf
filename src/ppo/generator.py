@@ -210,9 +210,9 @@ class ActorGeneratorForCausalLM(SolverGeneratorForCausalLM):
         unfinished_sequences = torch.ones(size=[bsz], dtype=torch.long, device=self.model.device())
         tokens_logits = torch.zeros(tokens.shape)
         for cur_pos in range(start_pos, self.max_seq_len):
-            if torch.all(input_masks[:, cur_pos][unfinished_sequences == 1]):
-                print(f"Skipping {cur_pos} ...")
-                continue  # nothing to be generated
+            # if torch.all(input_masks[:, cur_pos][unfinished_sequences == 1]):
+            #     print(f"Skipping {cur_pos} ...")
+            #     continue  # nothing to be generated
             with torch.no_grad():
                 outputs = self.model.forward(
                     tokens[:, prev_pos: cur_pos], prev_pos, use_cache=True
