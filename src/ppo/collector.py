@@ -40,11 +40,11 @@ class BufferCollector:
         bzs = len(instructions)
         with torch.no_grad():
             policy_outputs = self.policy.forward(instructions)
-        obs = policy_outputs.obs.cpu().numpy()
-        actions = policy_outputs.actions.cpu().numpy()
-        values = policy_outputs.values.cpu().numpy()
-        action_logits = policy_outputs.action_logits.cpu().numpy()
-        action_masks = policy_outputs.action_masks.cpu().numpy()
+        obs = policy_outputs.obs.float().cpu().numpy()
+        actions = policy_outputs.actions.float().cpu().numpy()
+        values = policy_outputs.values.float().cpu().numpy()
+        action_logits = policy_outputs.action_logits.float().cpu().numpy()
+        action_masks = policy_outputs.action_masks.float().cpu().numpy()
 
         rewards = np.zeros((bzs, self.max_seq_len), dtype=np.float32)
         action_rewards = self.generator.forward(instructions, actions, action_masks)
@@ -72,11 +72,11 @@ class PolicyBufferCollector:
     def forward(self, instructions: List[str]) -> PolicyRolloutBuffer:
         with torch.no_grad():
             policy_outputs = self.policy.forward(instructions)
-        obs = policy_outputs.obs.cpu().numpy()
-        actions = policy_outputs.actions.cpu().numpy()
-        values = policy_outputs.values.cpu().numpy()
-        action_logits = policy_outputs.action_logits.cpu().numpy()
-        action_masks = policy_outputs.action_masks.cpu().numpy()
+        obs = policy_outputs.obs.float().cpu().numpy()
+        actions = policy_outputs.actions.float().cpu().numpy()
+        values = policy_outputs.values.float().cpu().numpy()
+        action_logits = policy_outputs.action_logits.float().cpu().numpy()
+        action_masks = policy_outputs.action_masks.float().cpu().numpy()
 
         return PolicyRolloutBuffer(instructions, obs, actions, values, action_logits, action_masks)
 
@@ -94,8 +94,8 @@ class SolverBufferCollector:
 
     def forward(self, instructions: List[str], t: float = 0.0, p: float = 0.8) -> SolverRolloutBuffer:
         outputs = self.generator.forward(instructions, t=t, p=p)
-        actions = outputs.actions.cpu().numpy()
-        action_masks = outputs.action_masks.cpu().numpy()
+        actions = outputs.actions.float().cpu().numpy()
+        action_masks = outputs.action_masks.float().cpu().numpy()
         return SolverRolloutBuffer(instructions, actions, action_masks)
 
 
@@ -128,10 +128,10 @@ class ActorBufferCollector:
 
     def forward(self, instructions: List[str], t: float = 0.0, p: float = 0.8) -> ActorRolloutBuffer:
         outputs = self.generator.forward(instructions, t=t, p=p)
-        obs = outputs.obs.cpu().numpy()
-        actions = outputs.actions.cpu().numpy()
-        action_logits = outputs.action_logits.cpu().numpy()
-        action_masks = outputs.action_masks.cpu().numpy()
+        obs = outputs.obs.float().cpu().numpy()
+        actions = outputs.actions.float().cpu().numpy()
+        action_logits = outputs.action_logits.float().cpu().numpy()
+        action_masks = outputs.action_masks.float().cpu().numpy()
         return ActorRolloutBuffer(instructions, obs, actions, action_logits, action_masks)
 
 
