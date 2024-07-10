@@ -31,16 +31,17 @@ def run(
         critic_tokenizer_file: str = None,
         verifier_config_file: str = None,
         verifier_tokenizer_file: str = None,
-        lora_rank: int = 16,
+        lora_rank: int = -1,
         max_batch_size: int = 1,
-        max_generate_batch_size: int = 24,
-        max_forward_batch_size: int = 12,
+        max_generate_batch_size: int = 48,
+        max_forward_batch_size: int = 24,
         max_seq_len: int = 4096,
-        chunk_size: int = 1000,
+        chunk_size: int = 2000,
         inner_epochs: int = 2,
         lr: float = 1e-5,
         dtype: str = "bfloat16",
         lora_dtype: str = "float32",
+        begin_epoch: int = 0,
         use_chat_template: bool = False
 ):
     local_rank, world_size = setup_model_parallel()
@@ -57,7 +58,7 @@ def run(
 
     datalist = json_load(train_file)
     epochs = len(datalist) // chunk_size
-    for epoch in range(epochs):
+    for epoch in range(begin_epoch, epochs):
         print(f"Epoch - {epoch} of {epochs}")
         dataset = JsonDataset(f=datalist[epoch * chunk_size: (epoch + 1) * chunk_size])
         # Collecting actor buffer
@@ -108,7 +109,9 @@ def run(
         critic_buffer_collector = CriticBufferCollector(critic, critic_tokenizer, max_seq_len)
         critic_rollout_buffer = CriticRolloutBuffer()
         print('Critic buffer collecting ...')
+        timer = Timer(total=len(actor_rollout_buffer) // max_forward_batch_size, episode=10)
         for data in actor_rollout_buffer.get(max_forward_batch_size):
+            timer.step()
             critic_rollout_buffer.extend(
                 critic_buffer_collector.forward(
                     data.instructions, data.actions, data.action_masks
@@ -136,7 +139,9 @@ def run(
         verifier_buffer_collector = CriticBufferCollector(verifier, verifier_tokenizer, max_seq_len)
         verifier_rollout_buffer = CriticRolloutBuffer()
         print('Reward buffer collecting ...')
+        timer = Timer(total=len(actor_rollout_buffer) // max_forward_batch_size, episode=10)
         for data in actor_rollout_buffer.get(max_forward_batch_size):
+            timer.step()
             verifier_rollout_buffer.extend(
                 verifier_buffer_collector.forward(
                     data.instructions, data.actions, data.action_masks
