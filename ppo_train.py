@@ -33,7 +33,8 @@ def run(
         verifier_tokenizer_file: str = None,
         lora_rank: int = 16,
         max_batch_size: int = 1,
-        max_eval_batch_size: int = 12,
+        max_generate_batch_size: int = 24,
+        max_forward_batch_size: int = 12,
         max_seq_len: int = 4096,
         chunk_size: int = 1000,
         inner_epochs: int = 2,
@@ -76,7 +77,7 @@ def run(
         print('Actor buffer collecting ...')
         if use_chat_template:
             dataset = ChatTemplateDataset(dataset, actor_tokenizer)
-        dataloader = DataLoader(dataset, batch_size=max_eval_batch_size)
+        dataloader = DataLoader(dataset, batch_size=max_generate_batch_size)
         timer = Timer(len(dataloader))
         for data in dataloader:
             timer.step()
@@ -107,7 +108,7 @@ def run(
         critic_buffer_collector = CriticBufferCollector(critic, critic_tokenizer, max_seq_len)
         critic_rollout_buffer = CriticRolloutBuffer()
         print('Critic buffer collecting ...')
-        for data in actor_rollout_buffer.get(max_eval_batch_size):
+        for data in actor_rollout_buffer.get(max_forward_batch_size):
             critic_rollout_buffer.extend(
                 critic_buffer_collector.forward(
                     data.instructions, data.actions, data.action_masks
@@ -135,7 +136,7 @@ def run(
         verifier_buffer_collector = CriticBufferCollector(verifier, verifier_tokenizer, max_seq_len)
         verifier_rollout_buffer = CriticRolloutBuffer()
         print('Reward buffer collecting ...')
-        for data in actor_rollout_buffer.get(max_eval_batch_size):
+        for data in actor_rollout_buffer.get(max_forward_batch_size):
             verifier_rollout_buffer.extend(
                 verifier_buffer_collector.forward(
                     data.instructions, data.actions, data.action_masks
@@ -162,13 +163,13 @@ def run(
         )
 
         torch.save({
-            'obs': rollout_buffer.obs[: max_eval_batch_size],
-            'actions': rollout_buffer.actions[: max_eval_batch_size],
-            'values': rollout_buffer.values[: max_eval_batch_size],
-            'rewards': rollout_buffer.rewards[: max_eval_batch_size],
-            'action_masks': rollout_buffer.action_masks[: max_eval_batch_size],
-            'advantages': rollout_buffer.advantages[: max_eval_batch_size],
-            'returns': rollout_buffer.returns[: max_eval_batch_size]
+            'obs': rollout_buffer.obs[: max_forward_batch_size],
+            'actions': rollout_buffer.actions[: max_forward_batch_size],
+            'values': rollout_buffer.values[: max_forward_batch_size],
+            'rewards': rollout_buffer.rewards[: max_forward_batch_size],
+            'action_masks': rollout_buffer.action_masks[: max_forward_batch_size],
+            'advantages': rollout_buffer.advantages[: max_forward_batch_size],
+            'returns': rollout_buffer.returns[: max_forward_batch_size]
         }, os.path.join(save_dir, f"buffer-{epoch}.bin"))
 
         actor, actor_tokenizer = get_parallel_model(
