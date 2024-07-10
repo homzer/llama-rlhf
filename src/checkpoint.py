@@ -2,10 +2,11 @@ import os
 import re
 from collections import OrderedDict
 from pathlib import Path
-from typing import Union
+from typing import Union, Dict
 
 import fire
 import safetensors
+import safetensors.torch as safe_torch
 import torch
 from tqdm import tqdm
 
@@ -17,6 +18,10 @@ def load_safetensors(f: str) -> OrderedDict:
         for k in reader.keys():
             state_dict[k] = reader.get_tensor(k)
     return state_dict
+
+
+def save_safetensors(state_dict: Dict[str, torch.Tensor], f: str):
+    safe_torch.save_file(state_dict, f)
 
 
 def is_parallel(name):
