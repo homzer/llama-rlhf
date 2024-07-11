@@ -117,7 +117,7 @@ class ParallelActorTrainerForCausalLM(ParallelTrainer):
     def __init__(self, actor: ParallelModelForCausalLM, optimizer: torch.optim.Optimizer):
         super().__init__(actor, optimizer)
         self.actor = actor
-        self.clip_range = 0.07
+        self.clip_range = 0.5
         self.step = 0
 
     def forward(self, rollout_data: RolloutBufferSample):
@@ -171,8 +171,6 @@ class ParallelCriticTrainerForCausalLM(ParallelTrainer):
         returns = rollout_data.returns.to(self.critic.device())
 
         values = self.critic.forward(obs).scores
-        values = values / (masked_std(values, action_masks, keepdim=True) + 1e-12)
-
         loss = self.criterion.forward(values, returns, action_masks)
         self.optimizer.zero_grad()
         loss.backward()

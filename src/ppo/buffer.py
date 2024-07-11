@@ -111,7 +111,7 @@ class RolloutBuffer:
         self.advantages = None
         self.returns = None
 
-        self.gamma = 0.99
+        self.gamma = 0.9
         self.gae_lambda = 0.8
         self.buffer_size = obs.shape[0]
         self.max_seq_len = obs.shape[1]
@@ -141,7 +141,7 @@ class RolloutBuffer:
 
         # Normalize
         self.rewards = self.rewards / (np.std(self.rewards[self.action_masks]) + 1e-12)
-        self.values = self.values / (masked_std(self.values, self.action_masks, keepdim=True) + 1e-12)
+        # self.values = self.values / (masked_std(self.values, self.action_masks, keepdim=True) + 1e-12)
 
         assert np.sum(self.rewards[~ self.action_masks]) == 0  # Check rewards correctness
 

@@ -82,7 +82,7 @@ def run(
         timer = Timer(len(dataloader))
         for data in dataloader:
             timer.step()
-            actor_rollout_buffer.extend(actor_buffer_collector.forward(data['instruction']))
+            actor_rollout_buffer.extend(actor_buffer_collector.forward(data['instruction'], t=0.98))
             print(data['instruction'][-1])
             print(actor_tokenizer.decode(
                 actor_rollout_buffer.actions[-1][actor_rollout_buffer.action_masks[-1]].tolist()
@@ -194,8 +194,8 @@ def run(
                 epoch == 0
         ) else actor_trainer.load(os.path.join(actor_save_dir, f"epoch-{epoch}"))
         print('Actor training ...')
+        timer = Timer(total=(len(rollout_buffer) // max_batch_size) * inner_epochs, episode=100)
         for inner_epoch in range(inner_epochs):
-            timer = Timer(total=len(rollout_buffer) // max_batch_size, episode=10)
             for data in rollout_buffer.get(max_batch_size):
                 timer.step()
                 trainer_outputs = actor_trainer.forward(data)
@@ -229,8 +229,8 @@ def run(
                 epoch == 0
         ) else critic_trainer.load(os.path.join(critic_save_dir, f"epoch-{epoch}"))
         print('Critic training ...')
+        timer = Timer(total=(len(rollout_buffer) // max_batch_size) * inner_epochs, episode=100)
         for inner_epoch in range(inner_epochs):
-            timer = Timer(total=len(rollout_buffer) // max_batch_size, episode=10)
             for data in rollout_buffer.get(max_batch_size):
                 timer.step()
                 trainer_outputs = critic_trainer.forward(data)
