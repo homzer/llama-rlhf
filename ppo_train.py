@@ -188,7 +188,7 @@ def run(
             dtype=dtype,
             lora_dtype=lora_dtype
         )
-        actor_optimizer = torch.optim.Adam(actor.parameters(), lr=0.1 * lr if epoch == 0 else lr)
+        actor_optimizer = torch.optim.Adam(actor.parameters(), lr=0.075 * lr if epoch <= 2 else lr)
         actor_trainer = ParallelActorTrainerForCausalLM(actor, actor_optimizer)
         actor_trainer.load_model(actor_ckpt_dir) if (
                 epoch == 0
