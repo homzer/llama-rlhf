@@ -8,7 +8,6 @@ import numpy as np
 import torch
 
 from src.entities import SlimLogits
-from src.utils import masked_std
 
 RolloutBufferSample = collections.namedtuple(
     "RolloutBufferSample", [
@@ -62,7 +61,7 @@ OutputRolloutBufferSample = collections.namedtuple(
 
 CriticRolloutBufferSample = collections.namedtuple(
     "RewardRolloutBufferSample", [
-        "scores",
+        "scores", "action_masks"
     ]
 )
 
@@ -442,55 +441,6 @@ class LogitsRolloutBuffer:
             start_idx += batch_size
 
 
-# TODO: Deprecate
-class LogitsRolloutBufferV0:
-    def __init__(self, instructions: Union[List[str], np.ndarray] = None, logits: torch.Tensor = None):
-        self.logits = None
-        self.instructions = None
-
-        if instructions is not None:
-            assert logits is not None
-            self._set(instructions, SlimLogits(logits=logits))
-
-    def __len__(self):
-        if self.instructions is not None:
-            assert len(self.instructions) == len(self.logits)
-            return len(self.logits)
-        return 0
-
-    def _set(self, instructions, logits: SlimLogits):
-        assert len(instructions) == len(logits)
-        if not isinstance(instructions, np.ndarray):
-            instructions = np.array(instructions)
-        self.instructions = instructions
-        self.logits = logits
-
-    def extend(self, rollout_buffer):
-        if len(self) == 0:
-            self._set(rollout_buffer.instructions, rollout_buffer.logits)
-        else:
-            self.instructions = np.concatenate([self.instructions, rollout_buffer.instructions], axis=0)
-            self.logits.extend(rollout_buffer.logits)
-        return self
-
-    def get(self, batch_size: int) -> Generator[LogitsRolloutBufferSample, None, None]:
-        size = len(self)
-        indices = np.arange(size)
-        start_idx = 0
-        while start_idx < size:
-            batch_indices = indices[start_idx: start_idx + batch_size]
-            logits = torch.zeros(
-                (len(batch_indices), self.logits.max_seq_len, self.logits.vocab_size), dtype=torch.float32
-            )
-            for i, bi in enumerate(batch_indices):
-                logits[i, :, :] = self.logits.fetch(bi)
-            yield LogitsRolloutBufferSampleV0(
-                instructions=self.instructions[batch_indices],
-                logits=logits
-            )
-            start_idx += batch_size
-
-
 class SolverRolloutBuffer:
     def __init__(
             self,
@@ -692,27 +642,32 @@ class ActorRolloutBuffer:
 class CriticRolloutBuffer:
     def __init__(self, scores: Union[np.ndarray, List] = None, action_masks: np.ndarray = None):
         self.scores = None
+        self.action_masks = None
         if scores is not None:
             self._set(scores, action_masks)
 
-    def _set(self, scores, action_masks=None):
-        if action_masks is None:
-            if isinstance(scores, list):
-                scores = np.array(scores)
-            assert isinstance(scores, np.ndarray)
-            self.scores = scores.copy()
-        else:
-            buffer_size = action_masks.shape[0]
-            max_seq_len = action_masks.shape[1]
-            self.scores = np.zeros((buffer_size, max_seq_len), dtype=np.float32)
-            for i in range(buffer_size):
-                self.scores[i, :][action_masks[i]] = scores[i]
+    def _set(self, scores, action_masks):
+        # if action_masks is None:
+        #     if isinstance(scores, list):
+        #         scores = np.array(scores)
+        #     assert isinstance(scores, np.ndarray)
+        #     self.scores = scores.copy()
+        # else:
+        buffer_size = action_masks.shape[0]
+        max_seq_len = action_masks.shape[1]
+        self.scores = np.zeros((buffer_size, max_seq_len), dtype=np.float32)
+        self.action_masks = np.zeros((buffer_size, max_seq_len), dtype=bool)
 
-    def extend(self, rollout_buffer):
+        for i in range(buffer_size):
+            self.scores[i, :][action_masks[i]] = scores[i]
+        self.action_masks[:, :] = action_masks.copy()
+
+    def extend(self, rollout_buffer: "CriticRolloutBuffer"):
         if self.scores is None:
-            self._set(rollout_buffer.scores)
+            self._set(rollout_buffer.scores, rollout_buffer.action_masks)
         else:
             self.scores = np.concatenate([self.scores, rollout_buffer.scores], axis=0)
+            self.action_masks = np.concatenate([self.action_masks, rollout_buffer.action_masks], axis=0)
         return self
 
     def get(self, batch_size: int) -> Generator[CriticRolloutBufferSample, None, None]:
@@ -721,5 +676,8 @@ class CriticRolloutBuffer:
         start_idx = 0
         while start_idx < size:
             batch_indices = indices[start_idx: start_idx + batch_size]
-            yield CriticRolloutBufferSample(scores=self.scores[batch_indices])
+            yield CriticRolloutBufferSample(
+                scores=self.scores[batch_indices],
+                action_masks=self.action_masks[batch_indices],
+            )
             start_idx += batch_size
