@@ -147,9 +147,6 @@ def run(
                     data.instructions, data.actions, data.action_masks
                 )
             )
-        print("Average Rewards: ", masked_mean(
-            verifier_rollout_buffer.scores, verifier_rollout_buffer.scores != 0
-        ).mean())
 
         verifier.cpu()
         del verifier
@@ -166,6 +163,8 @@ def run(
             action_logits=actor_rollout_buffer.action_logits,
             action_masks=actor_rollout_buffer.action_masks
         )
+
+        print("Average Rewards: ", masked_mean(rollout_buffer.rewards, rollout_buffer.action_masks).mean())
 
         torch.save({
             'obs': rollout_buffer.obs[: max_forward_batch_size],
