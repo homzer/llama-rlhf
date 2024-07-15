@@ -654,8 +654,13 @@ class CriticRolloutBuffer:
         self.scores = np.zeros((buffer_size, max_seq_len), dtype=np.float32)
         self.action_masks = np.zeros((buffer_size, max_seq_len), dtype=bool)
 
-        for i in range(buffer_size):
-            self.scores[i, :][action_masks[i]] = scores[i]
+        if isinstance(scores, list):
+            scores = np.array(scores)
+        assert isinstance(scores, np.ndarray)
+        self.scores = scores.copy()
+
+        # for i in range(buffer_size):
+        #     self.scores[i, :][action_masks[i]] = scores[i]
         self.action_masks[:, :] = action_masks.copy()
 
     def extend(self, rollout_buffer: "CriticRolloutBuffer"):
