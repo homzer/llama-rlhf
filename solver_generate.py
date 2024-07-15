@@ -1,3 +1,5 @@
+import os
+
 import fire
 from torch.utils.data import DataLoader
 
@@ -5,12 +7,13 @@ from src.dataset import JsonDataset, ChatTemplateDataset
 from src.entities import Timer
 from src.generator import GeneratorForCausalLM
 from src.modeling import get_parallel_model
-from src.utils import setup_model_parallel
+from src.utils import setup_model_parallel, json_dump
 
 
 def main(
         ckpt_dir: str,
         label_file: str,
+        log_dir: str,
         model_type: str = "llama-2-7b",
         max_seq_len: int = 512,
         max_batch_size: int = 1,
@@ -23,6 +26,7 @@ def main(
         dtype: str = "bfloat16",
         seed: int = None
 ):
+    os.makedirs(log_dir, exist_ok=True)
     local_rank, world_size = setup_model_parallel(seed=seed)
     if tokenizer_file is None:
         tokenizer_file = ckpt_dir
@@ -46,10 +50,17 @@ def main(
     model.load(ckpt_dir)
     generator = GeneratorForCausalLM(model, tokenizer, max_seq_len)
     timer = Timer(len(dataloader))
+    datalist = []
     for data in dataloader:
+        timer.step()
         outputs = generator.forward(data['instruction'], t=t, p=p)
         print(data['instruction'][-1] + "\n" + outputs[-1])
-        timer.step()
+        for instruction, output in zip(data["instruction"], outputs):
+            datalist.append(dict(
+                instruction=instruction,
+                output=output
+            ))
+    json_dump(datalist, os.path.join(log_dir, "results.json"), indent=4)
 
 
 if __name__ == '__main__':
