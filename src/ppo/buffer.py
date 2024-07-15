@@ -58,21 +58,11 @@ OutputRolloutBufferSample = collections.namedtuple(
     ]
 )
 
-
 CriticRolloutBufferSample = collections.namedtuple(
     "RewardRolloutBufferSample", [
         "scores", "action_masks"
     ]
 )
-
-# LogitsRolloutBufferSample = collections.namedtuple(
-#     "LogitsRolloutBufferSample", [
-#         "instructions",
-#         "logits",
-#         "actions",
-#         "action_masks"
-#     ]
-# )
 
 LogitsRolloutBufferSample = collections.namedtuple(
     "LogitsRolloutBufferSample", [
@@ -100,6 +90,9 @@ class RolloutBuffer:
             values: np.ndarray,
             action_logits: np.ndarray,
             action_masks: np.ndarray,
+            gamma: float = 0.9,
+            gae_lambda: float = 0.8,
+            reward_normalize: bool = True
     ):
         self.obs = None
         self.actions = None
@@ -110,8 +103,10 @@ class RolloutBuffer:
         self.advantages = None
         self.returns = None
 
-        self.gamma = 0.9
-        self.gae_lambda = 0.8
+        self.gamma = gamma
+        self.gae_lambda = gae_lambda
+        self.reward_normalize = reward_normalize
+
         self.buffer_size = obs.shape[0]
         self.max_seq_len = obs.shape[1]
 
@@ -138,8 +133,9 @@ class RolloutBuffer:
         self.action_logits[:, :] = action_logits.copy()
         self.action_masks[:, :] = action_masks.copy()
 
-        # Normalize
-        self.rewards = self.rewards / (np.std(self.rewards[self.action_masks]) + 1e-12)
+        if self.reward_normalize:
+            # Normalize
+            self.rewards = self.rewards / (np.std(self.rewards[self.action_masks]) + 1e-12)
         # self.values = self.values / (masked_std(self.values, self.action_masks, keepdim=True) + 1e-12)
 
         assert np.sum(self.rewards[~ self.action_masks]) == 0  # Check rewards correctness
