@@ -60,7 +60,7 @@ OutputRolloutBufferSample = collections.namedtuple(
 
 CriticRolloutBufferSample = collections.namedtuple(
     "RewardRolloutBufferSample", [
-        "scores", "action_masks"
+        "scores"
     ]
 )
 
@@ -638,37 +638,27 @@ class ActorRolloutBuffer:
 class CriticRolloutBuffer:
     def __init__(self, scores: Union[np.ndarray, List] = None, action_masks: np.ndarray = None):
         self.scores = None
-        self.action_masks = None
         if scores is not None:
             self._set(scores, action_masks)
 
-    def _set(self, scores, action_masks):
-        # if action_masks is None:
-        #     if isinstance(scores, list):
-        #         scores = np.array(scores)
-        #     assert isinstance(scores, np.ndarray)
-        #     self.scores = scores.copy()
-        # else:
-        buffer_size = action_masks.shape[0]
-        max_seq_len = action_masks.shape[1]
-        self.scores = np.zeros((buffer_size, max_seq_len), dtype=np.float32)
-        self.action_masks = np.zeros((buffer_size, max_seq_len), dtype=bool)
+    def _set(self, scores, action_masks=None):
+        if action_masks is None:
+            if isinstance(scores, list):
+                scores = np.array(scores)
+            assert isinstance(scores, np.ndarray)
+            self.scores = scores.copy()
+        else:
+            buffer_size = action_masks.shape[0]
+            max_seq_len = action_masks.shape[1]
+            self.scores = np.zeros((buffer_size, max_seq_len), dtype=np.float32)
+            for i in range(buffer_size):
+                self.scores[i, :][action_masks[i]] = scores[i]
 
-        if isinstance(scores, list):
-            scores = np.array(scores)
-        assert isinstance(scores, np.ndarray)
-        self.scores = scores.copy()
-
-        # for i in range(buffer_size):
-        #     self.scores[i, :][action_masks[i]] = scores[i]
-        self.action_masks[:, :] = action_masks.copy()
-
-    def extend(self, rollout_buffer: "CriticRolloutBuffer"):
+    def extend(self, rollout_buffer):
         if self.scores is None:
-            self._set(rollout_buffer.scores, rollout_buffer.action_masks)
+            self._set(rollout_buffer.scores)
         else:
             self.scores = np.concatenate([self.scores, rollout_buffer.scores], axis=0)
-            self.action_masks = np.concatenate([self.action_masks, rollout_buffer.action_masks], axis=0)
         return self
 
     def get(self, batch_size: int) -> Generator[CriticRolloutBufferSample, None, None]:
@@ -677,8 +667,5 @@ class CriticRolloutBuffer:
         start_idx = 0
         while start_idx < size:
             batch_indices = indices[start_idx: start_idx + batch_size]
-            yield CriticRolloutBufferSample(
-                scores=self.scores[batch_indices],
-                action_masks=self.action_masks[batch_indices],
-            )
+            yield CriticRolloutBufferSample(scores=self.scores[batch_indices])
             start_idx += batch_size
