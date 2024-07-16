@@ -135,7 +135,9 @@ class RolloutBuffer:
 
         if self.reward_normalize:
             # Normalize
-            self.rewards = self.rewards / (np.std(self.rewards[self.action_masks]) + 1e-12)
+            self.rewards = (self.rewards - np.mean(
+                self.rewards[self.action_masks])) / (
+                    np.std(self.rewards[self.action_masks]) + 1e-12)
         # self.values = self.values / (masked_std(self.values, self.action_masks, keepdim=True) + 1e-12)
 
         assert np.sum(self.rewards[~ self.action_masks]) == 0  # Check rewards correctness
@@ -654,7 +656,7 @@ class CriticRolloutBuffer:
             for i in range(buffer_size):
                 self.scores[i, :][action_masks[i]] = scores[i]
 
-    def extend(self, rollout_buffer):
+    def extend(self, rollout_buffer: "CriticRolloutBuffer"):
         if self.scores is None:
             self._set(rollout_buffer.scores)
         else:
