@@ -49,7 +49,7 @@ class SolverGeneratorForCausalLM:
         self.max_seq_len = max_seq_len
         self.tokenizer = tokenizer
 
-    def _prepare_for_generation(self, prompts: List[str], eos: bool = False):
+    def prepare_for_generation(self, prompts: List[str], eos: bool = False):
         bsz = len(prompts)
         prompt_tokens = []
         for x in prompts:
@@ -69,7 +69,7 @@ class SolverGeneratorForCausalLM:
             start_pos=min_prompt_size,
         )
 
-    def _model_forward(self, tokens, input_masks=None, start_pos=None, t=0.0, p=0.8):
+    def model_forward(self, tokens: torch.Tensor, input_masks: torch.Tensor = None, start_pos: int = None, t=0.0, p=0.8):
         bsz = tokens.shape[0]
         prev_pos = 0
         tokens = tokens.clone()
@@ -102,7 +102,7 @@ class SolverGeneratorForCausalLM:
         Outputs = collections.namedtuple("Outputs", ['tokens'])
         return Outputs(tokens=tokens)
 
-    def _get_output_masks(self, tokens, prompt_lengths):
+    def get_output_masks(self, tokens, prompt_lengths):
         output_masks = torch.full_like(tokens, fill_value=True)
         for i, t in enumerate(tokens.tolist()):
             output_masks[i][: prompt_lengths[i] - 1] = False
@@ -114,7 +114,7 @@ class SolverGeneratorForCausalLM:
                 output_masks[i][-1:] = False
         return output_masks.to(torch.bool)
 
-    def _decode_response(self, tokens, output_masks):
+    def decode_response(self, tokens, output_masks):
         responses = []
         # shift right
         shifted_output_masks = torch.full_like(output_masks, fill_value=False)
@@ -125,13 +125,13 @@ class SolverGeneratorForCausalLM:
 
     def forward(self, instructions: List[str], t: float = 0.0, p: float = 0.8) -> SolverGeneratorOutputs:
         self.model.eval()
-        prep_outputs = self._prepare_for_generation(instructions)
-        forward_outputs = self._model_forward(
+        prep_outputs = self.prepare_for_generation(instructions)
+        forward_outputs = self.model_forward(
             prep_outputs.tokens, prep_outputs.input_masks, prep_outputs.start_pos, t=t, p=p
         )
         prompt_lengths = torch.sum(prep_outputs.input_masks, dim=-1)
-        output_masks = self._get_output_masks(forward_outputs.tokens, prompt_lengths)
-        outputs = self._decode_response(forward_outputs.tokens, output_masks)
+        output_masks = self.get_output_masks(forward_outputs.tokens, prompt_lengths)
+        outputs = self.decode_response(forward_outputs.tokens, output_masks)
         # input tokens shift left to get output tokens
         output_tokens = torch.zeros_like(forward_outputs.tokens)
         output_tokens[:, :-1] = forward_outputs.tokens[:, 1:]
@@ -203,7 +203,7 @@ class ActorGeneratorForCausalLM(SolverGeneratorForCausalLM):
     ):
         super().__init__(model=model, tokenizer=tokenizer, max_seq_len=max_seq_len)
 
-    def _model_forward(self, tokens, input_masks=None, start_pos=None, t=0.0, p=0.8):
+    def model_forward(self, tokens, input_masks=None, start_pos=None, t=0.0, p=0.8):
         bsz = tokens.shape[0]
         prev_pos = 0
         tokens = tokens.clone()
@@ -242,14 +242,14 @@ class ActorGeneratorForCausalLM(SolverGeneratorForCausalLM):
 
     def forward(self, instructions: List[str], t: float = 0.0, p: float = 0.8) -> ActionGeneratorOutputs:
         self.model.eval()
-        prep_outputs = self._prepare_for_generation(instructions)
-        forward_outputs = self._model_forward(
+        prep_outputs = self.prepare_for_generation(instructions)
+        forward_outputs = self.model_forward(
             prep_outputs.tokens, prep_outputs.input_masks, prep_outputs.start_pos, t=t, p=p
         )
 
         prompt_lengths = torch.sum(prep_outputs.input_masks, dim=-1)
-        output_masks = self._get_output_masks(forward_outputs.tokens, prompt_lengths)
-        outputs = self._decode_response(forward_outputs.tokens, output_masks)
+        output_masks = self.get_output_masks(forward_outputs.tokens, prompt_lengths)
+        outputs = self.decode_response(forward_outputs.tokens, output_masks)
         # input tokens shift left to get output tokens
         output_tokens = torch.zeros_like(forward_outputs.tokens)
         output_tokens[:, :-1] = forward_outputs.tokens[:, 1:]
