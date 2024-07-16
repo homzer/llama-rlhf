@@ -41,7 +41,6 @@ ActorRolloutBufferSample = collections.namedtuple(
     ]
 )
 
-
 SolverRolloutBufferSample = collections.namedtuple(
     "SolverRolloutBufferSample", [
         "instructions",
@@ -49,7 +48,6 @@ SolverRolloutBufferSample = collections.namedtuple(
         "action_masks"
     ]
 )
-
 
 OutputRolloutBufferSample = collections.namedtuple(
     "OutputRolloutBufferSample", [
@@ -137,7 +135,7 @@ class RolloutBuffer:
             # Normalize
             self.rewards = (self.rewards - np.mean(
                 self.rewards[self.action_masks])) / (
-                    np.std(self.rewards[self.action_masks]) + 1e-12)
+                                   np.std(self.rewards[self.action_masks]) + 1e-12)
         # self.values = self.values / (masked_std(self.values, self.action_masks, keepdim=True) + 1e-12)
 
         assert np.sum(self.rewards[~ self.action_masks]) == 0  # Check rewards correctness
@@ -146,9 +144,22 @@ class RolloutBuffer:
         last_gae_lam = 0
         for step in reversed(range(self.max_seq_len - 1)):
             next_values = self.values[:, step + 1] * np.where(self.action_masks[:, step + 1], 1, 0)
+            # \delta_t = r_t + \gamma V_{t+1} - V_t
             delta = self.rewards[:, step] + self.gamma * next_values - self.values[:, step]
             last_gae_lam = delta + self.gamma * self.gae_lambda * last_gae_lam * self.action_masks[:, step + 1]
+            # A_t     = \delta_t
+            #         = r_t + \gamma V_{t+1} - V_t
+            # A_{t-1} = \delta_{t-1} + \gamma\delta_t
+            #         = r_{t-1} + \gamma r_t + \gamma^2 V_{t+1} - V_{t-1}
+            # A_{t-2} = \delta_{t-2} + \gamma\delta_{t-1} + \gamma^2\delta_t
+            #         = r_{t-2} + \gamma r_{t-1} + \gamma^2 r_t + \gamma^3 V_{t+1} - V_{t-2}
+            # A_{t-3} = \delta_{t-3} + \gamma\delta_{t-2} + \gamma^2\delta_{t-1} + \gamma^3\delta_t
+            #         = r_{t-3} + \gamma r_{t-2} + \gamma^2 r_{t-1} + \gamma^3 r_t + \gamma^4 V_{t+1} - V_{t-3}
             self.advantages[:, step] = last_gae_lam
+        # R_t     = r_t + \gamma V_{t+1}
+        # R_{t-1} = r_{t-1} + \gamma r_t + \gamma^2 V_{t+1}
+        # R_{t-2} = r_{t-2} + \gamma r_{t-1} + \gamma^2 r_t + \gamma^3 V_{t+1}
+        # R_{t-3} = r_{t-3} + \gamma r_{t-2} + \gamma^2 r_{t-1} + \gamma^3 r_t + \gamma^4 V_{t+1}
         self.returns = self.advantages + self.values
 
     def get(self, batch_size: int) -> Generator[RolloutBufferSample, None, None]:
@@ -465,13 +476,13 @@ class SolverRolloutBuffer:
         if index >= len(self):
             raise IndexError(f"pop index {index} out of range {len(self)}")
         buffer_sample = SolverRolloutBufferSample(
-            instructions=self.instructions[index: index+1],
-            actions=self.actions[index: index+1],
-            action_masks=self.action_masks[index: index+1]
+            instructions=self.instructions[index: index + 1],
+            actions=self.actions[index: index + 1],
+            action_masks=self.action_masks[index: index + 1]
         )
-        self.instructions = np.concatenate([self.instructions[: index], self.instructions[index+1:]], axis=0)
-        self.actions = np.concatenate([self.actions[: index], self.actions[index+1:]], axis=0)
-        self.action_masks = np.concatenate([self.action_masks[: index], self.action_masks[index+1:]], axis=0)
+        self.instructions = np.concatenate([self.instructions[: index], self.instructions[index + 1:]], axis=0)
+        self.actions = np.concatenate([self.actions[: index], self.actions[index + 1:]], axis=0)
+        self.action_masks = np.concatenate([self.action_masks[: index], self.action_masks[index + 1:]], axis=0)
         return buffer_sample
 
     def _set(self, instructions, actions, action_masks):
