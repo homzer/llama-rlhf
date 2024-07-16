@@ -49,12 +49,17 @@ class SolverGeneratorForCausalLM:
         self.max_seq_len = max_seq_len
         self.tokenizer = tokenizer
 
-    def prepare_for_generation(self, prompts: List[str], eos: bool = False):
+    def prepare_for_generation(self, prompts: Union[List[str], List[List[int]]], eos: bool = False):
         bsz = len(prompts)
-        prompt_tokens = []
-        for x in prompts:
-            x = self.tokenizer.encode(x, bos=True, eos=eos)
-            prompt_tokens.append(x[: self.max_seq_len])
+        if isinstance(prompts[0], str):
+            prompt_tokens = []
+            for x in prompts:
+                x = self.tokenizer.encode(x, bos=True, eos=eos)
+                prompt_tokens.append(x[: self.max_seq_len])
+        elif isinstance(prompts[0], list) and isinstance(prompts[0][0], int):
+            prompt_tokens = prompts
+        else:
+            raise TypeError(type(prompts))
         min_prompt_size = min([len(t) for t in prompt_tokens])
         tokens = torch.full((bsz, self.max_seq_len), self.tokenizer.pad_id).long()
         for k, t in enumerate(prompt_tokens):
