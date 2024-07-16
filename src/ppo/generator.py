@@ -128,7 +128,7 @@ class SolverGeneratorForCausalLM:
             responses.append(self.tokenizer.decode(t[m].tolist()))
         return responses
 
-    def forward(self, instructions: List[str], t: float = 0.0, p: float = 0.8) -> SolverGeneratorOutputs:
+    def forward(self, instructions: Union[List[str], List[List[int]]], t: float = 0.0, p: float = 0.8) -> SolverGeneratorOutputs:
         self.model.eval()
         prep_outputs = self.prepare_for_generation(instructions)
         forward_outputs = self.model_forward(
@@ -245,7 +245,7 @@ class ActorGeneratorForCausalLM(SolverGeneratorForCausalLM):
         Outputs = collections.namedtuple("Outputs", ['tokens', 'tokens_logits'])
         return Outputs(tokens=tokens, tokens_logits=tokens_logits)
 
-    def forward(self, instructions: List[str], t: float = 0.0, p: float = 0.8) -> ActionGeneratorOutputs:
+    def forward(self, instructions: Union[List[str], List[List[int]]], t: float = 0.0, p: float = 0.8) -> ActionGeneratorOutputs:
         self.model.eval()
         prep_outputs = self.prepare_for_generation(instructions)
         forward_outputs = self.model_forward(
