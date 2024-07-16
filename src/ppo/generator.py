@@ -267,7 +267,12 @@ class CriticGeneratorForCausalLM:
         self.tokenizer = tokenizer
         self.generator = GeneratorForVerifier(verifier, tokenizer, max_seq_len)
 
-    def forward(self, obs: List[str], actions: np.ndarray, action_masks: np.ndarray) -> List[List[float]]:
+    def forward(
+            self,
+            obs: List[str],
+            actions: Union[np.ndarray, torch.Tensor],
+            action_masks: Union[np.ndarray, torch.Tensor]
+    ) -> List[List[float]]:
         outputs = []
         for action, action_mask in zip(actions, action_masks):
             outputs.append(action[action_mask].tolist())

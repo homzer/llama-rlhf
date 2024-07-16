@@ -654,6 +654,9 @@ class CriticRolloutBuffer:
         if scores is not None:
             self._set(scores, action_masks)
 
+    def __len__(self):
+        return len(self.scores) if self.scores is not None else 0
+
     def _set(self, scores, action_masks=None):
         if action_masks is None:
             if isinstance(scores, list):
@@ -675,7 +678,7 @@ class CriticRolloutBuffer:
         return self
 
     def get(self, batch_size: int) -> Generator[CriticRolloutBufferSample, None, None]:
-        size = self.scores.shape[0]
+        size = len(self)
         indices = np.arange(size)
         start_idx = 0
         while start_idx < size:
