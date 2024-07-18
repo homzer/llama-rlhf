@@ -17,8 +17,8 @@ def main(
         max_seq_len: int = 512,
         max_batch_size: int = 1,
         lora_rank: int = -1,
-        t: float = 0.0,
-        p: float = 1.0,
+        temperature: float = 0.0,
+        top_p: float = 1.0,
         tokenizer_file: str = None,
         config_file: str = None,
         use_chat_template: bool = False,
@@ -47,8 +47,8 @@ def main(
     if use_chat_template:
         dataset = ChatTemplateDataset(dataset, tokenizer)
     model.load(ckpt_dir)
-    evaluator = SolverEvaluator(model, tokenizer, max_batch_size, max_seq_len)
-    outputs = evaluator.forward(task, dataset, t=t, p=p)
+    evaluator = SolverEvaluator(model, tokenizer, max_batch_size, max_seq_len, temperature, top_p)
+    outputs = evaluator.forward(task, dataset)
     print("Evaluate Accuracy: ", outputs.acc, "Missing: ", outputs.missing)
     if local_rank == 0:
         os.makedirs(log_dir, exist_ok=True)

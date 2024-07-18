@@ -86,14 +86,16 @@ class SolverBufferCollector:
             self,
             solver: Union[ModelForCausalLM, ParallelModelForCausalLM],
             tokenizer: Tokenizer,
-            max_seq_len: int
+            max_seq_len: int,
+            temperature: float = 0.0,
+            top_p: float = 0.95
     ):
         self.generator = SolverGeneratorForCausalLM(
-            model=solver, tokenizer=tokenizer, max_seq_len=max_seq_len
+            model=solver, tokenizer=tokenizer, max_seq_len=max_seq_len, temperature=temperature, top_p=top_p
         )
 
-    def forward(self, instructions: List[str], t: float = 0.0, p: float = 0.8) -> SolverRolloutBuffer:
-        outputs = self.generator.forward(instructions, t=t, p=p)
+    def forward(self, instructions: List[str]) -> SolverRolloutBuffer:
+        outputs = self.generator.forward(instructions)
         actions = outputs.actions.float().cpu().numpy()
         action_masks = outputs.action_masks.float().cpu().numpy()
         return SolverRolloutBuffer(instructions, actions, action_masks)
@@ -104,14 +106,16 @@ class OutputBufferCollector:
             self,
             solver: Union[ModelForCausalLM, ParallelModelForCausalLM],
             tokenizer: Tokenizer,
-            max_seq_len: int
+            max_seq_len: int,
+            temperature: float = 0.0,
+            top_p: float = 0.95
     ):
         self.generator = SolverGeneratorForCausalLM(
-            model=solver, tokenizer=tokenizer, max_seq_len=max_seq_len
+            model=solver, tokenizer=tokenizer, max_seq_len=max_seq_len, temperature=temperature, top_p=top_p
         )
 
-    def forward(self, instructions: List[str], t: float = 0.0, p: float = 0.8) -> OutputRolloutBuffer:
-        outputs = self.generator.forward(instructions, t=t, p=p)
+    def forward(self, instructions: List[str]) -> OutputRolloutBuffer:
+        outputs = self.generator.forward(instructions)
         return OutputRolloutBuffer(instructions, outputs.outputs)
 
 
@@ -120,14 +124,17 @@ class ActorBufferCollector:
             self,
             actor: Union[ModelForCausalLM, ParallelModelForCausalLM],
             tokenizer: Tokenizer,
-            max_seq_len: int
+            max_seq_len: int,
+            temperature: float = 0.0,
+            top_p: float = 0.95
+
     ):
         self.generator = ActorGeneratorForCausalLM(
-            model=actor, tokenizer=tokenizer, max_seq_len=max_seq_len
+            model=actor, tokenizer=tokenizer, max_seq_len=max_seq_len, temperature=temperature, top_p=top_p
         )
 
-    def forward(self, instructions: List[str], t: float = 0.0, p: float = 0.8) -> ActorRolloutBuffer:
-        outputs = self.generator.forward(instructions, t=t, p=p)
+    def forward(self, instructions: List[str]) -> ActorRolloutBuffer:
+        outputs = self.generator.forward(instructions)
         obs = outputs.obs.float().cpu().numpy()
         actions = outputs.actions.float().cpu().numpy()
         action_logits = outputs.action_logits.float().cpu().numpy()

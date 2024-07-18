@@ -26,8 +26,8 @@ def main(
         model_type: str = "llama-2-14b-chat",
         max_seq_len: int = 512,
         max_batch_size: int = 1,
-        t: float = 0.0,
-        p: float = 1.0,
+        temperature: float = 0.0,
+        top_p: float = 1.0,
         tokenizer_file: str = None,
         config_file: str = None,
         seed: int = None
@@ -59,11 +59,13 @@ def main(
             model=model,
             tokenizer=tokenizer,
             batch_size=max_batch_size,
-            max_seq_len=max_seq_len
+            max_seq_len=max_seq_len,
+            temperature=temperature,
+            top_p=top_p
         )
         for task in TASKS:
             label_file = LABEL_FILES[task]
-            outputs = evaluator.forward(task, JsonDataset(label_file), t=t, p=p)
+            outputs = evaluator.forward(task, JsonDataset(label_file))
             print("Task: ", task, "Evaluate Accuracy: ", outputs.acc, "Missing: ", outputs.missing)
             if local_rank == 0:
                 os.makedirs(os.path.join(log_dir, checkpoint.name), exist_ok=True)

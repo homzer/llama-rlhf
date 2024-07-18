@@ -19,9 +19,17 @@ class SolverEvaluator:
             model: Union[ModelForCausalLM, ParallelModelForCausalLM],
             tokenizer: Tokenizer,
             batch_size: int,
-            max_seq_len: int
+            max_seq_len: int,
+            temperature: float = 0.0,
+            top_p: float = 0.95
     ):
-        self.generator = GeneratorForCausalLM(model, tokenizer, max_seq_len)
+        self.generator = GeneratorForCausalLM(
+            model=model,
+            tokenizer=tokenizer,
+            max_seq_len=max_seq_len,
+            temperature=temperature,
+            top_p=top_p
+        )
         self.evaluators = {
             "GSM8K": GSM8KEvaluator,
             "MATH": MATHEvaluator,
@@ -33,7 +41,7 @@ class SolverEvaluator:
         }
         self.batch_size = batch_size
 
-    def forward(self, task: str, dataset: JsonDataset, t: float = 0.0, p: float = 1.0):
+    def forward(self, task: str, dataset: JsonDataset):
         print(f"Evaluating {task}.........")
         dataloader = DataLoader(dataset, batch_size=self.batch_size)
         evaluator = self.evaluators[task]()
@@ -42,7 +50,7 @@ class SolverEvaluator:
         timer = Timer(len(dataloader))
         for data in tqdm(dataloader):
             timer.step()
-            outputs = self.generator.forward(data['instruction'], t=t, p=p)
+            outputs = self.generator.forward(data['instruction'])
             for i, output in enumerate(outputs):
                 result_dict = dict()
                 for key in data.keys():

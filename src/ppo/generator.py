@@ -43,11 +43,15 @@ class SolverGeneratorForCausalLM:
             model: Union[ModelForCausalLM, ParallelModelForCausalLM],
             tokenizer: Tokenizer,
             max_seq_len: int,
+            temperature: float = 0.0,
+            top_p: float = 0.95
     ):
         self.model = model
         self.vocab_size = tokenizer.vocab_size
         self.max_seq_len = max_seq_len
         self.tokenizer = tokenizer
+        self.temperature = temperature
+        self.top_p = top_p
 
     def prepare_for_generation(self, prompts: Union[List[str], List[List[int]]], eos: bool = False):
         bsz = len(prompts)
@@ -74,7 +78,7 @@ class SolverGeneratorForCausalLM:
             start_pos=min_prompt_size,
         )
 
-    def model_forward(self, tokens: torch.Tensor, input_masks: torch.Tensor = None, start_pos: int = None, t=0.0, p=0.8):
+    def model_forward(self, tokens: torch.Tensor, input_masks: torch.Tensor = None, start_pos: int = None):
         bsz = tokens.shape[0]
         prev_pos = 0
         tokens = tokens.clone()
@@ -90,7 +94,7 @@ class SolverGeneratorForCausalLM:
                     (*tokens.shape, outputs.hidden_states.shape[-1]),
                 ).to(outputs.hidden_states)
             hidden_states[:, prev_pos: cur_pos, :] = outputs.hidden_states
-            next_tokens = sampling_strategy(outputs.logits, t, p)  # [b, s]
+            next_tokens = sampling_strategy(outputs.logits, self.temperature, self.top_p)  # [b, s]
             next_token = next_tokens[:, -1].reshape(-1)
             next_token = torch.where(
                 input_masks[:, cur_pos], tokens[:, cur_pos], next_token
@@ -128,11 +132,11 @@ class SolverGeneratorForCausalLM:
             responses.append(self.tokenizer.decode(t[m].tolist()))
         return responses
 
-    def forward(self, instructions: Union[List[str], List[List[int]]], t: float = 0.0, p: float = 0.8) -> SolverGeneratorOutputs:
+    def forward(self, instructions: Union[List[str], List[List[int]]]) -> SolverGeneratorOutputs:
         self.model.eval()
         prep_outputs = self.prepare_for_generation(instructions)
         forward_outputs = self.model_forward(
-            prep_outputs.tokens, prep_outputs.input_masks, prep_outputs.start_pos, t=t, p=p
+            prep_outputs.tokens, prep_outputs.input_masks, prep_outputs.start_pos
         )
         prompt_lengths = torch.sum(prep_outputs.input_masks, dim=-1)
         output_masks = self.get_output_masks(forward_outputs.tokens, prompt_lengths)
@@ -205,10 +209,18 @@ class ActorGeneratorForCausalLM(SolverGeneratorForCausalLM):
             model: Union[ModelForCausalLM, ParallelModelForCausalLM],
             tokenizer: Tokenizer,
             max_seq_len: int,
+            temperature: float = 0.0,
+            top_p: float = 0.95
     ):
-        super().__init__(model=model, tokenizer=tokenizer, max_seq_len=max_seq_len)
+        super().__init__(
+            model=model,
+            tokenizer=tokenizer,
+            max_seq_len=max_seq_len,
+            temperature=temperature,
+            top_p=top_p
+        )
 
-    def model_forward(self, tokens, input_masks=None, start_pos=None, t=0.0, p=0.8):
+    def model_forward(self, tokens, input_masks=None, start_pos=None):
         bsz = tokens.shape[0]
         prev_pos = 0
         tokens = tokens.clone()
@@ -224,7 +236,7 @@ class ActorGeneratorForCausalLM(SolverGeneratorForCausalLM):
                 )
             # logits = logits.to(outputs.logits)
             # logits[:, prev_pos: cur_pos, :] = outputs.logits
-            next_tokens = sampling_strategy(outputs.logits, t, p)
+            next_tokens = sampling_strategy(outputs.logits, self.temperature, self.top_p)
             tokens_logits = tokens_logits.to(outputs.logits)
             tokens_logits[:, prev_pos: cur_pos] = torch.gather(
                 outputs.logits, dim=-1, index=next_tokens.unsqueeze(-1)
@@ -245,11 +257,11 @@ class ActorGeneratorForCausalLM(SolverGeneratorForCausalLM):
         Outputs = collections.namedtuple("Outputs", ['tokens', 'tokens_logits'])
         return Outputs(tokens=tokens, tokens_logits=tokens_logits)
 
-    def forward(self, instructions: Union[List[str], List[List[int]]], t: float = 0.0, p: float = 0.8) -> ActionGeneratorOutputs:
+    def forward(self, instructions: Union[List[str], List[List[int]]]) -> ActionGeneratorOutputs:
         self.model.eval()
         prep_outputs = self.prepare_for_generation(instructions)
         forward_outputs = self.model_forward(
-            prep_outputs.tokens, prep_outputs.input_masks, prep_outputs.start_pos, t=t, p=p
+            prep_outputs.tokens, prep_outputs.input_masks, prep_outputs.start_pos
         )
 
         prompt_lengths = torch.sum(prep_outputs.input_masks, dim=-1)

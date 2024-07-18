@@ -18,8 +18,8 @@ def main(
         max_seq_len: int = 512,
         max_batch_size: int = 1,
         lora_rank: int = -1,
-        t: float = 0.0,
-        p: float = 1.0,
+        temperature: float = 0.0,
+        top_p: float = 1.0,
         tokenizer_file: str = None,
         config_file: str = None,
         use_chat_template: bool = False,
@@ -48,12 +48,12 @@ def main(
         dataset = ChatTemplateDataset(dataset, tokenizer)
     dataloader = DataLoader(dataset, batch_size=max_batch_size)
     model.load(ckpt_dir)
-    generator = GeneratorForCausalLM(model, tokenizer, max_seq_len)
+    generator = GeneratorForCausalLM(model, tokenizer, max_seq_len, temperature=temperature, top_p=top_p)
     timer = Timer(len(dataloader))
     datalist = []
     for data in dataloader:
         timer.step()
-        outputs = generator.forward(data['instruction'], t=t, p=p)
+        outputs = generator.forward(data['instruction'])
         print(data['instruction'][-1] + "\n" + outputs[-1])
         for instruction, output in zip(data["instruction"], outputs):
             datalist.append(dict(

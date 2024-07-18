@@ -13,13 +13,17 @@ class GeneratorForCausalLM:
             self,
             model: Union[ModelForCausalLM, ParallelModelForCausalLM],
             tokenizer: Tokenizer,
-            max_seq_len: int
+            max_seq_len: int,
+            temperature: float = 0.0,
+            top_p: float = 0.95
     ):
         self.model = model
         self.max_seq_len = max_seq_len
         self.tokenizer = tokenizer
+        self.temperature = temperature
+        self.top_p = top_p
 
-    def forward(self, instructions: List[str], t: float = 0.0, p: float = 0.5) -> List[str]:
+    def forward(self, instructions: List[str]) -> List[str]:
         self.model.eval()
         bsz = len(instructions)
         prompt_tokens = []
@@ -44,9 +48,9 @@ class GeneratorForCausalLM:
             with torch.no_grad():
                 outputs = self.model.forward(tokens[:, prev_pos:cur_pos], prev_pos, use_cache=True)
                 logits = outputs.logits[:, -1, :]
-            if t > 0:
-                probs = torch.softmax(logits / t, dim=-1)
-                next_token = sample_top_p(probs, p)
+            if self.temperature > 0:
+                probs = torch.softmax(logits / self.temperature, dim=-1)
+                next_token = sample_top_p(probs, self.top_p)
             else:
                 next_token = torch.argmax(logits, dim=-1)
             next_token = next_token.reshape(-1)

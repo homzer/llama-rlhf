@@ -73,7 +73,7 @@ def run(
             dtype=dtype
         )
         actor.load(actor_ckpt_dir if epoch == 0 else os.path.join(actor_save_dir, f"epoch-{epoch}"))
-        actor_buffer_collector = ActorBufferCollector(actor, actor_tokenizer, max_seq_len)
+        actor_buffer_collector = ActorBufferCollector(actor, actor_tokenizer, max_seq_len, temperature=0.98)
         actor_rollout_buffer = ActorRolloutBuffer()
         print('Actor buffer collecting ...')
         if use_chat_template:
@@ -82,7 +82,7 @@ def run(
         timer = Timer(len(dataloader))
         for data in dataloader:
             timer.step()
-            actor_rollout_buffer.extend(actor_buffer_collector.forward(data['instruction'], t=0.98))
+            actor_rollout_buffer.extend(actor_buffer_collector.forward(data['instruction']))
             print(data['instruction'][-1])
             print(actor_tokenizer.decode(
                 actor_rollout_buffer.actions[-1][actor_rollout_buffer.action_masks[-1]].tolist()

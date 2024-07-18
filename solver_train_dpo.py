@@ -76,13 +76,13 @@ def main(
         policy.load(policy_ckpt_dir if (
                 epoch == 0
         ) else os.path.join(policy_save_dir, f"epoch-{epoch}"), merge_lora=True)
-        rejected_buffer_collector = OutputBufferCollector(policy, policy_tokenizer, policy_max_seq_len)
+        rejected_buffer_collector = OutputBufferCollector(policy, policy_tokenizer, policy_max_seq_len, temperature=1.0)
         rejected_rollout_buffer = OutputRolloutBuffer()
         chosen_rollout_buffer = OutputRolloutBuffer()
         timer = Timer(len(dataloader))
         for data in dataloader:
             timer.step()
-            rejected_rollout_buffer.extend(rejected_buffer_collector.forward(data['instruction'], t=1.0))
+            rejected_rollout_buffer.extend(rejected_buffer_collector.forward(data['instruction']))
             chosen_rollout_buffer.extend(OutputRolloutBuffer(data['instruction'], data['output']))
         assert len(rejected_rollout_buffer) == len(chosen_rollout_buffer)
         policy.cpu()

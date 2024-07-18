@@ -18,8 +18,8 @@ def main(
         model_type: str = "llama-2-70b",
         max_seq_len: int = 1024,
         max_batch_size: int = 384,
-        t: float = 0.0,
-        p: float = 1.0,
+        temperature: float = 0.0,
+        top_p: float = 1.0,
         tokenizer_file: str = None,
         config_file: str = None,
         seed: int = None,
@@ -45,7 +45,7 @@ def main(
         dtype='bfloat16'
     )
     model.load(ckpt_dir, merge_lora=True, sequential_load=sequential_load)
-    generator = GeneratorForCausalLM(model, tokenizer, max_seq_len)
+    generator = GeneratorForCausalLM(model, tokenizer, max_seq_len, temperature=temperature, top_p=top_p)
     save_name = "results.jsonl"
     datalist = json_load(label_file)
     if begin is not None:
@@ -60,7 +60,7 @@ def main(
     with open(os.path.join(log_dir, save_name), 'a', encoding='utf-8') as writer:
         for data in dataloader:
             timer.step()
-            outputs = generator.forward(data['instruction'], t=t, p=p)
+            outputs = generator.forward(data['instruction'])
             for output, instruction in zip(outputs, data['instruction']):
                 if local_rank == 0:
                     writer.write(json.dumps({"instruction": instruction, 'output': [output]}, ensure_ascii=False) + '\n')
