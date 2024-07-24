@@ -4,7 +4,7 @@ import fire
 import torch
 from torch.utils.data import DataLoader
 
-from src.dataset import MultiOutputsDataset, JsonDataset
+from src.dataset import MultiOutputsDataset, JsonDataset, ChatTemplateDataset
 from src.entities import Timer
 from src.evaluator import SolverEvaluator
 from src.modeling import get_parallel_model
@@ -31,6 +31,7 @@ def main(
         label_file: str = None,
         eval_batch_size: int = None,
         log_dir: str = None,
+        use_chat_template: bool = False,
         seed: int = None,
 ):
     if log_dir is not None:
@@ -53,6 +54,8 @@ def main(
         lora_dtype=lora_dtype
     )
     dataset = MultiOutputsDataset(f=train_file)
+    if use_chat_template:
+        dataset = ChatTemplateDataset(dataset, tokenizer)
     dataloader = DataLoader(dataset, batch_size=max_batch_size)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     trainer = ParallelSolverTrainer(
