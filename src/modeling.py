@@ -153,7 +153,8 @@ def get_parallel_model(
         lora_rank: int,
         dtype: str = 'bfloat16',  # float16 might be NaN
         lora_dtype: str = 'float32',
-        use_clamp: bool = False
+        use_clamp: bool = False,
+        use_logits_normalize: bool = True
 ) -> (ParallelModule, Tokenizer):
     if lora_rank > 0:
         args = ARGS["lora-" + model_type](
@@ -163,7 +164,8 @@ def get_parallel_model(
             dtype=dtype,
             r=lora_rank,
             lora_dtype=lora_dtype,
-            use_clamp=use_clamp
+            use_clamp=use_clamp,
+            use_logits_normalize=use_logits_normalize
         ).from_json(config_file)
         model = MODELS["lora-" + model_type](args)
     else:
