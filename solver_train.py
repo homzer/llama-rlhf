@@ -4,7 +4,7 @@ import fire
 import torch
 from torch.utils.data import DataLoader
 
-from src.dataset import MultiOutputsDataset, JsonDataset, ChatTemplateDataset
+from src.dataset import JsonDataset, ChatTemplateDataset
 from src.entities import Timer
 from src.evaluator import SolverEvaluator
 from src.modeling import get_parallel_model
@@ -53,7 +53,7 @@ def main(
         dtype=dtype,
         lora_dtype=lora_dtype
     )
-    dataset = MultiOutputsDataset(f=train_file)
+    dataset = JsonDataset(f=train_file)
     if use_chat_template:
         dataset = ChatTemplateDataset(dataset, tokenizer)
     dataloader = DataLoader(dataset, batch_size=max_batch_size)
