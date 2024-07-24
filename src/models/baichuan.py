@@ -14,9 +14,9 @@ from fairscale.nn.model_parallel.layers import (
 from src.checkpoint_baichuan import auto_split_huggingface_checkpoints
 from src.models.modeling import AttentionForCausalLM, ParallelModelForCausalLM, CausalLMOutputs, ParallelVerifier, \
     VerifierOutputs
-from src.models.modeling_acts import RotaryEmbedding, Clamp, RMSNorm
+from src.models.modeling_acts import RotaryEmbedding, Clamp, RMSNorm, LogitsNormalize
 from src.models.modeling_args import BaichuanArgs, LoraBaichuanArgs
-from src.utils import set_barrier, compute_position_ids, apply_rotary_pos_emb, logits_normalize, apply_lora
+from src.utils import set_barrier, compute_position_ids, apply_rotary_pos_emb, apply_lora
 
 
 class BaichuanAttention(AttentionForCausalLM):
@@ -138,7 +138,7 @@ class BaichuanTransformerBlock(nn.Module):
         self.args = args
         self.self_attn = BaichuanAttention(args)
         self.mlp = BaichuanFeedForward(args)
-        self.clamp = Clamp(disable=not args.use_clamp)
+        self.clamp = Clamp(enable=args.use_clamp)
 
         self.input_layernorm = None
         self.post_attention_layernorm = None
@@ -202,6 +202,7 @@ class Baichuan(ParallelModelForCausalLM):
         self.args = args
         self.model = BaichuanHead(args)
         self.lm_head = None
+        self.logits_norm = LogitsNormalize(enable=self.args.use_logits_normalize)
 
     def init_weights(self):
         self.model.init_weights()
@@ -220,7 +221,7 @@ class Baichuan(ParallelModelForCausalLM):
     ) -> CausalLMOutputs:
         h = self.model.forward(tokens, start_pos, use_cache)
         output = self.lm_head(h)
-        return CausalLMOutputs(logits=logits_normalize(output), hidden_states=h)
+        return CausalLMOutputs(logits=self.logits_norm.forward(output), hidden_states=h)
 
     # Copied from llama_hf.LlamaHf.load
     def load(self, ckpt_dir: str, verbose: bool = True):
@@ -425,7 +426,7 @@ class LoraBaichuan(Baichuan):
     ) -> CausalLMOutputs:
         h = self.model.forward(tokens, start_pos, use_cache)
         output = self.lm_head(h) + apply_lora(h, self.lora_a_lm_head, self.lora_b_lm_head)
-        return CausalLMOutputs(logits=logits_normalize(output), hidden_states=h)
+        return CausalLMOutputs(logits=self.logits_norm.forward(output), hidden_states=h)
 
     def init_weights(self):
         super().init_weights()

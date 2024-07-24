@@ -3,8 +3,8 @@ import torch.nn as nn
 from transformers.activations import ACT2FN
 
 from src.models.modeling import ModelForCausalLM, CausalLMOutputs
+from src.models.modeling_acts import LogitsNormalize
 from src.models.modeling_args import GPT2Args
-from src.utils import logits_normalize
 
 
 class Conv1D(nn.Module):
@@ -166,6 +166,7 @@ class GPT2(ModelForCausalLM):
         self.h = nn.ModuleList([GPT2Block(args) for _ in range(args.n_layer)])
         self.ln_f = nn.LayerNorm(self.embed_dim, eps=args.layer_norm_epsilon)
         self.lm_head = None
+        self.logits_norm = LogitsNormalize(enable=self.args.use_logits_normalize)
 
     def init_weights(self):
         """ Obviate the need for GPT2. """
@@ -201,11 +202,7 @@ class GPT2(ModelForCausalLM):
         h = self.ln_f(h)
         self._init_lm_head()
         logits = self.lm_head(h)
-        logits = logits_normalize(logits)
-        return CausalLMOutputs(
-            logits=logits.float(),
-            hidden_states=h.float()
-        )
+        return CausalLMOutputs(logits=self.logits_norm.forward(logits), hidden_states=h)
 
     def flush(self):
         """ Clean cache in `LlamaAttention` module """

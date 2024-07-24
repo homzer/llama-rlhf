@@ -142,7 +142,7 @@ class MistralTransformerBlockHf(nn.Module):
         self.args = args
         self.self_attn = MistralAttentionHf(args)
         self.mlp = MistralFeedForwardHf(args)
-        self.clamp = Clamp(disable=not args.use_clamp)
+        self.clamp = Clamp(enable=args.use_clamp)
 
         self.input_layernorm = None
         self.post_attention_layernorm = None

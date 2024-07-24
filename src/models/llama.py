@@ -12,9 +12,9 @@ from fairscale.nn.model_parallel.layers import (
 
 from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs, AttentionForCausalLM, \
     ParallelVerifier, VerifierOutputs
-from src.models.modeling_acts import RMSNorm, Clamp
+from src.models.modeling_acts import RMSNorm, Clamp, LogitsNormalize
 from src.models.modeling_args import LlamaArgs, LoraLlamaArgs
-from src.utils import apply_rotary_emb, precompute_freqs_cis, set_barrier, logits_normalize, apply_lora
+from src.utils import apply_rotary_emb, precompute_freqs_cis, set_barrier, apply_lora
 
 
 class LlamaAttention(AttentionForCausalLM):
@@ -127,7 +127,7 @@ class LlamaTransformerBlock(nn.Module):
         self.args = args
         self.attention = LlamaAttention(args)
         self.feed_forward = LlamaFeedForward(args)
-        self.clamp = Clamp(disable=not args.use_clamp)
+        self.clamp = Clamp(enable=args.use_clamp)
 
         self.attention_norm = None
         self.ffn_norm = None
@@ -162,6 +162,7 @@ class Llama(ParallelModelForCausalLM):
             self.layers.append(LlamaTransformerBlock(layer_id, args))
         self.norm = None
         self.output = None
+        self.logits_norm = LogitsNormalize(enable=self.args.use_logits_normalize)
 
         self.freqs_cis = precompute_freqs_cis(
             self.args.dim // self.args.n_heads, self.args.max_seq_len * 2, self.args.rope_theta
@@ -182,8 +183,8 @@ class Llama(ParallelModelForCausalLM):
         for layer in self.layers:
             h = layer(h, start_pos, freqs_cis, mask, use_cache)
         h = self.norm(h)
-        output = self.output(h)
-        return CausalLMOutputs(logits=logits_normalize(output), hidden_states=h)
+        logits = self.output(h)
+        return CausalLMOutputs(logits=self.logits_norm.forward(logits), hidden_states=h)
 
     def init_weights(self):
         self.tok_embeddings = ParallelEmbedding(
@@ -437,8 +438,8 @@ class LoraLlama(Llama):
         for layer in self.layers:
             h = layer(h, start_pos, freqs_cis, mask, use_cache)
         h = self.norm(h)
-        output = self.output(h) + apply_lora(h, self.lora_a_output, self.lora_b_output)
-        return CausalLMOutputs(logits=logits_normalize(output), hidden_states=h)
+        logits = self.output(h) + apply_lora(h, self.lora_a_output, self.lora_b_output)
+        return CausalLMOutputs(logits=self.logits_norm.forward(logits), hidden_states=h)
 
     def init_weights(self):
         super().init_weights()

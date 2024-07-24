@@ -12,9 +12,9 @@ from fairscale.nn.model_parallel.layers import (
 
 from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs, AttentionForCausalLM, \
     ParallelVerifier, VerifierOutputs
-from src.models.modeling_acts import RMSNorm, Clamp
+from src.models.modeling_acts import RMSNorm, Clamp, LogitsNormalize
 from src.models.modeling_args import MistralArgs, LoraMistralArgs
-from src.utils import apply_rotary_emb, precompute_freqs_cis, set_barrier, logits_normalize, apply_lora
+from src.utils import apply_rotary_emb, precompute_freqs_cis, set_barrier, apply_lora
 
 
 def repeat_kv(keys: torch.Tensor, values: torch.Tensor, repeats: int):
@@ -180,7 +180,7 @@ class MistralTransformerBlock(nn.Module):
         self.args = args
         self.attention = MistralAttention(args)
         self.feed_forward = MistralFeedForward(args)
-        self.clamp = Clamp(disable=not args.use_clamp)
+        self.clamp = Clamp(enable=args.use_clamp)
 
         self.attention_norm = None
         self.ffn_norm = None
@@ -219,6 +219,7 @@ class Mistral(ParallelModelForCausalLM):
             self.layers.append(MistralTransformerBlock(args))
         self.norm = None
         self.output = None
+        self.logits_norm = LogitsNormalize(enable=self.args.use_logits_normalize)
 
         self.freqs_cis = precompute_freqs_cis(self.args.head_dim, 128000)
 
@@ -259,7 +260,7 @@ class Mistral(ParallelModelForCausalLM):
         h = self.norm(h)
         output = self.output(h)
 
-        return CausalLMOutputs(logits=logits_normalize(output), hidden_states=h)
+        return CausalLMOutputs(logits=self.logits_norm.forward(output), hidden_states=h)
 
     def flush(self):
         """ Clean cache in `LlamaAttention` module """
@@ -531,7 +532,7 @@ class LoraMistral(Mistral):
         h = self.norm(h)
         output = self.output(h) + apply_lora(h, self.lora_a_output, self.lora_b_output)
 
-        return CausalLMOutputs(logits=logits_normalize(output), hidden_states=h)
+        return CausalLMOutputs(logits=self.logits_norm.forward(output), hidden_states=h)
 
     # lora op
     def _freeze(self):

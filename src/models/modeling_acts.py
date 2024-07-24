@@ -10,6 +10,8 @@ from fairscale.nn.model_parallel.mappings import (
     copy_to_model_parallel_region
 )
 
+from src.utils import logits_normalize
+
 
 class RMSNorm(nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):
@@ -107,15 +109,15 @@ class RowParallelLinearPartitioned(nn.Module):
 
 
 class Clamp:
-    def __init__(self, disable: bool = False):
-        self.disable = disable
+    def __init__(self, enable: bool = True):
+        self.enable = enable
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Clamp inf values to enable fp16 training.
         Will slow down speed, disable it when you don't need it.
         """
-        if self.disable or not x.requires_grad:  # disable when inference
+        if not self.enable or not x.requires_grad:  # disable when inference
             return x
         if x.dtype == torch.float16:
             clamp_value = torch.where(
@@ -125,6 +127,19 @@ class Clamp:
             ).item()
             x = torch.clamp(x, min=-clamp_value, max=clamp_value)
         return x
+
+
+class LogitsNormalize:
+    def __init__(self, enable: bool = True):
+        self.enable = enable
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Avoid overflowing in `softmax`.
+        """
+        if not self.enable:
+            return x
+        return logits_normalize(x)
 
 
 # Copied from Huggingface

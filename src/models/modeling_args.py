@@ -46,8 +46,25 @@ class Args:
 
 
 @dataclass
-class GPT2Args(Args):
+class BaseArgs(Args):
     max_seq_len: int
+    use_clamp: bool = False
+    use_logits_normalize: bool = True
+
+
+@dataclass
+class BaseParallelArgs(Args):
+    max_seq_len: int
+    local_rank: int
+    world_size: int
+    dtype: str = "float16"
+
+    use_clamp: bool = False
+    use_logits_normalize: bool = True
+
+
+@dataclass
+class GPT2Args(BaseArgs):
     attn_pdrop: int = None
     embd_pdrop: int = None
     layer_norm_epsilon: float = None
@@ -59,16 +76,10 @@ class GPT2Args(Args):
     resid_pdrop: float = None
     vocab_size: int = None
     activation_function: str = None
-    use_clamp: bool = False
 
 
 @dataclass
-class LlamaArgs(Args):
-    max_seq_len: int
-    local_rank: int
-    world_size: int
-
-    dtype: str = "float16"
+class LlamaArgs(BaseParallelArgs):
     dim: int = None
     n_layers: int = None
     n_heads: int = None
@@ -80,8 +91,6 @@ class LlamaArgs(Args):
     # for 70b
     ffn_dim_multiplier: float = None
     n_kv_heads: int = None
-
-    use_clamp: bool = False
 
     def from_json(self, filename: str):
         if not filename.endswith(".json"):
@@ -96,12 +105,7 @@ class LoraLlamaArgs(LlamaArgs):
 
 
 @dataclass
-class MistralArgs(Args):
-    max_seq_len: int
-    local_rank: int
-    world_size: int
-
-    dtype: str = "float16"
+class MistralArgs(BaseParallelArgs):
     dim: int = None
     n_layers: int = None
     head_dim: int = None
@@ -118,16 +122,9 @@ class MistralArgs(Args):
     # If this is set, we will use MoE layers instead of dense layers.
     moe = None
 
-    use_clamp: bool = False
-
 
 @dataclass
-class MistralArgsHf(Args):
-    max_seq_len: int
-    local_rank: int
-    world_size: int
-
-    dtype: str = "float16"
+class MistralArgsHf(BaseParallelArgs):
     hidden_size: int = None
     num_hidden_layers: int = None
     intermediate_size: int = None
@@ -144,8 +141,6 @@ class MistralArgsHf(Args):
     # If this is set, we will use MoE layers instead of dense layers.
     moe = None
 
-    use_clamp: bool = False
-
 
 @dataclass
 class OpenChatArgs(MistralArgs):
@@ -159,12 +154,7 @@ class LoraMistralArgs(MistralArgs):
 
 
 @dataclass
-class QwenArgs(Args):
-    max_seq_len: int
-    local_rank: int
-    world_size: int
-
-    dtype: str = "float16"
+class QwenArgs(BaseParallelArgs):
     hidden_size: int = None
     intermediate_size: int = None
     max_position_embeddings: int = None
@@ -179,8 +169,6 @@ class QwenArgs(Args):
     use_sliding_window: bool = None
     vocab_size: int = None
 
-    use_clamp: bool = False
-
     def from_json(self, filename: str):
         if not filename.endswith(".json"):
             filename = os.path.join(filename, "config.json")
@@ -194,12 +182,7 @@ class LoraQwenArgs(QwenArgs):
 
 
 @dataclass
-class BaichuanArgs(Args):
-    max_seq_len: int
-    local_rank: int
-    world_size: int
-    dtype: str = "float16"
-
+class BaichuanArgs(BaseParallelArgs):
     vocab_size: int = None
     hidden_size: int = None
     intermediate_size: int = None
@@ -210,8 +193,6 @@ class BaichuanArgs(Args):
     initializer_range: int = None
     rms_norm_eps: float = None
     use_cache: bool = None
-
-    use_clamp: bool = False
 
     def from_json(self, filename: str):
         if not filename.endswith(".json"):

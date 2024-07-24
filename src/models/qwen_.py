@@ -7,9 +7,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from src.models.modeling import AttentionForCausalLM, ModelForCausalLM, CausalLMOutputs
-from src.models.modeling_acts import RotaryEmbedding, Clamp, RMSNorm
+from src.models.modeling_acts import RotaryEmbedding, Clamp, RMSNorm, LogitsNormalize
 from src.models.modeling_args import QwenArgs
-from src.utils import compute_position_ids, apply_rotary_pos_emb, logits_normalize
+from src.utils import compute_position_ids, apply_rotary_pos_emb
 
 
 class QwenAttention(AttentionForCausalLM):
@@ -91,7 +91,7 @@ class QwenTransformerBlock(nn.Module):
         self.args = args
         self.self_attn = QwenAttention(args)
         self.mlp = QwenFeedForward(args)
-        self.clamp = Clamp(disable=not args.use_clamp)
+        self.clamp = Clamp(enable=args.use_clamp)
 
         self.input_layernorm = RMSNorm(self.args.hidden_size, eps=self.args.rms_norm_eps).type(self.args.dtype)
         self.post_attention_layernorm = RMSNorm(self.args.hidden_size, eps=self.args.rms_norm_eps).type(self.args.dtype)
@@ -142,6 +142,7 @@ class Qwen(ModelForCausalLM):
         self.args = args
         self.model = QwenHead(args)
         self.lm_head = nn.Linear(self.args.hidden_size, self.args.vocab_size, bias=False).type(self.args.dtype)
+        self.logits_norm = LogitsNormalize(enable=self.args.use_logits_normalize)
 
     def forward(
             self,
@@ -151,7 +152,7 @@ class Qwen(ModelForCausalLM):
     ) -> CausalLMOutputs:
         h = self.model.forward(tokens, start_pos, use_cache)
         output = self.lm_head(h)
-        return CausalLMOutputs(logits=logits_normalize(output), hidden_states=h)
+        return CausalLMOutputs(logits=self.logits_norm.forward(output), hidden_states=h)
 
     def flush(self):
         for i in range(self.args.num_hidden_layers):
