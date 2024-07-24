@@ -74,7 +74,7 @@ def main(
             )
             timer.step()
             if trainer.step % 100 == 0:
-                print(f'step {trainer.step} of {len(dataloader)} -------------------------------')
+                print(f'step {trainer.step} of {len(dataloader)} -----------------------------')
                 print(f'LOSS: ', outputs.loss.item())
                 trainer.predict(outputs.logits, data['instruction'], data['output'])
             if trainer.step % save_steps == 0:
