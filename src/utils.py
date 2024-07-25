@@ -419,6 +419,28 @@ def truncate(instruction_ids: list, output_ids: list, max_seq_len: int) -> (list
     return instruction_ids, output_ids
 
 
+def convert_dataloader_data_to_list(data: dict) -> List[dict]:
+    """
+    :param data: data from `DataLoader`
+    :return: List[dict]
+    """
+    batch_size = None
+    for k, v in data.items():
+        if batch_size is None:
+            batch_size = len(v)
+        else:
+            assert batch_size == len(v)
+        if isinstance(v, torch.Tensor):
+            data[k] = v.tolist()
+    result_dicts = []
+    for i in range(batch_size):
+        result_dict = {}
+        for k, v in data.items():
+            result_dict[k] = v[i]
+        result_dicts.append(result_dict)
+    return result_dicts
+
+
 # ===============================================================
 
 
