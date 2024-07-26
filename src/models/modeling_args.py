@@ -86,7 +86,7 @@ class LlamaArgs(BaseParallelArgs):
     vocab_size: int = None  # defined later by tokenizer
     multiple_of: int = None  # make SwiGLU hidden layer size multiple of large power of 2
     norm_eps: float = None
-    rope_theta: float = None
+    rope_theta: float = 10000.0
 
     # for 70b
     ffn_dim_multiplier: float = None

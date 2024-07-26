@@ -367,7 +367,7 @@ class LoraQwenFeedForward(QwenFeedForward):
     def forward(self, x):
         x1 = self.gate_proj(x) + apply_lora(x, self.lora_a_gate_proj, self.lora_b_gate_proj)
         x3 = self.up_proj(x) + apply_lora(x, self.lora_a_up_proj, self.lora_b_up_proj)
-        out = F.silu(x1) + x3
+        out = F.silu(x1) * x3
         return self.down_proj(out) + apply_lora(out, self.lora_a_down_proj, self.lora_b_down_proj)
 
     def init_weights(self):
