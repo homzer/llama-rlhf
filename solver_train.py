@@ -23,7 +23,7 @@ def main(
         max_batch_size: int = 1,
         lr: float = 1e-5,
         epochs: int = 1,
-        dtype: str = "float16",
+        dtype: str = "bfloat16",
         lora_rank: int = -1,
         lora_dtype: str = "float32",
         save_steps: int = 10000,
