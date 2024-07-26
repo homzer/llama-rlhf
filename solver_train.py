@@ -32,7 +32,6 @@ def main(
         eval_batch_size: int = None,
         log_dir: str = None,
         use_chat_template: bool = False,
-        use_logits_normalize: bool = True,
         seed: int = None,
 ):
     if log_dir is not None:
@@ -52,8 +51,7 @@ def main(
         max_seq_len=max_seq_len,
         lora_rank=lora_rank,
         dtype=dtype,
-        lora_dtype=lora_dtype,
-        use_logits_normalize=use_logits_normalize
+        lora_dtype=lora_dtype
     )
     dataset = JsonDataset(f=train_file)
     if use_chat_template:

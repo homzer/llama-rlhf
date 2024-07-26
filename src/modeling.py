@@ -174,7 +174,8 @@ def get_parallel_model(
             local_rank=local_rank,
             world_size=world_size,
             dtype=dtype,
-            use_clamp=use_clamp
+            use_clamp=use_clamp,
+            use_logits_normalize=use_logits_normalize
         ).from_json(config_file)
         model = MODELS[model_type](args)
     tokenizer = TOKENIZERS[model_type](tokenizer_file)
