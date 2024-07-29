@@ -252,7 +252,7 @@ class BaichuanTokenizer(Tokenizer):
         encode = self.model.encode(s)
         if bos and encode[0] != self.bos_id:
             encode.insert(0, self.bos_id)
-        if eos:
+        if eos and encode[-1] != self.eos_id:
             encode.append(self.eos_id)
         return encode
 

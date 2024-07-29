@@ -36,10 +36,8 @@ def main(
 ):
     if log_dir is not None:
         os.makedirs(log_dir, exist_ok=True)
-    if tokenizer_file is None:
-        tokenizer_file = ckpt_dir
-    if config_file is None:
-        config_file = ckpt_dir
+    tokenizer_file = tokenizer_file or ckpt_dir
+    config_file = config_file or ckpt_dir
     local_rank, world_size = setup_model_parallel(seed=seed)
 
     model, tokenizer = get_parallel_model(

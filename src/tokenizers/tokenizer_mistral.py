@@ -1,34 +1,61 @@
 from typing import List
 
-from transformers import LlamaTokenizerFast
+from transformers import LlamaTokenizer
 
 from src.tokenizers import Tokenizer
-from src.tokenizers.tokenizer_llama import LlamaTokenizer
 
 
-class MistralTokenizer(LlamaTokenizer):
-    def __init__(self, model_file: str):
-        super().__init__(model_file)
-
-
-class MistralChatTokenizer(Tokenizer):
+class MistralTokenizer(Tokenizer):
     def __init__(self, model_dir: str):
-        self.model = LlamaTokenizerFast.from_pretrained(model_dir)
+        self.model = LlamaTokenizer.from_pretrained(model_dir)
         super().__init__(
-            vocab_size=self.model.vocab_size,
+            vocab_size=len(self.model.get_vocab()),
             bos_id=self.model.bos_token_id,
             eos_id=self.model.eos_token_id,
-            pad_id=self.model.eos_token_id
+            pad_id=self.model.pad_token_id or 0
         )
 
+    def apply_chat_template(self, messages: List[dict]) -> str:
+        """
+        :param messages: [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "greetings!"}]
+        :return:
+        """
+        return self.model.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+
     def encode(self, s: str, bos: bool = False, eos: bool = False) -> List[int]:
-        assert eos is False  # TODO
-        s = self.model.apply_chat_template(
-            [{"role": "user", "content": s}],
-            tokenize=False,
-            add_generation_prompt=True
-        )
-        return self.model.encode(s)
+        encode = self.model.encode(s)
+        if bos and encode[0] != self.bos_id:
+            encode.insert(0, self.bos_id)
+        if eos and encode[-1] != self.eos_id:
+            encode.append(self.eos_id)
+        return encode
 
     def decode(self, t: List[int]) -> str:
         return self.model.decode(t, skip_special_tokens=True)
+
+    def save(self, save_dir: str):
+        self.model.save_pretrained(save_dir)
+
+
+
+# class MistralChatTokenizer(Tokenizer):
+#     def __init__(self, model_dir: str):
+#         self.model = LlamaTokenizerFast.from_pretrained(model_dir)
+#         super().__init__(
+#             vocab_size=self.model.vocab_size,
+#             bos_id=self.model.bos_token_id,
+#             eos_id=self.model.eos_token_id,
+#             pad_id=self.model.eos_token_id
+#         )
+#
+#     def encode(self, s: str, bos: bool = False, eos: bool = False) -> List[int]:
+#         assert eos is False  # TODO
+#         s = self.model.apply_chat_template(
+#             [{"role": "user", "content": s}],
+#             tokenize=False,
+#             add_generation_prompt=True
+#         )
+#         return self.model.encode(s)
+#
+#     def decode(self, t: List[int]) -> str:
+#         return self.model.decode(t, skip_special_tokens=True)

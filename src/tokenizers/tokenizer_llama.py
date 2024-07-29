@@ -21,7 +21,7 @@ class LlamaTokenizer(Tokenizer):
         )
         assert self.vocab_size == self.model.GetPieceSize()
 
-    def apply_chat_template(self, messages: List[dict]) -> str:
+    def apply_chat_template(self, messages: List[dict]) -> str:  # TODO
         """
         :param messages: [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "greetings!"}]
         :return:
@@ -51,36 +51,3 @@ class LlamaTokenizer(Tokenizer):
     def save(self, save_dir: str):
         os.makedirs(save_dir, exist_ok=True)
         os.system(f"cp {self.model_file} {os.path.join(save_dir, 'tokenizer.model')}")
-
-
-# class LlamaChatTokenizer(LlamaTokenizer):
-#     def __init__(
-#             self,
-#             model_file: str,
-#             user_template: str = "\n\nHuman: ",
-#             assistant_template: str = "\n\nAssistant: "
-#     ):
-#         super().__init__(model_file)
-#         self.user_template = user_template
-#         self.assistant_template = assistant_template
-#
-#     def apply_chat_template(self, messages: List[dict]) -> str:
-#         """
-#         :param messages: [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "greetings!"}]
-#         :return:
-#         """
-#         s = ""
-#         for message in messages:
-#             if message['role'] == 'user':
-#                 s += self.user_template + message['content']
-#             elif message['role'] == 'assistant':
-#                 s += self.assistant_template + message['content']
-#             else:
-#                 raise ValueError(message['role'])
-#         s += self.assistant_template
-#         return s
-#
-#     def encode(self, s: str, bos: bool = False, eos: bool = False) -> List[int]:
-#         messages = [{"role": "user", "content": s}]
-#         s = self.apply_chat_template(messages)
-#         return super().encode(s, bos=bos, eos=eos)

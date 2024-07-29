@@ -32,7 +32,6 @@ from src.tokenizers import (
     Llama3Tokenizer,
     Llama3ChatTokenizer,
     MistralTokenizer,
-    MistralChatTokenizer,
     QwenTokenizer, BaichuanTokenizer
 )
 
@@ -63,8 +62,8 @@ ARGS = {
     "lora-llama-3-8b": LoraLlamaArgs,
     "lora-llama-3-70b": LoraLlamaArgs,
 
-    "mistral-7b": MistralArgs,
-    "lora-mistral-7b": LoraMistralArgs,
+    "mistral": MistralArgs,
+    "lora-mistral": LoraMistralArgs,
     "mistral-7b-instruct-v0.2": MistralArgsHf,
     "mixtral-8x7b-instruct-v0.1": MistralMoeArgsHf,
 
@@ -101,8 +100,8 @@ MODELS = {
     "lora-llama-3-8b": LoraLlama3,
     "lora-llama-3-70b": LoraLlama3,
 
-    "mistral-7b": Mistral,
-    "lora-mistral-7b": LoraMistral,
+    "mistral": Mistral,
+    "lora-mistral": LoraMistral,
     "mistral-7b-instruct-v0.2": MistralHf,
     "mixtral-8x7b-instruct-v0.1": MistralMoeHf,
 
@@ -134,9 +133,9 @@ TOKENIZERS = {
     "llama-3-8b-instruct": Llama3ChatTokenizer,
     "llama-3-70b-instruct": Llama3ChatTokenizer,
 
-    "mistral-7b": MistralTokenizer,
-    "mistral-7b-instruct-v0.2": MistralChatTokenizer,
-    "mixtral-8x7b-instruct-v0.1": MistralChatTokenizer,
+    "mistral": MistralTokenizer,
+    "mistral-7b-instruct-v0.2": MistralTokenizer,
+    "mixtral-8x7b-instruct-v0.1": MistralTokenizer,
 
     "qwen": QwenTokenizer,
     "baichuan": BaichuanTokenizer
