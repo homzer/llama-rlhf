@@ -122,6 +122,11 @@ class MistralArgs(BaseParallelArgs):
     # If this is set, we will use MoE layers instead of dense layers.
     moe = None
 
+    def from_json(self, filename: str):
+        if not filename.endswith(".json"):
+            filename = os.path.join(filename, "params.json")
+        return super().from_json(filename)
+
 
 @dataclass
 class MistralArgsHf(BaseParallelArgs):
@@ -140,6 +145,11 @@ class MistralArgsHf(BaseParallelArgs):
     sliding_window: int = None
     # If this is set, we will use MoE layers instead of dense layers.
     moe = None
+
+    def from_json(self, filename: str):
+        if not filename.endswith(".json"):
+            filename = os.path.join(filename, "config.json")
+        return super().from_json(filename)
 
 
 @dataclass
