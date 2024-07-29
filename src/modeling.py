@@ -64,6 +64,7 @@ ARGS = {
 
     "mistral": MistralArgs,
     "lora-mistral": LoraMistralArgs,
+    "mistral-hf": MistralArgsHf,
     "mistral-7b-instruct-v0.2": MistralArgsHf,
     "mixtral-8x7b-instruct-v0.1": MistralMoeArgsHf,
 
@@ -102,6 +103,7 @@ MODELS = {
 
     "mistral": Mistral,
     "lora-mistral": LoraMistral,
+    "mistral-hf": MistralHf,
     "mistral-7b-instruct-v0.2": MistralHf,
     "mixtral-8x7b-instruct-v0.1": MistralMoeHf,
 
@@ -134,6 +136,7 @@ TOKENIZERS = {
     "llama-3-70b-instruct": Llama3ChatTokenizer,
 
     "mistral": MistralTokenizer,
+    "mistral-hf": MistralTokenizer,
     "mistral-7b-instruct-v0.2": MistralTokenizer,
     "mixtral-8x7b-instruct-v0.1": MistralTokenizer,
 
