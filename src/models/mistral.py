@@ -308,11 +308,15 @@ class MistralVerifier(ParallelVerifier):
 
         mask = None
         if seqlen > 1:
-            tensor = torch.full((seqlen, seqlen), dtype=h.dtype, fill_value=1, device=h.device)
-            mask = torch.tril(tensor, diagonal=0).to(h.dtype)
-            # make the mask banded to account for sliding window
-            mask = torch.triu(mask, diagonal=-self.args.sliding_window)
-            mask = torch.log(mask)
+            if self.args.sliding_window is not None:  # TODO why?
+                tensor = torch.full((seqlen, seqlen), dtype=h.dtype, fill_value=1, device=h.device)
+                mask = torch.tril(tensor, diagonal=0).to(h.dtype)
+                # make the mask banded to account for sliding window
+                mask = torch.triu(mask, diagonal=-self.args.sliding_window)
+                mask = torch.log(mask)
+            else:
+                mask = torch.full((1, 1, seqlen, seqlen), float("-inf"), device=tokens.device)
+                mask = torch.triu(mask, diagonal=1).type_as(h)
 
         for layer in self.layers:
             h = layer(h, freqs_cis, positions, mask, use_cache=False)
@@ -525,11 +529,15 @@ class LoraMistral(Mistral):
 
         mask = None
         if seqlen > 1:
-            tensor = torch.full((seqlen, seqlen), dtype=h.dtype, fill_value=1, device=h.device)
-            mask = torch.tril(tensor, diagonal=0).to(h.dtype)
-            # make the mask banded to account for sliding window
-            mask = torch.triu(mask, diagonal=-self.args.sliding_window)
-            mask = torch.log(mask)
+            if self.args.sliding_window is not None:  # TODO why?
+                tensor = torch.full((seqlen, seqlen), dtype=h.dtype, fill_value=1, device=h.device)
+                mask = torch.tril(tensor, diagonal=0).to(h.dtype)
+                # make the mask banded to account for sliding window
+                mask = torch.triu(mask, diagonal=-self.args.sliding_window)
+                mask = torch.log(mask)
+            else:
+                mask = torch.full((1, 1, seqlen, seqlen), float("-inf"), device=tokens.device)
+                mask = torch.triu(mask, diagonal=start_pos + 1).type_as(h)
 
         for layer in self.layers:
             h = layer(h, start_pos, freqs_cis, mask, use_cache)
