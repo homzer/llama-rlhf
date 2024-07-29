@@ -84,7 +84,7 @@ class MistralAttention(AttentionForCausalLM):
                     self.n_local_kv_heads,
                     self.args.head_dim,
                 )
-            ).cuda()
+            ).type(self.args.dtype).cuda()
         if self.cache_v is None:
             self.cache_v = torch.empty(
                 (
@@ -93,7 +93,7 @@ class MistralAttention(AttentionForCausalLM):
                     self.n_local_kv_heads,
                     self.args.head_dim,
                 )
-            ).cuda()
+            ).type(self.args.dtype).cuda()
 
             # The cache is a rotating buffer
         scatter_pos = (positions[-self.sliding_window:] % self.sliding_window)[None, :, None, None]
@@ -249,15 +249,11 @@ class Mistral(ParallelModelForCausalLM):
 
         mask = None
         if seqlen > 1:
-            if self.args.sliding_window is not None:  # TODO why?
-                tensor = torch.full((seqlen, seqlen), dtype=h.dtype, fill_value=1, device=h.device)
-                mask = torch.tril(tensor, diagonal=0).to(h.dtype)
-                # make the mask banded to account for sliding window
-                mask = torch.triu(mask, diagonal=-self.args.sliding_window)
-                mask = torch.log(mask)
-            else:
-                mask = torch.full((1, 1, seqlen, seqlen), float("-inf"), device=tokens.device)
-                mask = torch.triu(mask, diagonal=start_pos + 1).type_as(h)
+            tensor = torch.full((seqlen, seqlen), dtype=h.dtype, fill_value=1, device=h.device)
+            mask = torch.tril(tensor, diagonal=0).to(h.dtype)
+            # make the mask banded to account for sliding window
+            mask = torch.triu(mask, diagonal=-self.args.sliding_window)
+            mask = torch.log(mask)
 
         for layer in self.layers:
             h = layer(h, start_pos, freqs_cis, mask, use_cache)
@@ -308,15 +304,11 @@ class MistralVerifier(ParallelVerifier):
 
         mask = None
         if seqlen > 1:
-            if self.args.sliding_window is not None:  # TODO why?
-                tensor = torch.full((seqlen, seqlen), dtype=h.dtype, fill_value=1, device=h.device)
-                mask = torch.tril(tensor, diagonal=0).to(h.dtype)
-                # make the mask banded to account for sliding window
-                mask = torch.triu(mask, diagonal=-self.args.sliding_window)
-                mask = torch.log(mask)
-            else:
-                mask = torch.full((1, 1, seqlen, seqlen), float("-inf"), device=tokens.device)
-                mask = torch.triu(mask, diagonal=1).type_as(h)
+            tensor = torch.full((seqlen, seqlen), dtype=h.dtype, fill_value=1, device=h.device)
+            mask = torch.tril(tensor, diagonal=0).to(h.dtype)
+            # make the mask banded to account for sliding window
+            mask = torch.triu(mask, diagonal=-self.args.sliding_window)
+            mask = torch.log(mask)
 
         for layer in self.layers:
             h = layer(h, freqs_cis, positions, mask, use_cache=False)
@@ -529,15 +521,11 @@ class LoraMistral(Mistral):
 
         mask = None
         if seqlen > 1:
-            if self.args.sliding_window is not None:  # TODO why?
-                tensor = torch.full((seqlen, seqlen), dtype=h.dtype, fill_value=1, device=h.device)
-                mask = torch.tril(tensor, diagonal=0).to(h.dtype)
-                # make the mask banded to account for sliding window
-                mask = torch.triu(mask, diagonal=-self.args.sliding_window)
-                mask = torch.log(mask)
-            else:
-                mask = torch.full((1, 1, seqlen, seqlen), float("-inf"), device=tokens.device)
-                mask = torch.triu(mask, diagonal=start_pos + 1).type_as(h)
+            tensor = torch.full((seqlen, seqlen), dtype=h.dtype, fill_value=1, device=h.device)
+            mask = torch.tril(tensor, diagonal=0).to(h.dtype)
+            # make the mask banded to account for sliding window
+            mask = torch.triu(mask, diagonal=-self.args.sliding_window)
+            mask = torch.log(mask)
 
         for layer in self.layers:
             h = layer(h, start_pos, freqs_cis, mask, use_cache)
