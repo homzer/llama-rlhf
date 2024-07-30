@@ -31,14 +31,12 @@ def main(
         tokenizer_file = ckpt_dir
     if config_file is None:
         config_file = ckpt_dir
-    local_rank, world_size = setup_model_parallel(seed=seed)
+    setup_model_parallel(seed=seed)
 
     model, tokenizer = get_parallel_model(
         model_type=model_type,
-        local_rank=local_rank,
         config_file=config_file,
         tokenizer_file=tokenizer_file,
-        world_size=world_size,
         max_seq_len=max_seq_len,
         lora_rank=lora_rank,
         dtype=dtype,

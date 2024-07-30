@@ -42,10 +42,8 @@ def main(
 
     model, tokenizer = get_parallel_model(
         model_type=model_type,
-        local_rank=local_rank,
         config_file=config_file,
         tokenizer_file=tokenizer_file,
-        world_size=world_size,
         max_seq_len=max_seq_len,
         lora_rank=lora_rank,
         dtype=dtype,
@@ -84,7 +82,7 @@ def main(
         if evaluator is not None:
             outputs = evaluator.forward(task, JsonDataset(label_file))
             print("Evaluate Accuracy: ", outputs.acc, "Missing: ", outputs.missing)
-            if log_dir is not None:
+            if log_dir is not None and local_rank == 0:
                 json_dump(outputs.datalist, os.path.join(
                     log_dir, f'results-epoch-{epoch + 1}-{round(outputs.acc, 4)}.json'), indent=4
                 )

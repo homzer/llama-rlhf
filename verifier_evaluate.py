@@ -25,12 +25,10 @@ def main(
     os.makedirs(log_dir, exist_ok=True)
     tokenizer_file = ckpt_dir if tokenizer_file is None else tokenizer_file
     config_file = ckpt_dir if config_file is None else config_file
-    local_rank, world_size = setup_model_parallel(seed=seed)
+    setup_model_parallel(seed=seed)
     model, tokenizer = get_parallel_verifier(
         model_type=model_type,
         config_file=config_file,
-        local_rank=local_rank,
-        world_size=world_size,
         max_seq_len=max_seq_len,
         tokenizer_file=tokenizer_file,
         lora_rank=-1,

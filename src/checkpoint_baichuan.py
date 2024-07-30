@@ -174,9 +174,15 @@ def auto_merge_8_to_1(
 
 
 # Copied from src.checkpoint.auto_split_huggingface_checkpoints
-def auto_split_huggingface_checkpoints(ckpt_dir: str, world_size: int, local_rank: int, verbose: bool = True) -> str:
-    pl_ckpt_dir = os.path.join(ckpt_dir, str(world_size))
-    if local_rank == 0 and not os.path.exists(pl_ckpt_dir):
+def auto_split_huggingface_checkpoints(
+        ckpt_dir: str,
+        model_parallel_world_size: int,
+        model_parallel_rank: int,
+        model_parallel_src_rank: int,
+        verbose: bool = True
+) -> str:
+    pl_ckpt_dir = os.path.join(ckpt_dir, str(model_parallel_world_size))
+    if model_parallel_src_rank == 0 and model_parallel_rank == 0 and not os.path.exists(pl_ckpt_dir):
         if verbose:
             print(f'Parallel checkpoint dose not exist. Splitting into {pl_ckpt_dir} ...')
         if os.path.exists(os.path.join(ckpt_dir, "pytorch_model.bin")):
@@ -187,7 +193,7 @@ def auto_split_huggingface_checkpoints(ckpt_dir: str, world_size: int, local_ran
                 split_file = sorted(Path(ckpt_dir).glob("pytorch_model*.bin"))
                 if len(split_file) == 0:
                     raise FileNotFoundError("Can not find any checkpoint file")
-        splitting(split_file, pl_ckpt_dir, n=world_size)
+        splitting(split_file, pl_ckpt_dir, n=model_parallel_world_size)
         if verbose:
             print('Done!')
     return pl_ckpt_dir

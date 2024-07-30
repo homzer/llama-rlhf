@@ -4,7 +4,17 @@ from dataclasses import dataclass
 
 import transformers
 
-from src.utils import get_torch_dtype
+from fairscale.nn.model_parallel import (
+    get_model_parallel_world_size,
+    get_model_parallel_rank,
+    get_model_parallel_src_rank,
+    get_data_parallel_world_size,
+    get_data_parallel_rank,
+)
+
+from torch.distributed import get_world_size, get_rank, get_group_rank
+
+from src.utils import get_torch_dtype, get_data_parallel_src_rank
 
 HF_CONFIG_MAP = {
     "hidden_size": "dim",
@@ -55,8 +65,16 @@ class BaseArgs(Args):
 @dataclass
 class BaseParallelArgs(Args):
     max_seq_len: int
-    local_rank: int
-    world_size: int
+    global_rank: int = int(os.environ.get("RANK"))
+    local_rank: int = int(os.environ.get("LOCAL_RANK"))
+    world_size: int = int(os.environ.get("WORLD_SIZE"))
+    model_parallel_world_size: int = get_model_parallel_world_size()
+    model_parallel_rank: int = get_model_parallel_rank()
+    model_parallel_src_rank: int = get_model_parallel_src_rank()
+    data_parallel_world_size: int = get_data_parallel_world_size()
+    data_parallel_rank: int = get_data_parallel_rank()
+    data_parallel_src_rank: int = get_data_parallel_src_rank()
+
     dtype: str = "float16"
 
     use_clamp: bool = False

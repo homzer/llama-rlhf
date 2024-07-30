@@ -44,8 +44,8 @@ class AbstractPolicyForCausalLM(Module):
 
 class AbstractParallelPolicyForCausalLM(ParallelModule):
     """ Abstract Actor-Critic Policy """
-    def __init__(self, local_rank, world_size):
-        super().__init__(local_rank, world_size)
+    def __init__(self):
+        super().__init__()
 
     def init_weights(self):
         raise NotImplementedError
@@ -111,7 +111,7 @@ class ActorCriticPolicyForCausalLM(AbstractPolicyForCausalLM):
 
 class ParallelActorCriticPolicyForCausalLM(AbstractParallelPolicyForCausalLM):
     def __init__(self, model: ParallelModelForCausalLM, generator: ActorGeneratorForCausalLM, dim: int):
-        super().__init__(model.local_rank, model.world_size)
+        super().__init__()
         self.model = model
         self.ln = nn.LayerNorm(dim, elementwise_affine=False).float()
         self.value = nn.Linear(dim, 1, bias=False).float()

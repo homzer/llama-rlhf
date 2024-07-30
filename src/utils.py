@@ -9,7 +9,7 @@ from typing import Tuple, List, Union, Callable
 import numpy as np
 import torch
 import torch.nn.functional as F
-from fairscale.nn.model_parallel.initialize import initialize_model_parallel
+from fairscale.nn.model_parallel.initialize import initialize_model_parallel, get_data_parallel_world_size
 from torch.distributed import init_process_group
 from tqdm import trange
 
@@ -130,6 +130,14 @@ def pickle_dump(obj, f):
     with open(f, "wb") as f:
         pickle.dump(obj, f)
     return f
+
+
+def get_data_parallel_src_rank() -> int:
+    """Calculate the global rank corresponding to a local rank zero
+    in the data parallel group."""
+    global_rank = torch.distributed.get_rank()
+    local_world_size = get_data_parallel_world_size()
+    return (global_rank // local_world_size) * local_world_size
 
 
 def setup_model_parallel(seed=None) -> Tuple[int, int]:

@@ -21,7 +21,7 @@ class LlamaAttention(AttentionForCausalLM):
     def __init__(self, args: LlamaArgs):
         super().__init__(args.max_seq_len)
         self.args = args
-        self.n_local_heads = args.n_heads // args.world_size
+        self.n_local_heads = args.n_heads // args.model_parallel_world_size
         self.head_dim = args.dim // args.n_heads
 
         self.wq = None
@@ -153,7 +153,7 @@ class LlamaTransformerBlock(nn.Module):
 
 class Llama(ParallelModelForCausalLM):
     def __init__(self, args: LlamaArgs):
-        super().__init__(args.local_rank, args.world_size)
+        super().__init__()
         self.args = args
 
         self.tok_embeddings = None
@@ -209,7 +209,7 @@ class Llama(ParallelModelForCausalLM):
 
 class LlamaVerifier(ParallelVerifier):
     def __init__(self, args: LlamaArgs):
-        super().__init__(args.local_rank, args.world_size)
+        super().__init__()
         self.args = args
         self.vocab_size = args.vocab_size
         self.n_layers = args.n_layers

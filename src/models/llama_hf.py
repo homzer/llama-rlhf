@@ -22,7 +22,7 @@ class LlamaAttentionHf(AttentionForCausalLM):
     def __init__(self, args: LlamaArgs):
         super().__init__(args.max_seq_len)
         self.args = args
-        self.n_local_heads = args.n_heads // args.world_size
+        self.n_local_heads = args.n_heads // args.model_parallel_world_size
         self.head_dim = args.dim // args.n_heads
 
         self.q_proj = None
@@ -195,7 +195,7 @@ class LlamaModelHf(nn.Module):
 
 class LlamaHf(ParallelModelForCausalLM):
     def __init__(self, args: LlamaArgs):
-        super().__init__(args.local_rank, args.world_size)
+        super().__init__()
         self.args = args
         self.model = LlamaModelHf(args)
         self.lm_head = None
@@ -221,7 +221,11 @@ class LlamaHf(ParallelModelForCausalLM):
         checkpoints = sorted(Path(ckpt_dir).glob("consolidated.*.pth"))
         if len(checkpoints) == 0:  # splitting
             ckpt_dir = auto_split_huggingface_checkpoints(
-                ckpt_dir, world_size=self.world_size, local_rank=self.local_rank, verbose=verbose
+                ckpt_dir,
+                model_parallel_world_size=self.model_parallel_world_size,
+                model_parallel_rank=self.model_parallel_rank,
+                model_parallel_src_rank=self.model_parallel_src_rank,
+                verbose=verbose
             )
             set_barrier()
         super().load(ckpt_dir, verbose=verbose, merge_lora=True)

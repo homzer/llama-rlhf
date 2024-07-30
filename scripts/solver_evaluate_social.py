@@ -206,8 +206,6 @@ def run(
     model, tokenizer = get_parallel_model(
         model_type=model_type,
         config_file=config_file,
-        local_rank=local_rank,
-        world_size=world_size,
         max_seq_len=max_seq_len,
         tokenizer_file=tokenizer_file,
         lora_rank=-1

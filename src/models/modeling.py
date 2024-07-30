@@ -6,6 +6,11 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from fairscale.nn.model_parallel import (
+    get_model_parallel_world_size,
+    get_model_parallel_rank,
+    get_model_parallel_src_rank
+)
 
 from src.checkpoint import load_safetensors
 from src.utils import set_barrier, merge_lora_state_dict
@@ -115,10 +120,14 @@ class Verifier(Module):
 
 
 class ParallelModule(Module):
-    def __init__(self, local_rank, world_size):
+    def __init__(self):
         super().__init__()
-        self.local_rank = local_rank
-        self.world_size = world_size
+        self.global_rank = int(os.environ.get("RANK"))
+        self.local_rank = int(os.environ.get("LOCAL_RANK"))
+        self.world_size = int(os.environ.get("WORLD_SIZE"))
+        self.model_parallel_world_size = get_model_parallel_world_size()
+        self.model_parallel_rank = get_model_parallel_rank()  # rank in group
+        self.model_parallel_src_rank = get_model_parallel_src_rank()
 
     def init_weights(self):
         raise NotImplementedError
@@ -127,14 +136,14 @@ class ParallelModule(Module):
         if kwargs.get("verbose", True):
             print(f'Loading model from {ckpt_dir} .....')
         checkpoints = sorted(Path(ckpt_dir).glob("consolidated.*.pth"))
-        assert self.world_size == len(
+        assert self.model_parallel_world_size == len(
             checkpoints
-        ), f"Loading a checkpoint for MP={len(checkpoints)} but world size is {self.world_size}"
-        ckpt_path = checkpoints[self.local_rank]
+        ), f"Loading a checkpoint for MP={len(checkpoints)} but model parallel size is {self.model_parallel_world_size}"
+        ckpt_path = checkpoints[self.model_parallel_rank]
         loading_outputs = None
         if kwargs.get("sequential_load", False):  # For saving cpu memory
-            for i in range(self.world_size):
-                if i == self.local_rank:
+            for i in range(self.model_parallel_world_size):
+                if i == self.model_parallel_rank:
                     state_dict = torch.load(str(ckpt_path), map_location="cpu")
                     if kwargs.get("merge_lora", False):
                         state_dict = merge_lora_state_dict(state_dict)
@@ -156,18 +165,19 @@ class ParallelModule(Module):
             print(f'Loading done !')
 
     def save(self, save_path):
-        if self.local_rank == 0:
-            os.makedirs(save_path, exist_ok=True)
         print(f'Saving model to {save_path} ......')
-        set_barrier()
-        torch.save(self.state_dict(), os.path.join(save_path, f'consolidated.0{self.local_rank}.pth'))
+        if self.model_parallel_src_rank == 0:
+            if self.model_parallel_rank == 0:
+                os.makedirs(save_path, exist_ok=True)
+            set_barrier()
+            torch.save(self.state_dict(), os.path.join(save_path, f'consolidated.0{self.model_parallel_rank}.pth'))
         set_barrier()
         print(f'Saving done !')
 
 
 class ParallelModelForCausalLM(ParallelModule):
-    def __init__(self, local_rank, world_size):
-        super().__init__(local_rank, world_size)
+    def __init__(self):
+        super().__init__()
 
     def init_weights(self):
         raise NotImplementedError
@@ -185,8 +195,8 @@ class ParallelModelForCausalLM(ParallelModule):
 
 
 class ParallelModelForMaskedLM(ParallelModule):
-    def __init__(self, local_rank, world_size):
-        super().__init__(local_rank, world_size)
+    def __init__(self):
+        super().__init__()
 
     def init_weights(self):
         raise NotImplementedError
@@ -199,8 +209,8 @@ class ParallelModelForMaskedLM(ParallelModule):
 
 
 class ParallelModelForSeq2SeqLM(ParallelModule):
-    def __init__(self, local_rank, world_size):
-        super().__init__(local_rank, world_size)
+    def __init__(self):
+        super().__init__()
 
     def init_weights(self):
         raise NotImplementedError
@@ -217,8 +227,8 @@ class ParallelModelForSeq2SeqLM(ParallelModule):
 
 
 class ParallelVerifier(ParallelModule):
-    def __init__(self, local_rank, world_size):
-        super().__init__(local_rank, world_size)
+    def __init__(self):
+        super().__init__()
 
     def forward(self, tokens: torch.Tensor) -> VerifierOutputs:
         raise NotImplementedError

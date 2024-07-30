@@ -43,17 +43,14 @@ def main(
         lr: float = 1e-5,
         epochs: int = 1,
         log_dir: str = None,
-        seed: int = None,
-        use_float16: bool = True
+        seed: int = None
 ):
     if task is not None:
         assert label_file is not None
         assert eval_batch_size is not None
         assert log_dir is not None
         os.makedirs(log_dir, exist_ok=True)
-    local_rank, world_size = setup_model_parallel(
-        seed=seed
-    )
+    setup_model_parallel(seed=seed)
     dataset = MultiOutputsDataset(train_file)
     dataloader = DataLoader(dataset, batch_size=teacher_forward_batch_size)
 
@@ -61,8 +58,6 @@ def main(
         teacher, teacher_tokenizer = get_parallel_model(
             model_type=teacher_model_type,
             config_file=teacher_config_file,
-            local_rank=local_rank,
-            world_size=world_size,
             max_seq_len=teacher_max_seq_len,
             tokenizer_file=teacher_tokenizer_file,
             lora_rank=-1
@@ -87,8 +82,6 @@ def main(
         student, student_tokenizer = get_parallel_model(
             model_type=student_model_type,
             config_file=student_config_file,
-            local_rank=local_rank,
-            world_size=world_size,
             max_seq_len=student_max_seq_len,
             tokenizer_file=student_tokenizer_file,
             lora_rank=student_lora_rank

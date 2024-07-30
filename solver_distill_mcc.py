@@ -31,12 +31,9 @@ def run(
         lora_rank: int = 128,
         tokenizer_file: str = None,
         config_file: str = None,
-        use_float16: bool = True,
         seed: int = None
 ):
-    local_rank, world_size = setup_model_parallel(
-        seed=seed
-    )
+    setup_model_parallel(seed=seed)
 
     if tokenizer_file is None:
         tokenizer_file = os.path.join(ckpt_dir, 'tokenizer.model')
@@ -45,8 +42,6 @@ def run(
     model, tokenizer = get_parallel_model(
         model_type=model_type,
         config_file=config_file,
-        local_rank=local_rank,
-        world_size=world_size,
         max_seq_len=max_seq_len,
         tokenizer_file=tokenizer_file,
         lora_rank=lora_rank

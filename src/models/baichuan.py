@@ -25,8 +25,8 @@ class BaichuanAttention(AttentionForCausalLM):
         self.args = args
         self.hidden_size = args.hidden_size
         self.num_heads = args.num_attention_heads
-        assert args.num_attention_heads % args.world_size == 0
-        self.num_local_heads = args.num_attention_heads // args.world_size
+        assert args.num_attention_heads % args.model_parallel_world_size == 0
+        self.num_local_heads = args.num_attention_heads // args.model_parallel_world_size
         self.head_dim = args.hidden_size // args.num_attention_heads
 
         assert self.head_dim * self.num_heads == self.hidden_size
@@ -198,7 +198,7 @@ class BaichuanHead(nn.Module):
 
 class Baichuan(ParallelModelForCausalLM):
     def __init__(self, args: BaichuanArgs):
-        super().__init__(args.local_rank, args.world_size)
+        super().__init__()
         self.args = args
         self.model = BaichuanHead(args)
         self.lm_head = None
@@ -228,7 +228,11 @@ class Baichuan(ParallelModelForCausalLM):
         checkpoints = sorted(Path(ckpt_dir).glob("consolidated.*.pth"))
         if len(checkpoints) == 0:  # splitting
             ckpt_dir = auto_split_huggingface_checkpoints(
-                ckpt_dir, world_size=self.world_size, local_rank=self.local_rank, verbose=verbose
+                ckpt_dir,
+                model_parallel_world_size=self.model_parallel_world_size,
+                model_parallel_rank=self.model_parallel_rank,
+                model_parallel_src_rank=self.model_parallel_src_rank,
+                verbose=verbose
             )
             set_barrier()
         super().load(ckpt_dir, verbose=verbose, merge_lora=True)
@@ -456,7 +460,7 @@ class LoraBaichuan(Baichuan):
 
 class BaichuanVerifier(ParallelVerifier):
     def __init__(self, args: BaichuanArgs):
-        super().__init__(args.local_rank, args.world_size)
+        super().__init__()
         self.args = args
         self.model = BaichuanHead(args)
         self.v_head = None
@@ -472,11 +476,16 @@ class BaichuanVerifier(ParallelVerifier):
         scores = self.v_head(h.type_as(self.v_head.weight)).squeeze(-1)  # [b, s]
         return VerifierOutputs(scores=scores)
 
+    # Copied from llama_hf.LlamaHf.load
     def load(self, ckpt_dir: str, verbose: bool = True):
         checkpoints = sorted(Path(ckpt_dir).glob("consolidated.*.pth"))
         if len(checkpoints) == 0:  # splitting
             ckpt_dir = auto_split_huggingface_checkpoints(
-                ckpt_dir, world_size=self.world_size, local_rank=self.local_rank, verbose=verbose
+                ckpt_dir,
+                model_parallel_world_size=self.model_parallel_world_size,
+                model_parallel_rank=self.model_parallel_rank,
+                model_parallel_src_rank=self.model_parallel_src_rank,
+                verbose=verbose
             )
             set_barrier()
         super().load(ckpt_dir, verbose=verbose, merge_lora=True)

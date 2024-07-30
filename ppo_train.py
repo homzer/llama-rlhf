@@ -44,7 +44,7 @@ def run(
         begin_epoch: int = 0,
         use_chat_template: bool = False
 ):
-    local_rank, world_size = setup_model_parallel()
+    setup_model_parallel()
     actor_save_dir = os.path.join(save_dir, "actor")
     critic_save_dir = os.path.join(save_dir, "critic")
     os.makedirs(actor_save_dir, exist_ok=True)
@@ -65,8 +65,6 @@ def run(
         actor, actor_tokenizer = get_parallel_model(
             model_type=actor_model_type,
             config_file=actor_config_file,
-            local_rank=local_rank,
-            world_size=world_size,
             max_seq_len=max_seq_len,
             tokenizer_file=actor_tokenizer_file,
             lora_rank=-1,
@@ -98,8 +96,6 @@ def run(
         critic, critic_tokenizer = get_parallel_verifier(
             model_type=critic_model_type,
             config_file=critic_config_file,
-            local_rank=local_rank,
-            world_size=world_size,
             max_seq_len=max_seq_len,
             tokenizer_file=critic_tokenizer_file,
             lora_rank=-1,
@@ -128,8 +124,6 @@ def run(
         verifier, verifier_tokenizer = get_parallel_verifier(
             model_type=verifier_model_type,
             config_file=verifier_config_file,
-            local_rank=local_rank,
-            world_size=world_size,
             max_seq_len=max_seq_len,
             tokenizer_file=verifier_tokenizer_file,
             lora_rank=-1,
@@ -179,8 +173,6 @@ def run(
         actor, actor_tokenizer = get_parallel_model(
             model_type=actor_model_type,
             config_file=actor_config_file,
-            local_rank=local_rank,
-            world_size=world_size,
             max_seq_len=max_seq_len,
             tokenizer_file=actor_tokenizer_file,
             lora_rank=lora_rank,
@@ -214,8 +206,6 @@ def run(
         critic, critic_tokenizer = get_parallel_verifier(
             model_type=critic_model_type,
             config_file=critic_config_file,
-            local_rank=local_rank,
-            world_size=world_size,
             max_seq_len=max_seq_len,
             tokenizer_file=critic_tokenizer_file,
             lora_rank=lora_rank,

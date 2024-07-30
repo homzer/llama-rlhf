@@ -448,7 +448,7 @@ class ParallelT5Stack(nn.Module):
 
 class ParallelT5ForConditionalGeneration(ParallelModelForSeq2SeqLM):
     def __init__(self, config: T5Config, local_rank, world_size):
-        super().__init__(local_rank, world_size)
+        super().__init__()
         self.config = config
         self.model_dim = config.d_model
         self.shared = None

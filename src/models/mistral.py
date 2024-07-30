@@ -30,8 +30,8 @@ class MistralAttention(AttentionForCausalLM):
 
         self.n_heads: int = args.n_heads
         self.n_kv_heads: int = args.n_kv_heads
-        self.n_local_heads = self.n_heads // args.world_size
-        self.n_local_kv_heads = self.n_kv_heads // args.world_size
+        self.n_local_heads = self.n_heads // args.model_parallel_world_size
+        self.n_local_kv_heads = self.n_kv_heads // args.model_parallel_world_size
 
         self.repeats = self.n_local_heads // self.n_local_kv_heads
         self.sliding_window = self.args.sliding_window
@@ -208,7 +208,7 @@ class MistralTransformerBlock(nn.Module):
 
 class Mistral(ParallelModelForCausalLM):
     def __init__(self, args: MistralArgs):
-        super().__init__(args.local_rank, args.world_size)
+        super().__init__()
         self.args = args
         self.vocab_size = args.vocab_size
         self.n_layers = args.n_layers
@@ -271,7 +271,7 @@ class Mistral(ParallelModelForCausalLM):
 
 class MistralVerifier(ParallelVerifier):
     def __init__(self, args: MistralArgs):
-        super().__init__(args.local_rank, args.world_size)
+        super().__init__()
         self.args = args
         self.vocab_size = args.vocab_size
         self.n_layers = args.n_layers

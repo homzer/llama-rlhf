@@ -23,9 +23,9 @@ class MistralAttentionHf(AttentionForCausalLM):
         super().__init__(args.max_seq_len)
         self.args = args
         self.head_dim = args.hidden_size // args.num_attention_heads
-        self.num_local_heads = args.num_attention_heads // args.world_size
+        self.num_local_heads = args.num_attention_heads // args.model_parallel_world_size
         self.num_key_value_heads = args.num_key_value_heads
-        self.num_local_key_value_heads = self.num_key_value_heads // args.world_size
+        self.num_local_key_value_heads = self.num_key_value_heads // args.model_parallel_world_size
         self.n_rep = args.num_attention_heads // args.num_key_value_heads
 
         self.q_proj = None
@@ -208,7 +208,7 @@ class MistralModelHf(nn.Module):
 
 class MistralHf(ParallelModelForCausalLM):
     def __init__(self, args: MistralArgsHf):
-        super().__init__(args.local_rank, args.world_size)
+        super().__init__()
         self.args = args
         self.model = MistralModelHf(args)
         self.lm_head = None
@@ -229,7 +229,11 @@ class MistralHf(ParallelModelForCausalLM):
         checkpoints = sorted(Path(ckpt_dir).glob("consolidated.*.pth"))
         if len(checkpoints) == 0:  # splitting
             ckpt_dir = auto_split_huggingface_checkpoints(
-                ckpt_dir, world_size=self.world_size, local_rank=self.local_rank, verbose=verbose
+                ckpt_dir,
+                model_parallel_world_size=self.model_parallel_world_size,
+                model_parallel_rank=self.model_parallel_rank,
+                model_parallel_src_rank=self.model_parallel_src_rank,
+                verbose=verbose
             )
             set_barrier()
         super().load(ckpt_dir, verbose=verbose, merge_lora=True)

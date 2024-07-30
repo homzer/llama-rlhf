@@ -7,7 +7,6 @@ from src.models.modeling import ParallelModelForCausalLM, ParallelVerifier
 from src.ppo.buffer import RolloutBufferSample
 from src.ppo.policy import AbstractPolicyForCausalLM, AbstractParallelPolicyForCausalLM
 from src.trainer import ParallelTrainer, Trainer
-from src.utils import masked_std
 
 
 class PPOTrainerForCausalLM(Trainer):

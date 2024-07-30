@@ -72,19 +72,21 @@ class ParallelTrainer(Trainer):
             optimizer: torch.optim.Optimizer
     ):
         super().__init__(model, optimizer)
-        self.local_rank = model.local_rank
-        self.world_size = model.world_size
+        self.model_parallel_world_size = model.model_parallel_world_size
+        self.model_parallel_rank = model.model_parallel_rank
+        self.model_parallel_src_rank = model.model_parallel_src_rank
 
     def forward(self, *args, **kwargs):
         raise NotImplementedError
 
     def save_optimizer(self, save_path: str):
-        if self.local_rank == 0:
-            os.makedirs(save_path, exist_ok=True)
         print(f'Saving optimizer to {save_path} ......')
-        set_barrier()
-        torch.save(self.optimizer.state_dict(), os.path.join(
-            save_path, f'optimizer.0{self.local_rank}.bin'))
+        if self.model_parallel_src_rank:
+            if self.model_parallel_rank == 0:
+                os.makedirs(save_path, exist_ok=True)
+            set_barrier()
+            torch.save(self.optimizer.state_dict(), os.path.join(
+                save_path, f'optimizer.0{self.model_parallel_rank}.bin'))
         set_barrier()
         print(f'Saving done !')
 
@@ -93,10 +95,10 @@ class ParallelTrainer(Trainer):
         if len(checkpoints) == 0:
             return
         print(f'Loading optimizer from {save_path} .....')
-        assert self.world_size == len(
+        assert self.model_parallel_world_size == len(
             checkpoints
-        ), f"Loading a optimizer for MP={len(checkpoints)} but world size is {self.world_size}"
-        optim_file = checkpoints[self.local_rank]
+        ), f"Loading a optimizer for MP={len(checkpoints)} but world size is {self.model_parallel_world_size}"
+        optim_file = checkpoints[self.model_parallel_rank]
         state_dict = torch.load(str(optim_file))
         self.optimizer.load_state_dict(state_dict)
         for state in self.optimizer.state.values():

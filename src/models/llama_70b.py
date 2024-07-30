@@ -20,8 +20,8 @@ class LlamaAttention70B(AttentionForCausalLM):
         super().__init__(args.max_seq_len)
         self.args = args
         self.n_kv_heads = args.n_kv_heads
-        self.n_local_heads = args.n_heads // args.world_size
-        self.n_local_kv_heads = self.n_kv_heads // args.world_size
+        self.n_local_heads = args.n_heads // args.model_parallel_world_size
+        self.n_local_kv_heads = self.n_kv_heads // args.model_parallel_world_size
         self.n_rep = self.n_local_heads // self.n_local_kv_heads
         self.head_dim = args.dim // args.n_heads
 

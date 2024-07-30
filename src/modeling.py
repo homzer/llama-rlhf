@@ -148,8 +148,6 @@ TOKENIZERS = {
 def get_parallel_model(
         model_type: str,
         config_file: str,
-        local_rank: int,
-        world_size: int,
         max_seq_len: int,
         tokenizer_file: str,
         lora_rank: int,
@@ -161,8 +159,6 @@ def get_parallel_model(
     if lora_rank > 0:
         args = ARGS["lora-" + model_type](
             max_seq_len=max_seq_len,
-            local_rank=local_rank,
-            world_size=world_size,
             dtype=dtype,
             r=lora_rank,
             lora_dtype=lora_dtype,
@@ -173,8 +169,6 @@ def get_parallel_model(
     else:
         args = ARGS[model_type](
             max_seq_len=max_seq_len,
-            local_rank=local_rank,
-            world_size=world_size,
             dtype=dtype,
             use_clamp=use_clamp,
             use_logits_normalize=use_logits_normalize
@@ -188,8 +182,6 @@ def get_parallel_model(
 def get_parallel_verifier(
         model_type: str,
         config_file: str,
-        local_rank: int,
-        world_size: int,
         max_seq_len: int,
         tokenizer_file: str,
         lora_rank: int,
@@ -200,8 +192,6 @@ def get_parallel_verifier(
     if lora_rank > 0:
         args = ARGS["lora-" + model_type](
             max_seq_len=max_seq_len,
-            local_rank=local_rank,
-            world_size=world_size,
             dtype=dtype,
             r=lora_rank,
             lora_dtype=lora_dtype,
@@ -211,8 +201,6 @@ def get_parallel_verifier(
     else:
         args = ARGS[model_type](
             max_seq_len=max_seq_len,
-            local_rank=local_rank,
-            world_size=world_size,
             dtype=dtype,
             use_clamp=use_clamp
         ).from_json(config_file)

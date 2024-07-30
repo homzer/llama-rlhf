@@ -50,7 +50,7 @@ def main(
         assert eval_batch_size is not None
         assert log_dir is not None
         os.makedirs(log_dir, exist_ok=True)
-    local_rank, world_size = setup_model_parallel(seed=seed)
+    setup_model_parallel(seed=seed)
     datalist = json_load(train_file)
     epochs = len(datalist) // chunk_size
 
@@ -65,8 +65,6 @@ def main(
         policy, policy_tokenizer = get_parallel_model(
             model_type=policy_model_type,
             config_file=policy_config_file,
-            local_rank=local_rank,
-            world_size=world_size,
             max_seq_len=policy_max_seq_len,
             tokenizer_file=policy_tokenizer_file,
             lora_rank=-1,
@@ -96,8 +94,6 @@ def main(
         reference, reference_tokenizer = get_parallel_model(
             model_type=reference_model_type,
             config_file=reference_config_file,
-            local_rank=local_rank,
-            world_size=world_size,
             max_seq_len=reference_max_seq_len,
             tokenizer_file=reference_tokenizer_file,
             lora_rank=-1,
@@ -136,8 +132,6 @@ def main(
         policy, policy_tokenizer = get_parallel_model(
             model_type=policy_model_type,
             config_file=policy_config_file,
-            local_rank=local_rank,
-            world_size=world_size,
             max_seq_len=policy_max_seq_len,
             tokenizer_file=policy_tokenizer_file,
             lora_rank=policy_lora_rank,
