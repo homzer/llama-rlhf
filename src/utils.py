@@ -17,6 +17,7 @@ from fairscale.nn.model_parallel.initialize import (
     get_model_parallel_src_rank,
     get_data_parallel_world_size,
     get_data_parallel_rank,
+    get_model_parallel_group, get_data_parallel_group,
 )
 from torch.distributed import init_process_group
 from tqdm import trange
@@ -244,6 +245,16 @@ def cross_entropy(logits, labels, weights=None, keepdim=False):
 def set_barrier():
     """ make sure that all other processes cannot continue until reach this op. """
     torch.distributed.barrier()
+
+
+def set_data_parallel_barrier():
+    """ make sure that all other processes in data parallel group cannot continue until reach this op. """
+    torch.distributed.barrier(get_data_parallel_group())
+
+
+def set_model_parallel_barrier():
+    """ make sure that all other processes in model parallel group cannot continue until reach this op. """
+    torch.distributed.barrier(get_model_parallel_group())
 
 
 def extract_logits(logits, p=0.8, max_n=10, min_n=5):

@@ -15,7 +15,7 @@ from src.models.mistral import repeat_kv
 from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs, AttentionForCausalLM
 from src.models.modeling_acts import RMSNorm, Clamp, RotaryEmbedding
 from src.models.modeling_args import MistralArgsHf
-from src.utils import set_barrier, compute_position_ids, apply_rotary_pos_emb
+from src.utils import set_model_parallel_barrier, compute_position_ids, apply_rotary_pos_emb
 
 
 class MistralAttentionHf(AttentionForCausalLM):
@@ -234,11 +234,11 @@ class MistralHf(ParallelModelForCausalLM):
                 global_rank=self.global_rank,
                 verbose=verbose
             )
-            set_barrier()
+            set_model_parallel_barrier()
         super().load(ckpt_dir, verbose=verbose, merge_lora=True)
 
     # Copied from llama_hf.LlamaHf.flush
     def flush(self):
         for i in range(self.args.num_hidden_layers):
             self.model.layers[i].self_attn.flush()
-        set_barrier()
+        set_model_parallel_barrier()

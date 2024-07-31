@@ -14,7 +14,7 @@ from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs, Atten
     ParallelVerifier, VerifierOutputs
 from src.models.modeling_acts import RMSNorm, Clamp, LogitsNormalize
 from src.models.modeling_args import MistralArgs, LoraMistralArgs
-from src.utils import apply_rotary_emb, precompute_freqs_cis, set_barrier, apply_lora
+from src.utils import apply_rotary_emb, precompute_freqs_cis, set_model_parallel_barrier, apply_lora
 
 
 def repeat_kv(keys: torch.Tensor, values: torch.Tensor, repeats: int):
@@ -266,7 +266,7 @@ class Mistral(ParallelModelForCausalLM):
         """ Clean cache in `LlamaAttention` module """
         for i in range(self.args.n_layers):
             self.layers[i].attention.flush()
-        set_barrier()
+        set_model_parallel_barrier()
 
 
 class MistralVerifier(ParallelVerifier):

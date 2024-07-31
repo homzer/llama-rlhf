@@ -15,7 +15,7 @@ from src.checkpoint import auto_split_huggingface_checkpoints
 from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs, AttentionForCausalLM
 from src.models.modeling_acts import RMSNorm, Clamp, RotaryEmbedding, LogitsNormalize
 from src.models.modeling_args import LlamaArgs, LoraLlamaArgs
-from src.utils import set_barrier, apply_lora, compute_position_ids, apply_rotary_pos_emb
+from src.utils import set_model_parallel_barrier, apply_lora, compute_position_ids, apply_rotary_pos_emb
 
 
 class LlamaAttentionHf(AttentionForCausalLM):
@@ -226,14 +226,14 @@ class LlamaHf(ParallelModelForCausalLM):
                 global_rank=self.global_rank,
                 verbose=verbose
             )
-            set_barrier()
+            set_model_parallel_barrier()
         super().load(ckpt_dir, verbose=verbose, merge_lora=True)
 
     def flush(self):
         """ Clean cache in `LlamaAttention` module """
         for i in range(self.args.n_layers):
             self.model.layers[i].self_attn.flush()
-        set_barrier()
+        set_model_parallel_barrier()
 
 
 class LoraLlamaAttentionHf(LlamaAttentionHf):

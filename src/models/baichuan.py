@@ -16,7 +16,7 @@ from src.models.modeling import AttentionForCausalLM, ParallelModelForCausalLM, 
     VerifierOutputs
 from src.models.modeling_acts import RotaryEmbedding, Clamp, RMSNorm, LogitsNormalize
 from src.models.modeling_args import BaichuanArgs, LoraBaichuanArgs
-from src.utils import set_barrier, compute_position_ids, apply_rotary_pos_emb, apply_lora
+from src.utils import set_model_parallel_barrier, compute_position_ids, apply_rotary_pos_emb, apply_lora
 
 
 class BaichuanAttention(AttentionForCausalLM):
@@ -234,14 +234,14 @@ class Baichuan(ParallelModelForCausalLM):
                 model_parallel_src_rank=self.model_parallel_src_rank,
                 verbose=verbose
             )
-            set_barrier()
+            set_model_parallel_barrier()
         super().load(ckpt_dir, verbose=verbose, merge_lora=True)
 
     # Copied from llama_hf.LlamaHf.flush
     def flush(self):
         for i in range(self.args.num_hidden_layers):
             self.model.layers[i].self_attn.flush()
-        set_barrier()
+        set_model_parallel_barrier()
 
 
 class LoraBaichuanAttention(BaichuanAttention):
@@ -487,7 +487,7 @@ class BaichuanVerifier(ParallelVerifier):
                 model_parallel_src_rank=self.model_parallel_src_rank,
                 verbose=verbose
             )
-            set_barrier()
+            set_model_parallel_barrier()
         super().load(ckpt_dir, verbose=verbose, merge_lora=True)
 
 
