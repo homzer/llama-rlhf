@@ -29,6 +29,24 @@ class Args:
         lora_dtype = getattr(self, 'lora_dtype', None)
         if lora_dtype is not None:
             setattr(self, 'lora_dtype', get_torch_dtype(lora_dtype))
+        if getattr(self, 'global_rank', None) is None:
+            setattr(self, 'global_rank', int(os.environ.get("RANK")))
+        if getattr(self, 'local_rank', None) is None:
+            setattr(self, 'local_rank', int(os.environ.get("LOCAL_RANK")))
+        if getattr(self, 'world_size', None) is None:
+            setattr(self, 'world_size', int(os.environ.get("WORLD_SIZE")))
+        if getattr(self, 'model_parallel_world_size', None) is None:
+            setattr(self, 'model_parallel_world_size', get_model_parallel_world_size())
+        if getattr(self, 'model_parallel_rank', None) is None:
+            setattr(self, 'model_parallel_rank', get_model_parallel_rank())
+        if getattr(self, 'model_parallel_src_rank', None) is None:
+            setattr(self, 'model_parallel_src_rank', get_model_parallel_src_rank())
+        if getattr(self, 'data_parallel_world_size', None) is None:
+            setattr(self, 'data_parallel_world_size', get_data_parallel_world_size())
+        if getattr(self, 'data_parallel_rank', None) is None:
+            setattr(self, 'data_parallel_rank', get_data_parallel_rank())
+        if getattr(self, 'data_parallel_src_rank', None) is None:
+            setattr(self, 'data_parallel_src_rank', get_data_parallel_src_rank())
 
     def _set_attribute(self, name, value):
         try:
@@ -62,15 +80,16 @@ class BaseArgs(Args):
 @dataclass
 class BaseParallelArgs(Args):
     max_seq_len: int
-    global_rank: int = int(os.environ.get("RANK"))
-    local_rank: int = int(os.environ.get("LOCAL_RANK"))
-    world_size: int = int(os.environ.get("WORLD_SIZE"))
-    model_parallel_world_size: int = get_model_parallel_world_size()
-    model_parallel_rank: int = get_model_parallel_rank()
-    model_parallel_src_rank: int = get_model_parallel_src_rank()
-    data_parallel_world_size: int = get_data_parallel_world_size()
-    data_parallel_rank: int = get_data_parallel_rank()
-    data_parallel_src_rank: int = get_data_parallel_src_rank()
+
+    global_rank: int = None
+    local_rank: int = None
+    world_size: int = None
+    model_parallel_world_size: int = None
+    model_parallel_rank: int = None
+    model_parallel_src_rank: int = None
+    data_parallel_world_size: int = None
+    data_parallel_rank: int = None
+    data_parallel_src_rank: int = None
 
     dtype: str = "float16"
 
