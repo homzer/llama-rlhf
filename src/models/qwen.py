@@ -244,8 +244,7 @@ class Qwen(ParallelModelForCausalLM):
             ckpt_dir = auto_split_huggingface_checkpoints(
                 ckpt_dir,
                 model_parallel_world_size=self.model_parallel_world_size,
-                model_parallel_rank=self.model_parallel_rank,
-                model_parallel_src_rank=self.model_parallel_src_rank,
+                global_rank=self.global_rank,
                 verbose=verbose
             )
             set_barrier()
@@ -501,8 +500,7 @@ class QwenVerifier(ParallelVerifier):
             ckpt_dir = auto_split_huggingface_checkpoints(
                 ckpt_dir,
                 model_parallel_world_size=self.model_parallel_world_size,
-                model_parallel_rank=self.model_parallel_rank,
-                model_parallel_src_rank=self.model_parallel_src_rank,
+                global_rank=self.global_rank,
                 verbose=verbose
             )
             set_barrier()
