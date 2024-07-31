@@ -25,9 +25,7 @@ def main(
         dtype: str = "bfloat16",
         seed: int = None
 ):
-    local_rank, world_size = setup_model_parallel(
-        seed=seed
-    )
+    parallel_infos = setup_model_parallel(seed=seed)
     if tokenizer_file is None:
         tokenizer_file = ckpt_dir
     if config_file is None:
@@ -48,7 +46,7 @@ def main(
     evaluator = SolverEvaluator(model, tokenizer, max_batch_size, max_seq_len, temperature, top_p)
     outputs = evaluator.forward(task, dataset)
     print("Evaluate Accuracy: ", outputs.acc, "Missing: ", outputs.missing)
-    if local_rank == 0:
+    if parallel_infos.local_rank == 0:
         os.makedirs(log_dir, exist_ok=True)
         json_dump(outputs.datalist, os.path.join(
             log_dir, f'results-{round(outputs.acc, 4)}.json'

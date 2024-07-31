@@ -117,7 +117,7 @@ def main(
         use_reverse_kl: bool = False,
         use_js: bool = False
 ):
-    local_rank, world_size = setup_model_parallel(seed=seed)
+    parallel_infos = setup_model_parallel(seed=seed)
     datalist = json_load(train_file)
     epochs = len(datalist) // chunk_size
     for epoch in range(begin_epoch, epochs):
@@ -138,7 +138,7 @@ def main(
                 teacher_ckpt_dir=teacher_ckpt_dir,
                 logits_topk=logits_topk,
             )
-            if local_rank == 0:
+            if parallel_infos.local_rank == 0:
                 rollout_buffer.save(student_save_dir, overwrite=(epoch == 0))
         else:
             rollout_buffer = LogitsRolloutBuffer()

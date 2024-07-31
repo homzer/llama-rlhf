@@ -1,8 +1,8 @@
 import os
 
 import fire
-from torch.utils.data import DataLoader
 
+from src.dataloader import ParallelDataLoader
 from src.dataset import JsonDataset, ChatTemplateDataset
 from src.entities import Timer
 from src.generator import GeneratorForCausalLM
@@ -27,7 +27,7 @@ def main(
         seed: int = None
 ):
     os.makedirs(log_dir, exist_ok=True)
-    local_rank, world_size = setup_model_parallel(seed=seed)
+    setup_model_parallel(seed=seed)
     if tokenizer_file is None:
         tokenizer_file = ckpt_dir
     if config_file is None:
@@ -44,7 +44,7 @@ def main(
     dataset = JsonDataset(label_file)
     if use_chat_template:
         dataset = ChatTemplateDataset(dataset, tokenizer)
-    dataloader = DataLoader(dataset, batch_size=max_batch_size)
+    dataloader = ParallelDataLoader(dataset, batch_size=max_batch_size)
     model.load(ckpt_dir)
     generator = GeneratorForCausalLM(model, tokenizer, max_seq_len, temperature=temperature, top_p=top_p)
     timer = Timer(len(dataloader))

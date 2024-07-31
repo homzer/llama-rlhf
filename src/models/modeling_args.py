@@ -3,16 +3,13 @@ import os
 from dataclasses import dataclass
 
 import transformers
-
-from fairscale.nn.model_parallel import (
+from fairscale.nn.model_parallel.initialize import (
     get_model_parallel_world_size,
     get_model_parallel_rank,
     get_model_parallel_src_rank,
     get_data_parallel_world_size,
     get_data_parallel_rank,
 )
-
-from torch.distributed import get_world_size, get_rank, get_group_rank
 
 from src.utils import get_torch_dtype, get_data_parallel_src_rank
 

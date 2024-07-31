@@ -6,7 +6,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from fairscale.nn.model_parallel import (
+from fairscale.nn.model_parallel.initialize import (
     get_model_parallel_world_size,
     get_model_parallel_rank,
     get_model_parallel_src_rank
@@ -279,6 +279,6 @@ class AttentionForCausalLM(nn.Module):
         return output
 
     def flush(self):
-        """ Clean self.cache for next inference. """
+        """ Clean cache for next inference. """
         self.cache_v = None
         self.cache_k = None

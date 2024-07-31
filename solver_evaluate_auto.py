@@ -32,7 +32,7 @@ def main(
         config_file: str = None,
         seed: int = None
 ):
-    local_rank, world_size = setup_model_parallel(seed=seed)
+    parallel_infos = setup_model_parallel(seed=seed)
     if tokenizer_file is None:
         tokenizer_file = ckpt_dir
     if config_file is None:
@@ -65,7 +65,7 @@ def main(
             label_file = LABEL_FILES[task]
             outputs = evaluator.forward(task, JsonDataset(label_file))
             print("Task: ", task, "Evaluate Accuracy: ", outputs.acc, "Missing: ", outputs.missing)
-            if local_rank == 0:
+            if parallel_infos.local_rank == 0:
                 os.makedirs(os.path.join(log_dir, checkpoint.name), exist_ok=True)
                 json_dump(outputs.datalist, os.path.join(
                     log_dir, checkpoint.name, f'{task}-results-{round(outputs.acc, 5)}.json'

@@ -28,7 +28,7 @@ def main(
         end: int = None
 ):
     os.makedirs(log_dir, exist_ok=True)
-    local_rank, world_size = setup_model_parallel(seed=seed)
+    parallel_infos = setup_model_parallel(seed=seed)
     if tokenizer_file is None:
         tokenizer_file = ckpt_dir
     if config_file is None:
@@ -60,7 +60,7 @@ def main(
             timer.step()
             outputs = generator.forward(data['instruction'])
             for output, instruction in zip(outputs, data['instruction']):
-                if local_rank == 0:
+                if parallel_infos.local_rank == 0:
                     writer.write(json.dumps({"instruction": instruction, 'output': [output]}, ensure_ascii=False) + '\n')
                     writer.flush()
             set_barrier()

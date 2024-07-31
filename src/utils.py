@@ -1,3 +1,4 @@
+import collections
 import json
 import os
 import pickle
@@ -9,7 +10,14 @@ from typing import Tuple, List, Union, Callable
 import numpy as np
 import torch
 import torch.nn.functional as F
-from fairscale.nn.model_parallel.initialize import initialize_model_parallel, get_data_parallel_world_size
+from fairscale.nn.model_parallel.initialize import (
+    initialize_model_parallel,
+    get_model_parallel_world_size,
+    get_model_parallel_rank,
+    get_model_parallel_src_rank,
+    get_data_parallel_world_size,
+    get_data_parallel_rank,
+)
 from torch.distributed import init_process_group
 from tqdm import trange
 
@@ -27,7 +35,7 @@ def get_torch_dtype(dtype: str):
         raise ValueError(dtype)
 
 
-def set_seed(seed):
+def set_seed(seed: int):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     np.random.seed(seed)
@@ -140,22 +148,54 @@ def get_data_parallel_src_rank() -> int:
     return (global_rank // local_world_size) * local_world_size
 
 
-def setup_model_parallel(seed=None) -> Tuple[int, int]:
-    local_rank = int(os.environ.get("LOCAL_RANK", -1))
-    world_size = int(os.environ.get("WORLD_SIZE", -1))
+ParallelInfos = collections.namedtuple("ParallelInfos", [
+    "global_rank",
+    "local_rank",
+    "world_size",
+    "model_parallel_world_size",
+    "model_parallel_rank",
+    "model_parallel_src_rank",
+    "data_parallel_world_size",
+    "data_parallel_rank",
+    "data_parallel_src_rank"
+])
+
+
+def setup_model_parallel(
+        model_parallel_size: int = None, seed: int = None
+) -> ParallelInfos:
+
+    global_rank: int = int(os.environ.get("RANK"))
+    local_rank: int = int(os.environ.get("LOCAL_RANK"))
+    world_size: int = int(os.environ.get("WORLD_SIZE"))
+    model_parallel_world_size: int = get_model_parallel_world_size()
+    model_parallel_rank: int = get_model_parallel_rank()
+    model_parallel_src_rank: int = get_model_parallel_src_rank()
+    data_parallel_world_size: int = get_data_parallel_world_size()
+    data_parallel_rank: int = get_data_parallel_rank()
+    data_parallel_src_rank: int = get_data_parallel_src_rank()
+
     if local_rank > 0:
         sys.stdout = open(os.devnull, "w")
 
     init_process_group("nccl")
-    initialize_model_parallel(world_size)
+    initialize_model_parallel(model_parallel_size or world_size)
     torch.cuda.set_device(local_rank)
 
     # seed must be the same in all processes
-    # torch.manual_seed(1)
-    set_seed(1 if seed is None else seed)
-    # if use_float16:
-    #     torch.set_default_tensor_type('torch.HalfTensor')
-    return local_rank, world_size
+    set_seed(seed or 1)
+
+    return ParallelInfos(
+        global_rank=global_rank,
+        local_rank=local_rank,
+        world_size=world_size,
+        model_parallel_world_size=model_parallel_world_size,
+        model_parallel_rank=model_parallel_rank,
+        model_parallel_src_rank=model_parallel_src_rank,
+        data_parallel_world_size=data_parallel_world_size,
+        data_parallel_rank=data_parallel_rank,
+        data_parallel_src_rank=data_parallel_src_rank
+    )
 
 
 def sample_top_p(probs, p):

@@ -38,7 +38,7 @@ def main(
         os.makedirs(log_dir, exist_ok=True)
     tokenizer_file = tokenizer_file or ckpt_dir
     config_file = config_file or ckpt_dir
-    local_rank, world_size = setup_model_parallel(seed=seed)
+    parallel_infos = setup_model_parallel(seed=seed)
 
     model, tokenizer = get_parallel_model(
         model_type=model_type,
@@ -82,7 +82,7 @@ def main(
         if evaluator is not None:
             outputs = evaluator.forward(task, JsonDataset(label_file))
             print("Evaluate Accuracy: ", outputs.acc, "Missing: ", outputs.missing)
-            if log_dir is not None and local_rank == 0:
+            if log_dir is not None and parallel_infos.local_rank == 0:
                 json_dump(outputs.datalist, os.path.join(
                     log_dir, f'results-epoch-{epoch + 1}-{round(outputs.acc, 4)}.json'), indent=4
                 )
