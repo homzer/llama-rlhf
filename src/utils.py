@@ -168,6 +168,13 @@ def setup_model_parallel(
     global_rank: int = int(os.environ.get("RANK"))
     local_rank: int = int(os.environ.get("LOCAL_RANK"))
     world_size: int = int(os.environ.get("WORLD_SIZE"))
+
+    if local_rank > 0:
+        sys.stdout = open(os.devnull, "w")
+
+    init_process_group("nccl")
+    initialize_model_parallel(model_parallel_size or world_size)
+
     model_parallel_world_size: int = get_model_parallel_world_size()
     model_parallel_rank: int = get_model_parallel_rank()
     model_parallel_src_rank: int = get_model_parallel_src_rank()
@@ -175,13 +182,7 @@ def setup_model_parallel(
     data_parallel_rank: int = get_data_parallel_rank()
     data_parallel_src_rank: int = get_data_parallel_src_rank()
 
-    if local_rank > 0:
-        sys.stdout = open(os.devnull, "w")
-
-    init_process_group("nccl")
-    initialize_model_parallel(model_parallel_size or world_size)
     torch.cuda.set_device(local_rank)
-
     # seed must be the same in all processes
     set_seed(seed or 1)
 
