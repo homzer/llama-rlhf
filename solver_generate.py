@@ -1,13 +1,14 @@
+import json
 import os
 
 import fire
 
-from src.dataloader import ParallelDataLoader
+from src.dataloader import ParallelDataLoader, ParallelDataWriter
 from src.dataset import JsonDataset, ChatTemplateDataset
 from src.entities import Timer
 from src.generator import GeneratorForCausalLM
 from src.modeling import get_parallel_model
-from src.utils import setup_model_parallel, json_dump
+from src.utils import setup_model_parallel
 
 
 def main(
@@ -24,10 +25,11 @@ def main(
         config_file: str = None,
         use_chat_template: bool = False,
         dtype: str = "bfloat16",
+        model_parallel_size: int = None,
         seed: int = None
 ):
     os.makedirs(log_dir, exist_ok=True)
-    setup_model_parallel(seed=seed)
+    setup_model_parallel(model_parallel_size=model_parallel_size, seed=seed)
     if tokenizer_file is None:
         tokenizer_file = ckpt_dir
     if config_file is None:
@@ -48,17 +50,13 @@ def main(
     model.load(ckpt_dir)
     generator = GeneratorForCausalLM(model, tokenizer, max_seq_len, temperature=temperature, top_p=top_p)
     timer = Timer(len(dataloader))
-    datalist = []
+    writer = ParallelDataWriter(os.path.join(log_dir, "results.jsonl"), 'w')
     for data in dataloader:
         timer.step()
         outputs = generator.forward(data['instruction'])
         print(data['instruction'][-1] + "\n" + outputs[-1])
         for instruction, output in zip(data["instruction"], outputs):
-            datalist.append(dict(
-                instruction=instruction,
-                output=output
-            ))
-    json_dump(datalist, os.path.join(log_dir, "results.json"), indent=4)
+            writer.write(json.dumps(dict(instruction=instruction, output=output), ensure_ascii=False) + '\n')
 
 
 if __name__ == '__main__':
