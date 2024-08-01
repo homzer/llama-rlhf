@@ -16,7 +16,7 @@ from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs, Atten
     VerifierOutputs
 from src.models.modeling_acts import Clamp, RMSNorm, RotaryEmbedding, LogitsNormalize
 from src.models.modeling_args import QwenArgs, LoraQwenArgs
-from src.utils import set_model_parallel_barrier, compute_position_ids, apply_rotary_pos_emb, apply_lora
+from src.utils import set_model_parallel_barrier, compute_position_ids, apply_rotary_pos_emb, apply_lora, set_barrier
 
 
 class QwenAttention(AttentionForCausalLM):
@@ -247,7 +247,7 @@ class Qwen(ParallelModelForCausalLM):
                 global_rank=self.global_rank,
                 verbose=verbose
             )
-            set_model_parallel_barrier()
+            set_barrier()
         super().load(ckpt_dir, verbose=verbose, merge_lora=True)
 
     # Copied from llama_hf.LlamaHf.flush
@@ -503,7 +503,7 @@ class QwenVerifier(ParallelVerifier):
                 global_rank=self.global_rank,
                 verbose=verbose
             )
-            set_model_parallel_barrier()
+            set_barrier()
         super().load(ckpt_dir, verbose=verbose, merge_lora=True)
 
 
