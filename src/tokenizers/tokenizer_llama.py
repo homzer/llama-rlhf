@@ -1,4 +1,5 @@
 import os
+import re
 from typing import List
 
 from sentencepiece import SentencePieceProcessor
@@ -7,6 +8,11 @@ from src.tokenizers.tokenizer import Tokenizer
 
 
 class LlamaTokenizer(Tokenizer):
+    B_SYS: str = "<<SYS>>\n"
+    E_SYS: str = "\n<</SYS>>\n\n"
+    B_INST: str = "[INST]"
+    E_INST: str = "[/INST]"
+
     def __init__(self, model_file: str):
         if not model_file.endswith("tokenizer.model"):
             model_file = os.path.join(model_file, "tokenizer.model")
@@ -21,26 +27,47 @@ class LlamaTokenizer(Tokenizer):
         )
         assert self.vocab_size == self.model.GetPieceSize()
 
-    def apply_chat_template(self, messages: List[dict]) -> str:  # TODO
+    def apply_chat_template(self, messages: List[dict]) -> str:
         """
         :param messages: [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "greetings!"}]
         :return:
         """
+        if messages[0]["role"] == "system":
+            messages = [{
+                "role": messages[1]["role"],
+                "content": self.B_SYS + messages[0]["content"] + self.E_SYS + messages[1]["content"]
+            }] + messages[2:]
+        assert all([msg["role"] == "user" for msg in messages[::2]]) and all(
+            [msg["role"] == "assistant" for msg in messages[1::2]]
+        ), "Only supports 'system', 'user' and 'assistant' roles, starting with 'system', then 'user' (u/a/u/a/u...)."
         s = ""
-        user_template = "\n\nHuman: "
-        assistant_template = "\n\nAssistant: "
         for message in messages:
-            if message['role'] == 'user':
-                s += user_template + message['content']
-            elif message['role'] == 'assistant':
-                s += assistant_template + message['content']
+            if message["role"] == "user":
+                s += f"<s>{self.B_INST} {(message['content']).strip()} {self.E_INST}"
+            elif message["role"] == "assistant":
+                s += f" {(message['content']).strip()} </s>"
             else:
-                raise ValueError(message['role'])
-        s += assistant_template
+                raise ValueError(message["role"])
         return s
 
     def encode(self, s: str, bos: bool = False, eos: bool = False) -> List[int]:
-        return self.model.Encode(s, add_bos=bos, add_eos=eos)
+        encode = []
+        if s.startswith("<s>"):
+            encode.append(self.bos_id)
+            s = re.sub(r"^<s>", "", s)
+        dialogs = s.split('<s>')
+        for i, dialog in enumerate(dialogs):
+            enc = []
+            if dialog.endswith("</s>"):
+                enc.append(self.eos_id)
+                dialog = re.sub(r"</s>$", "", dialog)
+            enc = [*self.model.Encode(dialog), *enc] if i == 0 else [self.bos_id, *self.model.Encode(dialog), *enc]
+            encode.extend(enc)
+        if bos and encode[0] != self.bos_id:
+            encode = [self.bos_id, *encode]
+        if eos and encode[-1] != self.eos_id:
+            encode = [*encode, self.eos_id]
+        return encode
 
     def decode(self, t: List[int]) -> str:
         return self.model.Decode(t)
