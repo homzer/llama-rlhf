@@ -107,7 +107,7 @@ def splitting(
     new_state_dicts = splitting__(state_dict, n)
     os.makedirs(save_path, exist_ok=True)
     for i in range(n):
-        torch.save(new_state_dicts[i], os.path.join(save_path, f'consolidated.0{i}.pth'))
+        torch.save(new_state_dicts[i], os.path.join(save_path, 'consolidated.%02d.pth' % i))
 
 
 def auto_split_2_to_8(
@@ -116,11 +116,11 @@ def auto_split_2_to_8(
 ):
     state_dicts = []
     for i in range(2):
-        state_dict = torch.load(os.path.join(ckpt_dir, f"consolidated.0{i}.pth"), map_location="cpu")
+        state_dict = torch.load(os.path.join(ckpt_dir, 'consolidated.%02d.pth' % i), map_location="cpu")
         state_dicts.extend(splitting__(state_dict, 4))
     os.makedirs(save_dir, exist_ok=True)
     for i in range(8):
-        torch.save(state_dicts[i], os.path.join(save_dir, f'consolidated.0{i}.pth'))
+        torch.save(state_dicts[i], os.path.join(save_dir, 'consolidated.%02d.pth' % i))
 
 
 def auto_split_4_to_8(
@@ -129,11 +129,11 @@ def auto_split_4_to_8(
 ):
     state_dicts = []
     for i in range(4):
-        state_dict = torch.load(os.path.join(ckpt_dir, f"consolidated.0{i}.pth"), map_location="cpu")
+        state_dict = torch.load(os.path.join(ckpt_dir, 'consolidated.%02d.pth' % i), map_location="cpu")
         state_dicts.extend(splitting__(state_dict, 2))
     os.makedirs(save_dir, exist_ok=True)
     for i in range(8):
-        torch.save(state_dicts[i], os.path.join(save_dir, f'consolidated.0{i}.pth'))
+        torch.save(state_dicts[i], os.path.join(save_dir, 'consolidated.%02d.pth' % i))
 
 
 def merging__(state_dict1, state_dict2) -> dict:
@@ -167,13 +167,13 @@ def auto_merge_8_to_4(
 ):
     state_dicts = []
     for i in [0, 2, 4, 6]:
-        state_dict1 = torch.load(os.path.join(ckpt_dir, f"consolidated.0{i}.pth"), map_location="cpu")
-        state_dict2 = torch.load(os.path.join(ckpt_dir, f"consolidated.0{i+1}.pth"), map_location="cpu")
+        state_dict1 = torch.load(os.path.join(ckpt_dir, 'consolidated.%02d.pth' % i), map_location="cpu")
+        state_dict2 = torch.load(os.path.join(ckpt_dir, "consolidated.%02d.pth" % (i + 1)), map_location="cpu")
         state_dicts.append(merging__(state_dict1, state_dict2))
     os.makedirs(save_dir, exist_ok=True)
     assert len(state_dicts) == 4
     for i in range(4):
-        torch.save(state_dicts[i], os.path.join(save_dir, f'consolidated.0{i}.pth'))
+        torch.save(state_dicts[i], os.path.join(save_dir, 'consolidated.%02d.pth' % i))
 
 
 def auto_merge_8_to_1(
@@ -287,7 +287,7 @@ def auto_split_4_to_8_for_30b(
     os.makedirs(save_dir, exist_ok=True)
     for mp in range(4):
         n = 2
-        state_dict = torch.load(os.path.join(ckpt_dir, f"consolidated.0{mp}.pth"), map_location="cpu")
+        state_dict = torch.load(os.path.join(ckpt_dir, "consolidated.%02d.pth" % mp), map_location="cpu")
         new_state_dicts = [OrderedDict() for _ in range(n)]
         for name, param in state_dict.items():
             param = param.cpu()
@@ -329,7 +329,7 @@ def auto_split_4_to_8_for_30b(
                 for i in range(n):
                     new_state_dicts[i][name] = param.clone()
         for i in range(n):
-            torch.save(new_state_dicts[i], os.path.join(save_dir, f'consolidated.0{(mp*2)+i}.pth'))
+            torch.save(new_state_dicts[i], os.path.join(save_dir, 'consolidated.%02d.pth' % ((mp*2)+i)))
 
 
 def show(
@@ -358,7 +358,7 @@ def merge_lora(
                 wa = state_dict[name]
                 wb = state_dict[name.replace('lora_a_', 'lora_b_')]
                 result_dict[origin] = (w + wb @ wa).clone().to(w.dtype)
-        torch.save(result_dict, os.path.join(save_dir, f'consolidated.0{i}.pth'))
+        torch.save(result_dict, os.path.join(save_dir, 'consolidated.%02d.pth' % i))
 
 
 def auto_split_huggingface_checkpoints(
@@ -404,7 +404,7 @@ def auto_split_consolidate_checkpoints(
         new_state_dicts = splitting__(merge_state_dict, model_parallel_world_size)
         os.makedirs(pl_ckpt_dir, exist_ok=True)
         for i in range(model_parallel_world_size):
-            torch.save(new_state_dicts[i], os.path.join(pl_ckpt_dir, f'consolidated.0{i}.pth'))
+            torch.save(new_state_dicts[i], os.path.join(pl_ckpt_dir, 'consolidated.%02d.pth' % i))
         if verbose:
             print('Done!')
     return pl_ckpt_dir

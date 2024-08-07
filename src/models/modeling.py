@@ -170,7 +170,7 @@ class ParallelModule(Module):
             if self.model_parallel_rank == 0:
                 os.makedirs(save_path, exist_ok=True)
             set_barrier()
-            torch.save(self.state_dict(), os.path.join(save_path, f'consolidated.0{self.model_parallel_rank}.pth'))
+            torch.save(self.state_dict(), os.path.join(save_path, 'consolidated.%02d.pth' % self.model_parallel_rank))
         set_barrier()
         print(f'Saving done !')
 

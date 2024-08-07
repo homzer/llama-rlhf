@@ -37,30 +37,8 @@ from src.tokenizers import (
 
 
 ARGS = {
-    "llama-1-7b": LlamaArgs,
-    "llama-1-13b": LlamaArgs,
-    "llama-1-7b-chat": LlamaArgs,
-    "llama-1-13b-chat": LlamaArgs,
-    "llama-1-30b": LlamaArgs,
-    "llama-2-7b": LlamaArgs,
-    "llama-2-13b": LlamaArgs,
-    "llama-2-70b": LlamaArgs,
-    "llama-3-8b": LlamaArgs,
-    "llama-3-70b": LlamaArgs,
-    "llama-2-7b-chat": LlamaArgs,
-    "llama-2-13b-chat": LlamaArgs,
-    "llama-2-70b-chat": LlamaArgs,
-    "llama-3-8b-instruct": LlamaArgs,
-    "llama-3-70b-instruct": LlamaArgs,
-
-    "lora-llama-1-7b": LoraLlamaArgs,
-    "lora-llama-1-13b": LoraLlamaArgs,
-    "lora-llama-2-7b": LoraLlamaArgs,
-    "lora-llama-2-13b": LoraLlamaArgs,
-    "lora-llama-1-30b": LoraLlamaArgs,
-    "lora-llama-2-70b": LoraLlamaArgs,
-    "lora-llama-3-8b": LoraLlamaArgs,
-    "lora-llama-3-70b": LoraLlamaArgs,
+    "llama": LlamaArgs,
+    "lora-llama": LoraLlamaArgs,
 
     "mistral": MistralArgs,
     "lora-mistral": LoraMistralArgs,
@@ -77,26 +55,12 @@ ARGS = {
 
 
 MODELS = {
-    "llama-1-7b": Llama,
-    "llama-1-13b": Llama,
-    "llama-1-7b-chat": Llama,
-    "llama-1-13b-chat": Llama,
-    "llama-1-30b": Llama30B,
-    "llama-2-7b": Llama,
-    "llama-2-13b": Llama,
+    "llama": Llama,
     "llama-2-70b": Llama70B,
     "llama-3-8b": Llama3,
     "llama-3-70b": Llama3,
-    "llama-2-7b-chat": Llama,
-    "llama-2-13b-chat": Llama,
-    "llama-2-70b-chat": Llama70B,
-    "llama-3-8b-instruct": Llama3,
-    "llama-3-70b-instruct": Llama3,
-    "lora-llama-1-7b": LoraLlama,
-    "lora-llama-1-13b": LoraLlama,
-    "lora-llama-2-7b": LoraLlama,
-    "lora-llama-2-13b": LoraLlama,
-    "lora-llama-1-30b": LoraLlama30B,
+
+    "lora-llama": LoraLlama,
     "lora-llama-2-70b": LoraLlama70B,
     "lora-llama-3-8b": LoraLlama3,
     "lora-llama-3-70b": LoraLlama3,
@@ -115,8 +79,8 @@ MODELS = {
 }
 
 VERIFIERS = {
-    "llama-2-7b": LlamaVerifier,
-    "lora-llama-2-7b": LoraLlamaVerifier,
+    "llama": LlamaVerifier,
+    "lora-llama": LoraLlamaVerifier,
     "qwen": QwenVerifier,
     "lora-qwen": LoraQwenVerifier,
     "baichuan": BaichuanVerifier,
@@ -124,12 +88,8 @@ VERIFIERS = {
 }
 
 TOKENIZERS = {
-    "llama-1-7b": LlamaTokenizer,
-    "llama-1-13b": LlamaTokenizer,
-    "llama-1-30b": LlamaTokenizer,
-    "llama-2-7b-chat": LlamaTokenizer,
-    "llama-2-13b": LlamaTokenizer,
-    "llama-2-70b": LlamaTokenizer,
+    "llama": LlamaTokenizer,
+
     "llama-3-8b": Llama3Tokenizer,
     "llama-3-70b": Llama3Tokenizer,
     "llama-3-8b-instruct": Llama3ChatTokenizer,
