@@ -22,13 +22,46 @@ class LlamaAttention(AttentionForCausalLM):
     def __init__(self, args: LlamaArgs):
         super().__init__(args.max_seq_len)
         self.args = args
+        self.n_kv_heads = args.n_kv_heads or args.n_heads
         self.n_local_heads = args.n_heads // args.model_parallel_world_size
+        self.n_local_kv_heads = self.n_kv_heads // args.model_parallel_world_size
+        self.n_rep = self.n_local_heads // self.n_local_kv_heads
         self.head_dim = args.dim // args.n_heads
 
         self.wq = None
         self.wk = None
         self.wv = None
         self.wo = None
+
+    def init_weights(self):
+        self.wq = ColumnParallelLinear(
+            self.args.dim,
+            self.args.n_heads * self.head_dim,
+            bias=False,
+            gather_output=False,
+            init_method=lambda x: x,
+            ).type(self.args.dtype)
+        self.wk = ColumnParallelLinear(
+            self.args.dim,
+            self.n_kv_heads * self.head_dim,
+            bias=False,
+            gather_output=False,
+            init_method=lambda x: x
+        ).type(self.args.dtype)
+        self.wv = ColumnParallelLinear(
+            self.args.dim,
+            self.n_kv_heads * self.head_dim,
+            bias=False,
+            gather_output=False,
+            init_method=lambda x: x,
+            ).type(self.args.dtype)
+        self.wo = RowParallelLinear(
+            self.args.n_heads * self.head_dim,
+            self.args.dim,
+            bias=False,
+            input_is_parallel=True,
+            init_method=lambda x: x,
+            ).type(self.args.dtype)
 
     def forward(
             self,
@@ -42,60 +75,45 @@ class LlamaAttention(AttentionForCausalLM):
         xq, xk, xv = self.wq(x), self.wk(x), self.wv(x)
 
         xq = xq.view(bsz, seqlen, self.n_local_heads, self.head_dim)
-        xk = xk.view(bsz, seqlen, self.n_local_heads, self.head_dim)
-        xv = xv.view(bsz, seqlen, self.n_local_heads, self.head_dim)
+        xk = xk.view(bsz, seqlen, self.n_local_kv_heads, self.head_dim)
+        xv = xv.view(bsz, seqlen, self.n_local_kv_heads, self.head_dim)
+
         xq, xk = apply_rotary_emb(xq, xk, freqs_cis=freqs_cis)
+
         if use_cache:
             xk, xv = self.apply_cache(xk, xv, start_pos)
+
+        xk = self.repeat_kv(xk)
+        xv = self.repeat_kv(xv)
+
         output = self.apply_attention(xq, xk, xv, mask)
         return self.wo(output)
 
-    def init_weights(self):
-        self.wq = ColumnParallelLinear(
-            self.args.dim,
-            self.args.n_heads * self.head_dim,
-            bias=False,
-            gather_output=False,
-            init_method=lambda x: x,
-        ).type(self.args.dtype)
-        self.wk = ColumnParallelLinear(
-            self.args.dim,
-            self.args.n_heads * self.head_dim,
-            bias=False,
-            gather_output=False,
-            init_method=lambda x: x,
-        ).type(self.args.dtype)
-        self.wv = ColumnParallelLinear(
-            self.args.dim,
-            self.args.n_heads * self.head_dim,
-            bias=False,
-            gather_output=False,
-            init_method=lambda x: x,
-        ).type(self.args.dtype)
-        self.wo = RowParallelLinear(
-            self.args.n_heads * self.head_dim,
-            self.args.dim,
-            bias=False,
-            input_is_parallel=True,
-            init_method=lambda x: x,
-        ).type(self.args.dtype)
+    def repeat_kv(self, x: torch.Tensor) -> torch.Tensor:
+        bs, seqlen, n_kv_heads, head_dim = x.shape
+        if self.n_rep == 1:
+            return x
+        return (
+            x[:, :, :, None, :]
+            .expand(bs, seqlen, n_kv_heads, self.n_rep, head_dim)
+            .reshape(bs, seqlen, n_kv_heads * self.n_rep, head_dim)
+        )
 
 
 class LlamaFeedForward(nn.Module):
     def __init__(self, args: LlamaArgs):
         super().__init__()
         self.args = args
+        self.ffn_dim_multiplier = args.ffn_dim_multiplier or 1
         hidden_dim = int(2 * (4 * args.dim) / 3)
+        hidden_dim = int(self.ffn_dim_multiplier * hidden_dim)
         hidden_dim = args.multiple_of * ((hidden_dim + args.multiple_of - 1) // args.multiple_of)
+
         self.hidden_dim = hidden_dim
         self.dim = args.dim
-
         self.w1 = None
         self.w2 = None
         self.w3 = None
-
-    def forward(self, x):
-        return self.w2(F.silu(self.w1(x)) * self.w3(x))
 
     def init_weights(self):
         self.w1 = ColumnParallelLinear(
@@ -119,6 +137,9 @@ class LlamaFeedForward(nn.Module):
             gather_output=False,
             init_method=lambda x: x
         ).type(self.args.dtype)
+
+    def forward(self, x):
+        return self.w2(F.silu(self.w1(x)) * self.w3(x))
 
 
 class LlamaTransformerBlock(nn.Module):
@@ -289,12 +310,19 @@ class LoraLlamaAttention(LlamaAttention):
         xv = self.wv(x) + apply_lora(x, self.lora_a_wv, self.lora_b_wv)
 
         xq = xq.view(bsz, seqlen, self.n_local_heads, self.head_dim)
-        xk = xk.view(bsz, seqlen, self.n_local_heads, self.head_dim)
-        xv = xv.view(bsz, seqlen, self.n_local_heads, self.head_dim)
+        xk = xk.view(bsz, seqlen, self.n_local_kv_heads, self.head_dim)
+        xv = xv.view(bsz, seqlen, self.n_local_kv_heads, self.head_dim)
+
         xq, xk = apply_rotary_emb(xq, xk, freqs_cis=freqs_cis)
+
         if use_cache:
             xk, xv = self.apply_cache(xk, xv, start_pos)
+
+        xk = self.repeat_kv(xk)
+        xv = self.repeat_kv(xv)
+
         output = self.apply_attention(xq, xk, xv, mask)
+
         return self.wo(output) + apply_lora(output, self.lora_a_wo, self.lora_b_wo)
 
     def init_weights(self):
@@ -319,7 +347,7 @@ class LoraLlamaAttention(LlamaAttention):
         ).type(self.args.lora_dtype)
         self.lora_b_wk = ColumnParallelLinear(
             self.args.r,
-            self.args.n_heads * self.head_dim,
+            self.n_kv_heads * self.head_dim,
             bias=False,
             gather_output=False,
             init_method=init.zeros_,
@@ -331,7 +359,7 @@ class LoraLlamaAttention(LlamaAttention):
         ).type(self.args.lora_dtype)
         self.lora_b_wv = ColumnParallelLinear(
             self.args.r,
-            self.args.n_heads * self.head_dim,
+            self.n_kv_heads * self.head_dim,
             bias=False,
             gather_output=False,
             init_method=init.zeros_,
