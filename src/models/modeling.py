@@ -1,6 +1,7 @@
 import collections
 import math
 import os
+import re
 from pathlib import Path
 
 import torch
@@ -135,7 +136,9 @@ class ParallelModule(Module):
     def load(self, ckpt_dir: str, **kwargs):
         if kwargs.get("verbose", True):
             print(f'Loading model from {ckpt_dir} .....')
-        checkpoints = sorted(Path(ckpt_dir).glob("consolidated.*.pth"))
+        checkpoints = sorted(
+            Path(ckpt_dir).glob("consolidated.*.pth"), key=lambda x: int(re.findall(r'\d+', str(x))[0])
+        )
         assert self.model_parallel_world_size == len(
             checkpoints
         ), f"Loading a checkpoint for MP={len(checkpoints)} but model parallel size is {self.model_parallel_world_size}"

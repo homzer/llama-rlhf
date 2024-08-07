@@ -14,6 +14,7 @@ from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs, Atten
     ParallelVerifier, VerifierOutputs
 from src.models.modeling_acts import RMSNorm, Clamp, LogitsNormalize
 from src.models.modeling_args import LlamaArgs, LoraLlamaArgs
+from src.models.modeling_utils import auto_split_or_merge_checkpoints
 from src.utils import apply_rotary_emb, precompute_freqs_cis, set_model_parallel_barrier, apply_lora
 
 
@@ -197,8 +198,13 @@ class Llama(ParallelModelForCausalLM):
             self.args.dim, self.args.vocab_size, bias=False, init_method=lambda x: x
         ).type(self.args.dtype)
 
-    def load(self, ckpt_dir: str, verbose: bool = True, merge_lora: bool = False, sequential_load: bool = False):
-        super().load(ckpt_dir, verbose=verbose, merge_lora=merge_lora, sequential_load=sequential_load)
+    def load(self, ckpt_dir: str, verbose: bool = True, **kwargs):
+        ckpt_dir = auto_split_or_merge_checkpoints(
+            ckpt_dir,
+            model_parallel_world_size=self.model_parallel_world_size,
+            global_rank=self.global_rank
+        )
+        super().load(ckpt_dir, verbose=verbose, merge_lora=True)
 
     def flush(self):
         """ Clean cache in `LlamaAttention` module """

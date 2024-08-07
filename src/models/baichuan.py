@@ -11,7 +11,7 @@ from fairscale.nn.model_parallel.layers import (
     ParallelEmbedding
 )
 
-from src.checkpoint_baichuan import auto_split_huggingface_checkpoints
+from src.models.modeling_utils import auto_split_or_merge_checkpoints_for_baichuan
 from src.models.modeling import AttentionForCausalLM, ParallelModelForCausalLM, CausalLMOutputs, ParallelVerifier, \
     VerifierOutputs
 from src.models.modeling_acts import RotaryEmbedding, Clamp, RMSNorm, LogitsNormalize
@@ -225,16 +225,11 @@ class Baichuan(ParallelModelForCausalLM):
 
     # Copied from llama_hf.LlamaHf.load
     def load(self, ckpt_dir: str, verbose: bool = True):
-        checkpoints = sorted(Path(ckpt_dir).glob("consolidated.*.pth"))
-        if len(checkpoints) == 0:  # splitting
-            ckpt_dir = auto_split_huggingface_checkpoints(
-                ckpt_dir,
-                model_parallel_world_size=self.model_parallel_world_size,
-                model_parallel_rank=self.model_parallel_rank,
-                model_parallel_src_rank=self.model_parallel_src_rank,
-                verbose=verbose
-            )
-            set_model_parallel_barrier()
+        ckpt_dir = auto_split_or_merge_checkpoints_for_baichuan(
+            ckpt_dir=ckpt_dir,
+            model_parallel_world_size=self.model_parallel_world_size,
+            global_rank=self.global_rank
+        )
         super().load(ckpt_dir, verbose=verbose, merge_lora=True)
 
     # Copied from llama_hf.LlamaHf.flush
@@ -478,16 +473,11 @@ class BaichuanVerifier(ParallelVerifier):
 
     # Copied from llama_hf.LlamaHf.load
     def load(self, ckpt_dir: str, verbose: bool = True):
-        checkpoints = sorted(Path(ckpt_dir).glob("consolidated.*.pth"))
-        if len(checkpoints) == 0:  # splitting
-            ckpt_dir = auto_split_huggingface_checkpoints(
-                ckpt_dir,
-                model_parallel_world_size=self.model_parallel_world_size,
-                model_parallel_rank=self.model_parallel_rank,
-                model_parallel_src_rank=self.model_parallel_src_rank,
-                verbose=verbose
-            )
-            set_model_parallel_barrier()
+        ckpt_dir = auto_split_or_merge_checkpoints_for_baichuan(
+            ckpt_dir=ckpt_dir,
+            model_parallel_world_size=self.model_parallel_world_size,
+            global_rank=self.global_rank
+        )
         super().load(ckpt_dir, verbose=verbose, merge_lora=True)
 
 

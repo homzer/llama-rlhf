@@ -1,4 +1,3 @@
-from pathlib import Path
 from typing import Optional
 
 import torch
@@ -11,11 +10,11 @@ from fairscale.nn.model_parallel.layers import (
     ParallelEmbedding
 )
 
-from src.checkpoint import auto_split_huggingface_checkpoints
 from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs, AttentionForCausalLM
 from src.models.modeling_acts import RMSNorm, Clamp, RotaryEmbedding, LogitsNormalize
 from src.models.modeling_args import LlamaArgs, LoraLlamaArgs
-from src.utils import set_model_parallel_barrier, apply_lora, compute_position_ids, apply_rotary_pos_emb, set_barrier
+from src.models.modeling_utils import auto_split_or_merge_checkpoints
+from src.utils import set_model_parallel_barrier, apply_lora, compute_position_ids, apply_rotary_pos_emb
 
 
 class LlamaAttentionHf(AttentionForCausalLM):
@@ -218,15 +217,11 @@ class LlamaHf(ParallelModelForCausalLM):
         return CausalLMOutputs(logits=self.logits_norm.forward(output), hidden_states=h)
 
     def load(self, ckpt_dir: str, verbose: bool = True, **kwargs):
-        checkpoints = sorted(Path(ckpt_dir).glob("consolidated.*.pth"))
-        if len(checkpoints) == 0:  # splitting
-            ckpt_dir = auto_split_huggingface_checkpoints(
-                ckpt_dir,
-                model_parallel_world_size=self.model_parallel_world_size,
-                global_rank=self.global_rank,
-                verbose=verbose
-            )
-            set_barrier()
+        ckpt_dir = auto_split_or_merge_checkpoints(
+            ckpt_dir=ckpt_dir,
+            model_parallel_world_size=self.model_parallel_world_size,
+            global_rank=self.global_rank
+        )
         super().load(ckpt_dir, verbose=verbose, merge_lora=True)
 
     def flush(self):

@@ -2,7 +2,7 @@ import os
 import re
 from collections import OrderedDict
 from pathlib import Path
-from typing import Union, Dict
+from typing import Union, Dict, List
 
 import fire
 import safetensors
@@ -74,6 +74,10 @@ def splitting__(state_dict, n) -> list:
         else:
             for i in range(n):
                 new_state_dicts[i][name] = param.clone()
+
+        # release memory
+        state_dict[name] = None
+
     return new_state_dicts
 
 
@@ -93,10 +97,12 @@ def splitting(
                 with safetensors.safe_open(f, "pt", device="cpu") as reader:
                     for k in reader.keys():
                         state_dict[k] = reader.get_tensor(k)
-            else:
+            elif f.endswith(".bin"):
                 reader = torch.load(f, map_location="cpu")
                 for k in reader.keys():
                     state_dict[k] = reader[k]
+            else:
+                raise TypeError(f)
 
     new_state_dicts = splitting__(state_dict, n)
     os.makedirs(save_path, exist_ok=True)
@@ -147,6 +153,10 @@ def merging__(state_dict1, state_dict2) -> dict:
         else:
             new_state_dicts[name] = state_dict1[name].clone()
 
+        # release memory
+        state_dict1[name] = None
+        state_dict2[name] = None
+
     return new_state_dicts
 
 
@@ -193,6 +203,18 @@ def auto_merge_8_to_1(
         )
     )
     torch.save(state_dict, save_file)
+
+
+def auto_merge_n_to_1(state_dicts: List[dict]) -> dict:
+    if len(state_dicts) <= 1:
+        return state_dicts[0]
+
+    assert len(state_dicts) % 2 == 0, "the number of merged `state_dicts` must be even."
+    merge_state_dicts = []
+    for state_dict_1, state_dict_2 in zip(state_dicts[::2], state_dicts[1::2]):
+        merge_state_dicts.append(merging__(state_dict_1, state_dict_2))
+
+    return auto_merge_n_to_1(merge_state_dicts)
 
 
 def merging(
@@ -357,6 +379,33 @@ def auto_split_huggingface_checkpoints(
                 if len(split_file) == 0:
                     raise FileNotFoundError("Can not find any checkpoint file")
         splitting(split_file, pl_ckpt_dir, n=model_parallel_world_size)
+        if verbose:
+            print('Done!')
+    return pl_ckpt_dir
+
+
+def auto_split_consolidate_checkpoints(
+        ckpt_dir: str,
+        model_parallel_world_size: int,
+        global_rank: int,
+        verbose: bool = True
+) -> str:
+    pl_ckpt_dir = os.path.join(ckpt_dir, str(model_parallel_world_size))
+    if global_rank == 0 and not os.path.exists(pl_ckpt_dir):
+        if verbose:
+            print(f'Parallel checkpoint dose not exist. Splitting into {pl_ckpt_dir} ...')
+        checkpoints = sorted(
+            Path(ckpt_dir).glob("consolidated.*.pth"), key=lambda x: int(re.findall(r'\d+', str(x))[0])
+        )
+        assert len(checkpoints) > 0
+        # merge to 1 first and then split to `model_parallel_world_size`
+        state_dicts = [torch.load(ckpt_file) for ckpt_file in checkpoints]
+        merge_state_dict = auto_merge_n_to_1(state_dicts)
+
+        new_state_dicts = splitting__(merge_state_dict, model_parallel_world_size)
+        os.makedirs(pl_ckpt_dir, exist_ok=True)
+        for i in range(model_parallel_world_size):
+            torch.save(new_state_dicts[i], os.path.join(pl_ckpt_dir, f'consolidated.0{i}.pth'))
         if verbose:
             print('Done!')
     return pl_ckpt_dir

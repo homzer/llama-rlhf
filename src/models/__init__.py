@@ -7,7 +7,6 @@ from src.models.llama3 import Llama3, LoraLlama3
 from src.models.mistral import Mistral, LoraMistral
 from src.models.mistral_hf import MistralHf
 from src.models.mistral_moe_hf import MistralMoeHf
-from src.models.openchat import OpenChat
 from src.models.gpt2 import GPT2
 from src.models.qwen import Qwen, QwenVerifier, LoraQwenVerifier, LoraQwen
 from src.models.baichuan import Baichuan, BaichuanVerifier, LoraBaichuan, LoraBaichuanVerifier
