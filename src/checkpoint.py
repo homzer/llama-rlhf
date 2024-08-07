@@ -144,10 +144,11 @@ def merging__(state_dict1, state_dict2) -> dict:
         if is_parallel(name):
             param1 = state_dict1[name]
             param2 = state_dict2[name]
-            assert len(param1.shape) == 2
             if is_col_parallel(name):
                 param = torch.cat([param1, param2], dim=0)
             else:
+                assert len(param1.shape) == 2
+                assert len(param2.shape) == 2
                 param = torch.cat([param1, param2], dim=1)
             new_state_dicts[name] = param.clone()
         else:
