@@ -394,9 +394,7 @@ def auto_split_consolidate_checkpoints(
     if global_rank == 0 and not os.path.exists(pl_ckpt_dir):
         if verbose:
             print(f'Parallel checkpoint dose not exist. Splitting into {pl_ckpt_dir} ...')
-        checkpoints = sorted(
-            Path(ckpt_dir).glob("consolidated.*.pth"), key=lambda x: int(re.findall(r'\d+', str(x))[0])
-        )
+        checkpoints = sorted(Path(ckpt_dir).glob("consolidated.*.pth"))
         assert len(checkpoints) > 0
         # merge to 1 first and then split to `model_parallel_world_size`
         state_dicts = [torch.load(ckpt_file) for ckpt_file in checkpoints]
