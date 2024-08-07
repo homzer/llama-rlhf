@@ -127,7 +127,7 @@ TOKENIZERS = {
     "llama-1-7b": LlamaTokenizer,
     "llama-1-13b": LlamaTokenizer,
     "llama-1-30b": LlamaTokenizer,
-    "llama-2-7b": LlamaTokenizer,
+    "llama-2-7b-chat": LlamaTokenizer,
     "llama-2-13b": LlamaTokenizer,
     "llama-2-70b": LlamaTokenizer,
     "llama-3-8b": Llama3Tokenizer,
