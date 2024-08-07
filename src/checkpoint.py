@@ -398,7 +398,7 @@ def auto_split_consolidate_checkpoints(
         checkpoints = sorted(Path(ckpt_dir).glob("consolidated.*.pth"))
         assert len(checkpoints) > 0
         # merge to 1 first and then split to `model_parallel_world_size`
-        state_dicts = [torch.load(ckpt_file) for ckpt_file in checkpoints]
+        state_dicts = [torch.load(ckpt_file, map_location="cpu") for ckpt_file in checkpoints]
         merge_state_dict = auto_merge_n_to_1(state_dicts)
 
         new_state_dicts = splitting__(merge_state_dict, model_parallel_world_size)
