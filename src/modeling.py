@@ -1,21 +1,23 @@
 from src.models import (
     ParallelModule,
-    LoraLlama30B,
     LoraMistral,
-    LoraLlama70B,
     LoraLlama,
     LoraLlamaVerifier,
     Mistral,
     MistralHf,
     MistralMoeHf,
-    Llama30B,
-    Llama70B,
     Llama,
     LlamaVerifier,
     Qwen,
     QwenVerifier,
     Llama3,
-    LoraLlama3, LoraQwen, LoraQwenVerifier, Baichuan, BaichuanVerifier, LoraBaichuanVerifier, LoraBaichuan
+    LoraLlama3,
+    LoraQwen,
+    LoraQwenVerifier,
+    Baichuan,
+    BaichuanVerifier,
+    LoraBaichuanVerifier,
+    LoraBaichuan
 )
 from src.models.modeling_args import (
     LlamaArgs,
@@ -24,7 +26,10 @@ from src.models.modeling_args import (
     LoraMistralArgs,
     QwenArgs,
     MistralArgsHf,
-    MistralMoeArgsHf, LoraQwenArgs, BaichuanArgs, LoraBaichuanArgs
+    MistralMoeArgsHf,
+    LoraQwenArgs,
+    BaichuanArgs,
+    LoraBaichuanArgs
 )
 from src.tokenizers import (
     Tokenizer,
@@ -39,16 +44,15 @@ from src.tokenizers import (
 ARGS = {
     "llama": LlamaArgs,
     "lora-llama": LoraLlamaArgs,
-
+    "llama-3": LlamaArgs,
+    "lora-llama-3": LoraLlamaArgs,
     "mistral": MistralArgs,
     "lora-mistral": LoraMistralArgs,
     "mistral-hf": MistralArgsHf,
     "mistral-7b-instruct-v0.2": MistralArgsHf,
     "mixtral-8x7b-instruct-v0.1": MistralMoeArgsHf,
-
     "qwen": QwenArgs,
     "lora-qwen": LoraQwenArgs,
-
     "baichuan": BaichuanArgs,
     "lora-baichuan": LoraBaichuanArgs
 }
@@ -56,14 +60,10 @@ ARGS = {
 
 MODELS = {
     "llama": Llama,
-    "llama-2-70b": Llama70B,
-    "llama-3-8b": Llama3,
-    "llama-3-70b": Llama3,
+    "llama-3": Llama3,
 
     "lora-llama": LoraLlama,
-    "lora-llama-2-70b": LoraLlama70B,
-    "lora-llama-3-8b": LoraLlama3,
-    "lora-llama-3-70b": LoraLlama3,
+    "lora-llama-3": LoraLlama3,
 
     "mistral": Mistral,
     "lora-mistral": LoraMistral,
@@ -89,11 +89,7 @@ VERIFIERS = {
 
 TOKENIZERS = {
     "llama": LlamaTokenizer,
-
-    "llama-3-8b": Llama3Tokenizer,
-    "llama-3-70b": Llama3Tokenizer,
-    "llama-3-8b-instruct": Llama3ChatTokenizer,
-    "llama-3-70b-instruct": Llama3ChatTokenizer,
+    "llama-3": Llama3Tokenizer,
 
     "mistral": MistralTokenizer,
     "mistral-hf": MistralTokenizer,
@@ -116,23 +112,19 @@ def get_parallel_model(
         use_clamp: bool = False,
         use_logits_normalize: bool = True
 ) -> (ParallelModule, Tokenizer):
+    kwargs = dict(
+        max_seq_len=max_seq_len,
+        dtype=dtype,
+        use_clamp=use_clamp,
+        use_logits_normalize=use_logits_normalize
+    )
     if lora_rank > 0:
-        args = ARGS["lora-" + model_type](
-            max_seq_len=max_seq_len,
-            dtype=dtype,
-            r=lora_rank,
-            lora_dtype=lora_dtype,
-            use_clamp=use_clamp,
-            use_logits_normalize=use_logits_normalize
-        ).from_json(config_file)
+        kwargs["r"] = lora_rank
+        kwargs["lora_dtype"] = lora_dtype
+        args = ARGS["lora-" + model_type](**kwargs).from_json(config_file)
         model = MODELS["lora-" + model_type](args)
     else:
-        args = ARGS[model_type](
-            max_seq_len=max_seq_len,
-            dtype=dtype,
-            use_clamp=use_clamp,
-            use_logits_normalize=use_logits_normalize
-        ).from_json(config_file)
+        args = ARGS[model_type](**kwargs).from_json(config_file)
         model = MODELS[model_type](args)
     tokenizer = TOKENIZERS[model_type](tokenizer_file)
     model.init_weights()
@@ -147,23 +139,22 @@ def get_parallel_verifier(
         lora_rank: int,
         dtype: str = 'bfloat16',
         lora_dtype: str = 'float32',
-        use_clamp: bool = False
+        use_clamp: bool = False,
+        use_logits_normalize: bool = True
 ) -> (ParallelModule, Tokenizer):
+    kwargs = dict(
+        max_seq_len=max_seq_len,
+        dtype=dtype,
+        use_clamp=use_clamp,
+        use_logits_normalize=use_logits_normalize
+    )
     if lora_rank > 0:
-        args = ARGS["lora-" + model_type](
-            max_seq_len=max_seq_len,
-            dtype=dtype,
-            r=lora_rank,
-            lora_dtype=lora_dtype,
-            use_clamp=use_clamp
-        ).from_json(config_file)
+        kwargs["r"] = lora_rank
+        kwargs["lora_dtype"] = lora_dtype
+        args = ARGS["lora-" + model_type](**kwargs).from_json(config_file)
         model = VERIFIERS["lora-" + model_type](args)
     else:
-        args = ARGS[model_type](
-            max_seq_len=max_seq_len,
-            dtype=dtype,
-            use_clamp=use_clamp
-        ).from_json(config_file)
+        args = ARGS[model_type](**kwargs).from_json(config_file)
         model = VERIFIERS[model_type](args)
     tokenizer = TOKENIZERS[model_type](tokenizer_file)
     model.init_weights()

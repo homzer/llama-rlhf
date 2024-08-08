@@ -1,7 +1,5 @@
 from src.models.modeling import ParallelModule
 from src.models.llama import Llama, LoraLlama, LlamaVerifier, LoraLlamaVerifier
-from src.models.llama_30b import Llama30B, LoraLlama30B
-from src.models.llama_70b import Llama70B, LoraLlama70B
 from src.models.llama_hf import LlamaHf, LoraLlamaHf
 from src.models.llama3 import Llama3, LoraLlama3
 from src.models.mistral import Mistral, LoraMistral

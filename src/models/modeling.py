@@ -12,7 +12,7 @@ from fairscale.nn.model_parallel.initialize import (
     get_model_parallel_src_rank
 )
 
-from src.checkpoint import load_safetensors
+from src.checkpoint_ import load_safetensors
 from src.utils import set_barrier, merge_lora_state_dict
 
 CausalLMOutputs = collections.namedtuple('CausalLMOutputs', ['logits', 'hidden_states'])

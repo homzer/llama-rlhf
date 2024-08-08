@@ -10,6 +10,7 @@ from fairscale.nn.model_parallel.layers import (
     ParallelEmbedding
 )
 
+from src.checkpoint import CheckpointForLlama
 from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs, AttentionForCausalLM, \
     ParallelVerifier, VerifierOutputs
 from src.models.modeling_acts import RMSNorm, Clamp, LogitsNormalize
@@ -222,6 +223,7 @@ class Mistral(ParallelModelForCausalLM):
         self.logits_norm = LogitsNormalize(enable=self.args.use_logits_normalize)
 
         self.freqs_cis = precompute_freqs_cis(self.args.head_dim, 128000)
+        self.checkpoint = CheckpointForLlama()
 
     def init_weights(self):
         self.tok_embeddings = ParallelEmbedding(
@@ -262,6 +264,15 @@ class Mistral(ParallelModelForCausalLM):
 
         return CausalLMOutputs(logits=self.logits_norm.forward(output), hidden_states=h)
 
+    # Copied from llama_hf.LlamaHf.load
+    def load(self, ckpt_dir: str, verbose: bool = True, **kwargs):
+        ckpt_dir = self.checkpoint.auto_split_or_merge_checkpoints(
+            ckpt_dir=ckpt_dir,
+            model_parallel_world_size=self.model_parallel_world_size,
+            global_rank=self.global_rank
+        )
+        super().load(ckpt_dir, verbose=verbose, merge_lora=True)
+
     def flush(self):
         """ Clean cache in `LlamaAttention` module """
         for i in range(self.args.n_layers):
@@ -284,6 +295,7 @@ class MistralVerifier(ParallelVerifier):
         self.v_head = None
 
         self.freqs_cis = precompute_freqs_cis(self.args.head_dim, 128000)
+        self.checkpoint = CheckpointForLlama()
 
     def init_weights(self):
         self.tok_embeddings = ParallelEmbedding(
@@ -315,6 +327,15 @@ class MistralVerifier(ParallelVerifier):
         h = self.norm(h)
         scores = self.v_head(h.type_as(self.v_head.weight)).squeeze(-1)  # [b, s]
         return VerifierOutputs(scores=scores)
+
+    # Copied from llama_hf.LlamaHf.load
+    def load(self, ckpt_dir: str, verbose: bool = True, **kwargs):
+        ckpt_dir = self.checkpoint.auto_split_or_merge_checkpoints(
+            ckpt_dir=ckpt_dir,
+            model_parallel_world_size=self.model_parallel_world_size,
+            global_rank=self.global_rank
+        )
+        super().load(ckpt_dir, verbose=verbose, merge_lora=True)
 
 
 class LoraMistralAttention(MistralAttention):

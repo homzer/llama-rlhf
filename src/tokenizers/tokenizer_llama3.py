@@ -12,6 +12,32 @@ TIKTOKEN_MAX_ENCODE_CHARS = 400_000
 MAX_NO_WHITESPACES_CHARS = 25_000
 
 
+def _split_whitespaces_or_non_whitespaces(
+        s: str, max_consecutive_slice_len: int
+) -> Iterator[str]:
+    """
+    Splits the string `s` so that each substring contains no more than `max_consecutive_slice_len`
+    consecutive whitespaces or consecutive non-whitespaces.
+    """
+    current_slice_len = 0
+    current_slice_is_space = s[0].isspace() if len(s) > 0 else False
+    slice_start = 0
+
+    for i in range(len(s)):
+        is_now_space = s[i].isspace()
+
+        if current_slice_is_space ^ is_now_space:
+            current_slice_len = 1
+            current_slice_is_space = is_now_space
+        else:
+            current_slice_len += 1
+            if current_slice_len > max_consecutive_slice_len:
+                yield s[slice_start:i]
+                slice_start = i
+                current_slice_len = 1
+    yield s[slice_start:]
+
+
 class Llama3Tokenizer(Tokenizer):
     special_tokens: Dict[str, int]
     num_reserved_special_tokens = 256
@@ -80,7 +106,7 @@ class Llama3Tokenizer(Tokenizer):
         assert type(s) is str
 
         substrs = (substr for i in range(0, len(s), TIKTOKEN_MAX_ENCODE_CHARS)
-                   for substr in self._split_whitespaces_or_nonwhitespaces(
+                   for substr in _split_whitespaces_or_non_whitespaces(
             s[i: i + TIKTOKEN_MAX_ENCODE_CHARS], MAX_NO_WHITESPACES_CHARS
         ))
         t: List[int] = []
@@ -111,32 +137,6 @@ class Llama3Tokenizer(Tokenizer):
         os.makedirs(save_dir, exist_ok=True)
         os.system(f"cp {self.model_file} {os.path.join(save_dir, 'tokenizer.model')}")
 
-    @staticmethod
-    def _split_whitespaces_or_nonwhitespaces(
-            s: str, max_consecutive_slice_len: int
-    ) -> Iterator[str]:
-        """
-        Splits the string `s` so that each substring contains no more than `max_consecutive_slice_len`
-        consecutive whitespaces or consecutive non-whitespaces.
-        """
-        current_slice_len = 0
-        current_slice_is_space = s[0].isspace() if len(s) > 0 else False
-        slice_start = 0
-
-        for i in range(len(s)):
-            is_now_space = s[i].isspace()
-
-            if current_slice_is_space ^ is_now_space:
-                current_slice_len = 1
-                current_slice_is_space = is_now_space
-            else:
-                current_slice_len += 1
-                if current_slice_len > max_consecutive_slice_len:
-                    yield s[slice_start:i]
-                    slice_start = i
-                    current_slice_len = 1
-        yield s[slice_start:]
-
 
 class Llama3ChatTokenizer(Llama3Tokenizer):
     def __init__(self, model_file: str):
@@ -152,7 +152,6 @@ class Llama3ChatTokenizer(Llama3Tokenizer):
         """
         s = ""
         for message in messages:
-            s += f"{self.start_header}{message['role']}{self.end_header}\n\n" \
-                 f"{message['content'].strip()}{self.end_of_turn}"
+            s += f"{self.start_header}{message['role']}{self.end_header}\n\n{message['content'].strip()}{self.end_of_turn}"
         s += f"{self.start_header}{speaker}{self.end_header}\n\n"
         return s

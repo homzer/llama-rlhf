@@ -10,11 +10,11 @@ from fairscale.nn.model_parallel.layers import (
     ParallelEmbedding
 )
 
+from src.checkpoint import CheckpointForLlama
 from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs, AttentionForCausalLM, \
     ParallelVerifier, VerifierOutputs
 from src.models.modeling_acts import RMSNorm, Clamp, LogitsNormalize
 from src.models.modeling_args import LlamaArgs, LoraLlamaArgs
-from src.models.modeling_utils import auto_split_or_merge_checkpoints
 from src.utils import apply_rotary_emb, precompute_freqs_cis, set_model_parallel_barrier, apply_lora
 
 
@@ -189,6 +189,7 @@ class Llama(ParallelModelForCausalLM):
         self.freqs_cis = precompute_freqs_cis(
             self.args.dim // self.args.n_heads, self.args.max_seq_len * 2, self.args.rope_theta
         )  # [s * 2, head_dim / 2]
+        self.checkpoint = CheckpointForLlama()
 
     def forward(self, tokens: torch.Tensor, start_pos=0, use_cache=False):
         tokens = tokens.to(next(self.parameters()).device)
@@ -219,9 +220,10 @@ class Llama(ParallelModelForCausalLM):
             self.args.dim, self.args.vocab_size, bias=False, init_method=lambda x: x
         ).type(self.args.dtype)
 
+    # Copied from llama_hf.LlamaHf.load
     def load(self, ckpt_dir: str, verbose: bool = True, **kwargs):
-        ckpt_dir = auto_split_or_merge_checkpoints(
-            ckpt_dir,
+        ckpt_dir = self.checkpoint.auto_split_or_merge_checkpoints(
+            ckpt_dir=ckpt_dir,
             model_parallel_world_size=self.model_parallel_world_size,
             global_rank=self.global_rank
         )

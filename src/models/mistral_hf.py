@@ -9,11 +9,11 @@ from fairscale.nn.model_parallel.layers import (
     ParallelEmbedding
 )
 
+from src.checkpoint import CheckpointForLlama
 from src.models.mistral import repeat_kv
 from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs, AttentionForCausalLM
 from src.models.modeling_acts import RMSNorm, Clamp, RotaryEmbedding
 from src.models.modeling_args import MistralArgsHf
-from src.models.modeling_utils import auto_split_or_merge_checkpoints
 from src.utils import set_model_parallel_barrier, compute_position_ids, apply_rotary_pos_emb
 
 
@@ -211,6 +211,7 @@ class MistralHf(ParallelModelForCausalLM):
         self.args = args
         self.model = MistralModelHf(args)
         self.lm_head = None
+        self.checkpoint = CheckpointForLlama()
 
     def init_weights(self):
         self.model.init_weights()
@@ -225,7 +226,7 @@ class MistralHf(ParallelModelForCausalLM):
 
     # Copied from llama_hf.LlamaHf.load
     def load(self, ckpt_dir: str, verbose: bool = True, **kwargs):
-        ckpt_dir = auto_split_or_merge_checkpoints(
+        ckpt_dir = self.checkpoint.auto_split_or_merge_checkpoints(
             ckpt_dir=ckpt_dir,
             model_parallel_world_size=self.model_parallel_world_size,
             global_rank=self.global_rank

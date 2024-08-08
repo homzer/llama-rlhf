@@ -10,11 +10,11 @@ from fairscale.nn.model_parallel.layers import (
     ParallelEmbedding
 )
 
+from src.checkpoint import CheckpointForQwen
 from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs, AttentionForCausalLM, ParallelVerifier, \
     VerifierOutputs
 from src.models.modeling_acts import Clamp, RMSNorm, RotaryEmbedding, LogitsNormalize
 from src.models.modeling_args import QwenArgs, LoraQwenArgs
-from src.models.modeling_utils import auto_split_or_merge_checkpoints
 from src.utils import set_model_parallel_barrier, compute_position_ids, apply_rotary_pos_emb, apply_lora
 
 
@@ -219,6 +219,7 @@ class Qwen(ParallelModelForCausalLM):
         self.model = QwenHead(args)
         self.lm_head = None
         self.logits_norm = LogitsNormalize(enable=self.args.use_logits_normalize)
+        self.checkpoint = CheckpointForQwen()
 
     def init_weights(self):
         self.model.init_weights()
@@ -238,7 +239,7 @@ class Qwen(ParallelModelForCausalLM):
 
     # Copied from llama_hf.LlamaHf.load
     def load(self, ckpt_dir: str, verbose: bool = True, **kwargs):
-        ckpt_dir = auto_split_or_merge_checkpoints(
+        ckpt_dir = self.checkpoint.auto_split_or_merge_checkpoints(
             ckpt_dir=ckpt_dir,
             model_parallel_world_size=self.model_parallel_world_size,
             global_rank=self.global_rank
@@ -476,6 +477,7 @@ class QwenVerifier(ParallelVerifier):
         self.args = args
         self.model = QwenHead(args)
         self.v_head = None
+        self.checkpoint = CheckpointForQwen()
 
     def init_weights(self):
         self.model.init_weights()
@@ -490,7 +492,7 @@ class QwenVerifier(ParallelVerifier):
 
     # Copied from llama_hf.LlamaHf.load
     def load(self, ckpt_dir: str, verbose: bool = True, **kwargs):
-        ckpt_dir = auto_split_or_merge_checkpoints(
+        ckpt_dir = self.checkpoint.auto_split_or_merge_checkpoints(
             ckpt_dir=ckpt_dir,
             model_parallel_world_size=self.model_parallel_world_size,
             global_rank=self.global_rank

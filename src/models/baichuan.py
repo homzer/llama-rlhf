@@ -1,17 +1,16 @@
-from pathlib import Path
 from typing import Optional
 
 import torch
 import torch.nn as nn
-import torch.nn.init as init
 import torch.nn.functional as F
+import torch.nn.init as init
 from fairscale.nn.model_parallel.layers import (
     RowParallelLinear,
     ColumnParallelLinear,
     ParallelEmbedding
 )
 
-from src.models.modeling_utils import auto_split_or_merge_checkpoints_for_baichuan
+from src.checkpoint import CheckpointForBaichuan
 from src.models.modeling import AttentionForCausalLM, ParallelModelForCausalLM, CausalLMOutputs, ParallelVerifier, \
     VerifierOutputs
 from src.models.modeling_acts import RotaryEmbedding, Clamp, RMSNorm, LogitsNormalize
@@ -203,6 +202,7 @@ class Baichuan(ParallelModelForCausalLM):
         self.model = BaichuanHead(args)
         self.lm_head = None
         self.logits_norm = LogitsNormalize(enable=self.args.use_logits_normalize)
+        self.checkpoint = CheckpointForBaichuan()
 
     def init_weights(self):
         self.model.init_weights()
@@ -224,8 +224,9 @@ class Baichuan(ParallelModelForCausalLM):
         return CausalLMOutputs(logits=self.logits_norm.forward(output), hidden_states=h)
 
     # Copied from llama_hf.LlamaHf.load
-    def load(self, ckpt_dir: str, verbose: bool = True):
-        ckpt_dir = auto_split_or_merge_checkpoints_for_baichuan(
+    # Copied from llama_hf.LlamaHf.load
+    def load(self, ckpt_dir: str, verbose: bool = True, **kwargs):
+        ckpt_dir = self.checkpoint.auto_split_or_merge_checkpoints(
             ckpt_dir=ckpt_dir,
             model_parallel_world_size=self.model_parallel_world_size,
             global_rank=self.global_rank
@@ -459,6 +460,7 @@ class BaichuanVerifier(ParallelVerifier):
         self.args = args
         self.model = BaichuanHead(args)
         self.v_head = None
+        self.checkpoint = CheckpointForBaichuan()
 
     def init_weights(self):
         self.model.init_weights()
@@ -472,8 +474,8 @@ class BaichuanVerifier(ParallelVerifier):
         return VerifierOutputs(scores=scores)
 
     # Copied from llama_hf.LlamaHf.load
-    def load(self, ckpt_dir: str, verbose: bool = True):
-        ckpt_dir = auto_split_or_merge_checkpoints_for_baichuan(
+    def load(self, ckpt_dir: str, verbose: bool = True, **kwargs):
+        ckpt_dir = self.checkpoint.auto_split_or_merge_checkpoints(
             ckpt_dir=ckpt_dir,
             model_parallel_world_size=self.model_parallel_world_size,
             global_rank=self.global_rank
