@@ -32,6 +32,8 @@ class JsonDataset(Dataset):
 class ChatTemplateDataset(Dataset):
     def __init__(self, dataset: JsonDataset, tokenizer: Tokenizer):
         self.dataset = dataset
+        if type(tokenizer).__name__ == "Llama3Tokenizer":
+            tokenizer.eos_id = getattr(tokenizer, "eot_id")
         self.tokenizer = tokenizer
 
     def __len__(self):

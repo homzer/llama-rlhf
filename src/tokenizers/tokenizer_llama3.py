@@ -84,9 +84,13 @@ class Llama3Tokenizer(Tokenizer):
         self.bos_id: int = self.special_tokens[self.begin_of_text]
         self.eos_id: int = self.special_tokens[self.end_of_text]
         self.pad_id: int = self.eos_id
+        self.eot_id: int = self.special_tokens[self.end_of_turn]
+        # This is very nasty! We got two different stop tokens. Don't know which to use.
+        # When we apply chat template, `end_of_text` is set to be the stop token,
+        # while `end_of_turn` is set when we not apply chat template.
         self.stop_tokens = {
             self.special_tokens[self.end_of_text],
-            self.special_tokens["<|eot_id|>"]
+            self.special_tokens[self.end_of_turn]
         }
         self.allowed_special = {
             self.begin_of_text,
@@ -95,12 +99,21 @@ class Llama3Tokenizer(Tokenizer):
             self.end_header,
             self.end_of_turn
         }
-        self.skip_tokens = [self.begin_of_text, self.end_of_text]
+        self.skip_tokens = [self.begin_of_text, self.end_of_text, self.end_of_turn]
         self.skip_tokens_ids = {self.special_tokens[token] for token in self.skip_tokens}
         super().__init__(self.vocab_size, self.bos_id, self.eos_id, self.pad_id)
 
     def apply_chat_template(self, messages: List[dict]) -> str:
-        raise NotImplementedError
+        """
+        :param messages: [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "greetings!"}]
+        :return:
+        """
+        s = f"{self.begin_of_text}"
+        for message in messages:
+            s += f"{self.start_header}{message['role']}{self.end_header}\n\n{message['content'].strip()}{self.end_of_turn}"
+        if messages[-1]["role"] != 'assistant':
+            s += f"{self.start_header}assistant{self.end_header}\n\n"
+        return s
 
     def encode(self, s: str, bos: bool = False, eos: bool = False) -> List[int]:
         assert type(s) is str
@@ -112,9 +125,9 @@ class Llama3Tokenizer(Tokenizer):
         t: List[int] = []
         for substr in substrs:
             t.extend(self.model.encode(substr, allowed_special=self.allowed_special))
-        if bos:
+        if bos and t[0] != self.bos_id:
             t.insert(0, self.bos_id)
-        if eos:
+        if eos and t[-1] != self.eos_id:
             t.append(self.eos_id)
         return t
 
@@ -136,22 +149,3 @@ class Llama3Tokenizer(Tokenizer):
     def save(self, save_dir: str):
         os.makedirs(save_dir, exist_ok=True)
         os.system(f"cp {self.model_file} {os.path.join(save_dir, 'tokenizer.model')}")
-
-
-class Llama3ChatTokenizer(Llama3Tokenizer):
-    def __init__(self, model_file: str):
-        super().__init__(model_file)
-        self.eos_id = self.special_tokens[self.end_of_turn]
-        self.pad_id = self.special_tokens[self.end_of_text]
-
-    def apply_chat_template(self, messages: List[dict], speaker: str = "assistant") -> str:
-        """
-        :param messages: [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "greetings!"}]
-        :param speaker: str, default to `assistant`.
-        :return:
-        """
-        s = ""
-        for message in messages:
-            s += f"{self.start_header}{message['role']}{self.end_header}\n\n{message['content'].strip()}{self.end_of_turn}"
-        s += f"{self.start_header}{speaker}{self.end_header}\n\n"
-        return s

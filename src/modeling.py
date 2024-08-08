@@ -44,8 +44,8 @@ from src.tokenizers import (
 ARGS = {
     "llama": LlamaArgs,
     "lora-llama": LoraLlamaArgs,
-    "llama-3": LlamaArgs,
-    "lora-llama-3": LoraLlamaArgs,
+    "llama3": LlamaArgs,
+    "lora-llama3": LoraLlamaArgs,
     "mistral": MistralArgs,
     "lora-mistral": LoraMistralArgs,
     "mistral-hf": MistralArgsHf,
@@ -60,10 +60,10 @@ ARGS = {
 
 MODELS = {
     "llama": Llama,
-    "llama-3": Llama3,
+    "llama3": Llama3,
 
     "lora-llama": LoraLlama,
-    "lora-llama-3": LoraLlama3,
+    "lora-llama3": LoraLlama3,
 
     "mistral": Mistral,
     "lora-mistral": LoraMistral,
@@ -89,7 +89,7 @@ VERIFIERS = {
 
 TOKENIZERS = {
     "llama": LlamaTokenizer,
-    "llama-3": Llama3Tokenizer,
+    "llama3": Llama3Tokenizer,
 
     "mistral": MistralTokenizer,
     "mistral-hf": MistralTokenizer,
