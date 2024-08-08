@@ -12,8 +12,8 @@ from fairscale.nn.model_parallel.initialize import (
     get_model_parallel_src_rank
 )
 
-from src.checkpoint_ import load_safetensors
-from src.utils import set_barrier, merge_lora_state_dict
+from src.checkpoint import Checkpoint
+from src.utils import set_barrier, load_safetensors
 
 CausalLMOutputs = collections.namedtuple('CausalLMOutputs', ['logits', 'hidden_states'])
 Seq2SeqLMOutputs = collections.namedtuple('Seq2SeqLMOutputs', ['logits', 'hidden_states'])
@@ -146,14 +146,14 @@ class ParallelModule(Module):
                 if i == self.model_parallel_rank:
                     state_dict = torch.load(str(ckpt_path), map_location="cpu")
                     if kwargs.get("merge_lora", False):
-                        state_dict = merge_lora_state_dict(state_dict)
+                        state_dict = Checkpoint.merge_lora_state_dict(state_dict)
                     loading_outputs = self.load_state_dict(state_dict, strict=False)
                     self.cuda(self.local_rank)
                 set_barrier()
         else:
             state_dict = torch.load(str(ckpt_path), map_location="cpu")
             if kwargs.get("merge_lora", False):
-                state_dict = merge_lora_state_dict(state_dict)
+                state_dict = Checkpoint.merge_lora_state_dict(state_dict)
             loading_outputs = self.load_state_dict(state_dict, strict=False)
             self.cuda(self.local_rank)
         set_barrier()

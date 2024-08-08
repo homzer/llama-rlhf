@@ -35,9 +35,9 @@ from src.tokenizers import (
     Tokenizer,
     LlamaTokenizer,
     Llama3Tokenizer,
-    Llama3ChatTokenizer,
     MistralTokenizer,
-    QwenTokenizer, BaichuanTokenizer
+    QwenTokenizer,
+    BaichuanTokenizer
 )
 
 

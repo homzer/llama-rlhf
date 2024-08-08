@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Tuple, List, Union, Callable
 
 import numpy as np
+import safetensors
 import torch
 import torch.nn.functional as F
 from fairscale.nn.model_parallel.initialize import (
@@ -369,6 +370,15 @@ def masked_std(x, mask=None, dim: int = -1, keepdim: bool = False, eps: float = 
 def logits_normalize(x: torch.Tensor, dim=-1):
     """ Avoid overflowing """
     return x - torch.max(x, dim=dim, keepdim=True)[0]
+
+
+def load_safetensors(f: str) -> dict:
+    state_dict = collections.OrderedDict()
+    assert f.endswith(".safetensors")
+    with safetensors.safe_open(f, "pt", device="cpu") as reader:
+        for k in reader.keys():
+            state_dict[k] = reader.get_tensor(k)
+    return state_dict
 
 
 def merge_lora_state_dict(state_dict: dict) -> dict:
