@@ -150,8 +150,8 @@ class ParallelActorTrainerForCausalLM(ParallelTrainer):
         loss.backward()
         self.optimizer.step()
 
-        Outputs = collections.namedtuple('Outputs', ['loss'])
-        return Outputs(loss=loss.item())
+        Outputs = collections.namedtuple('Outputs', ['loss', 'advantages'])
+        return Outputs(loss=loss.item(), advantages=torch.mean(advantages).item())
 
 
 class ParallelCriticTrainerForCausalLM(ParallelTrainer):

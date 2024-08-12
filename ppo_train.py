@@ -196,6 +196,7 @@ def run(
                 if actor_trainer.step % 100 == 0:
                     print(f'--------- STEP {actor_trainer.step} OF {timer.total} ---------')
                     print('Loss: ', trainer_outputs.loss)
+                    print('Advantages: ', trainer_outputs.advantages)
         actor_trainer.save(os.path.join(actor_save_dir, f"epoch-{epoch + 1}"))
 
         actor.cpu()
