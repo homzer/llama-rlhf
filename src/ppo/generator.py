@@ -115,9 +115,9 @@ class SolverGeneratorForCausalLM:
         output_masks = torch.full_like(tokens, fill_value=True)
         for i, t in enumerate(tokens.tolist()):
             output_masks[i][: prompt_lengths[i] - 1] = False
-            if self.tokenizer.eos_id in t[1:]:
+            if self.tokenizer.eos_id in t[prompt_lengths[i]:]:
                 # find index of eos
-                end = t.index(self.tokenizer.eos_id, 1)
+                end = t.index(self.tokenizer.eos_id, prompt_lengths[i])
                 output_masks[i][end:] = False
             else:
                 output_masks[i][-1:] = False

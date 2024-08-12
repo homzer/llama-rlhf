@@ -51,12 +51,12 @@ def run(
     setup_model_parallel()
     os.makedirs(actor_save_dir, exist_ok=True)
     os.makedirs(critic_save_dir, exist_ok=True)
-    actor_config_file = actor_config_file if actor_config_file else actor_ckpt_dir
-    actor_tokenizer_file = actor_tokenizer_file if actor_tokenizer_file else actor_ckpt_dir
-    critic_config_file = critic_config_file if critic_config_file else critic_ckpt_dir
-    critic_tokenizer_file = critic_tokenizer_file if critic_tokenizer_file else critic_ckpt_dir
-    verifier_config_file = verifier_config_file if verifier_config_file else verifier_ckpt_dir
-    verifier_tokenizer_file = verifier_tokenizer_file if verifier_tokenizer_file else verifier_ckpt_dir
+    actor_config_file = actor_config_file or actor_ckpt_dir
+    actor_tokenizer_file = actor_tokenizer_file or actor_ckpt_dir
+    critic_config_file = critic_config_file or critic_ckpt_dir
+    critic_tokenizer_file = critic_tokenizer_file or critic_ckpt_dir
+    verifier_config_file = verifier_config_file or verifier_ckpt_dir
+    verifier_tokenizer_file = verifier_tokenizer_file or verifier_ckpt_dir
 
     datalist = json_load(train_file)
     chunk_size = chunk_size or len(datalist)
