@@ -16,12 +16,13 @@ from src.utils import setup_model_parallel, set_barrier, masked_mean, json_load
 
 def run(
         train_file: str,
-        save_dir: str,
 
         actor_ckpt_dir: str,
         actor_model_type: str,
+        actor_save_dir: str,
         critic_ckpt_dir: str,
         critic_model_type: str,
+        critic_save_dir: str,
         verifier_ckpt_dir: str,
         verifier_model_type: str,
 
@@ -31,22 +32,23 @@ def run(
         critic_tokenizer_file: str = None,
         verifier_config_file: str = None,
         verifier_tokenizer_file: str = None,
-        lora_rank: int = -1,
-        max_batch_size: int = 1,
+        actor_lora_rank: int = -1,
+        actor_lora_dtype: str = "bfloat16",
+        critic_lora_rank: int = -1,
+        critic_lora_dtype: str = "bfloat16",
+        actor_max_batch_size: int = 1,
+        critic_max_batch_size: int = 1,
         max_generate_batch_size: int = 48,
         max_forward_batch_size: int = 24,
-        max_seq_len: int = 4096,
+        max_seq_len: int = 1024,
         chunk_size: int = None,
-        inner_epochs: int = 2,
+        inner_epochs: int = 3,
         lr: float = 1e-5,
         dtype: str = "bfloat16",
-        lora_dtype: str = "float32",
         begin_epoch: int = 0,
         use_chat_template: bool = False
 ):
     setup_model_parallel()
-    actor_save_dir = os.path.join(save_dir, "actor")
-    critic_save_dir = os.path.join(save_dir, "critic")
     os.makedirs(actor_save_dir, exist_ok=True)
     os.makedirs(critic_save_dir, exist_ok=True)
     actor_config_file = actor_config_file if actor_config_file else actor_ckpt_dir
@@ -169,16 +171,16 @@ def run(
             'action_masks': rollout_buffer.action_masks[: max_forward_batch_size],
             'advantages': rollout_buffer.advantages[: max_forward_batch_size],
             'returns': rollout_buffer.returns[: max_forward_batch_size]
-        }, os.path.join(save_dir, f"buffer-{epoch}.bin"))
+        }, os.path.join(actor_save_dir, f"buffer-{epoch}.bin"))
 
         actor, actor_tokenizer = get_parallel_model(
             model_type=actor_model_type,
             config_file=actor_config_file,
             max_seq_len=max_seq_len,
             tokenizer_file=actor_tokenizer_file,
-            lora_rank=lora_rank,
+            lora_rank=actor_lora_rank,
             dtype=dtype,
-            lora_dtype=lora_dtype
+            lora_dtype=actor_lora_dtype
         )
         actor_optimizer = torch.optim.Adam(actor.parameters(), lr=0.075 * lr if epoch <= 1 else lr)
         actor_trainer = ParallelActorTrainerForCausalLM(actor, actor_optimizer)
@@ -186,9 +188,9 @@ def run(
                 epoch == 0
         ) else actor_trainer.load(os.path.join(actor_save_dir, f"epoch-{epoch}"))
         print('Actor training ...')
-        timer = Timer(total=(len(rollout_buffer) // max_batch_size) * inner_epochs, episode=100)
+        timer = Timer(total=(len(rollout_buffer) // actor_max_batch_size) * inner_epochs, episode=100)
         for inner_epoch in range(inner_epochs):
-            for data in rollout_buffer.get(max_batch_size):
+            for data in rollout_buffer.get(actor_max_batch_size):
                 timer.step()
                 trainer_outputs = actor_trainer.forward(data)
                 if actor_trainer.step % 100 == 0:
@@ -209,9 +211,9 @@ def run(
             config_file=critic_config_file,
             max_seq_len=max_seq_len,
             tokenizer_file=critic_tokenizer_file,
-            lora_rank=lora_rank,
+            lora_rank=critic_lora_rank,
             dtype=dtype,
-            lora_dtype=lora_dtype,
+            lora_dtype=critic_lora_dtype,
         )
         critic_optimizer = torch.optim.Adam(critic.parameters(), lr=lr)
         critic_trainer = ParallelCriticTrainerForCausalLM(critic, critic_optimizer)
@@ -219,9 +221,9 @@ def run(
                 epoch == 0
         ) else critic_trainer.load(os.path.join(critic_save_dir, f"epoch-{epoch}"))
         print('Critic training ...')
-        timer = Timer(total=(len(rollout_buffer) // max_batch_size) * inner_epochs, episode=100)
+        timer = Timer(total=(len(rollout_buffer) // critic_max_batch_size) * inner_epochs, episode=100)
         for inner_epoch in range(inner_epochs):
-            for data in rollout_buffer.get(max_batch_size):
+            for data in rollout_buffer.get(critic_max_batch_size):
                 timer.step()
                 trainer_outputs = critic_trainer.forward(data)
                 if critic_trainer.step % 100 == 0:
