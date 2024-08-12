@@ -131,14 +131,14 @@ class RolloutBuffer:
         self.action_logits[:, :] = action_logits.copy()
         self.action_masks[:, :] = action_masks.copy()
 
+        assert np.sum(self.rewards[~ self.action_masks]) == 0  # Check rewards correctness
+
         if self.reward_normalize:
             # Normalize
             self.rewards = (self.rewards - np.mean(
                 self.rewards[self.action_masks])) / (
                                    np.std(self.rewards[self.action_masks]) + 1e-12)
-        # self.values = self.values / (masked_std(self.values, self.action_masks, keepdim=True) + 1e-12)
-
-        assert np.sum(self.rewards[~ self.action_masks]) == 0  # Check rewards correctness
+            self.rewards[~ self.action_masks] = 0.0
 
     def compute_returns_and_advantage(self):
         last_gae_lam = 0
