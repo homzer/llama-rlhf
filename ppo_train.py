@@ -152,6 +152,14 @@ def run(
         gc.collect()
         set_barrier()
 
+        torch.save({
+            'obs': actor_rollout_buffer.obs[: max_forward_batch_size],
+            'actions': actor_rollout_buffer.actions[: max_forward_batch_size],
+            'values': critic_rollout_buffer.scores[: max_forward_batch_size],
+            'rewards': verifier_rollout_buffer.scores[: max_forward_batch_size],
+            'action_masks': actor_rollout_buffer.action_masks[: max_forward_batch_size],
+        }, os.path.join(actor_save_dir, f"buffer-{epoch}-test.bin"))
+
         rollout_buffer = RolloutBuffer(
             obs=actor_rollout_buffer.obs,
             actions=actor_rollout_buffer.actions,
