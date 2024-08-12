@@ -36,7 +36,7 @@ def run(
         max_generate_batch_size: int = 48,
         max_forward_batch_size: int = 24,
         max_seq_len: int = 4096,
-        chunk_size: int = 2000,
+        chunk_size: int = None,
         inner_epochs: int = 2,
         lr: float = 1e-5,
         dtype: str = "bfloat16",
@@ -57,6 +57,7 @@ def run(
     verifier_tokenizer_file = verifier_tokenizer_file if verifier_tokenizer_file else verifier_ckpt_dir
 
     datalist = json_load(train_file)
+    chunk_size = chunk_size or len(datalist)
     epochs = len(datalist) // chunk_size
     for epoch in range(begin_epoch, epochs):
         print(f"Epoch - {epoch} of {epochs}")
