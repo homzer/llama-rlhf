@@ -223,7 +223,8 @@ class LlamaHf(ParallelModelForCausalLM):
             model_parallel_world_size=self.model_parallel_world_size,
             global_rank=self.global_rank
         )
-        super().load(ckpt_dir, verbose=verbose, merge_lora=True)
+        merge_lora = kwargs.get("merge_lora", True)
+        super().load(ckpt_dir, verbose=verbose, merge_lora=merge_lora)
 
     def flush(self):
         """ Clean cache in `LlamaAttention` module """
@@ -436,6 +437,9 @@ class LoraLlamaHf(LlamaHf):
         h = self.model.forward(tokens, start_pos, use_cache)
         output = self.lm_head(h) + apply_lora(h, self.lora_a_lm_head, self.lora_b_lm_head)
         return CausalLMOutputs(logits=output, hidden_states=h)
+
+    def load(self, ckpt_dir: str, verbose: bool = True, merge_lora: bool = False):
+        super().load(ckpt_dir=ckpt_dir, verbose=verbose, merge_lora=merge_lora)
 
     def _freeze(self):
         """ Freeze all parameters but lora ones. """

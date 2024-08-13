@@ -227,7 +227,8 @@ class Llama(ParallelModelForCausalLM):
             model_parallel_world_size=self.model_parallel_world_size,
             global_rank=self.global_rank
         )
-        super().load(ckpt_dir, verbose=verbose, merge_lora=True)
+        merge_lora = kwargs.get("merge_lora", True)
+        super().load(ckpt_dir, verbose=verbose, merge_lora=merge_lora)
 
     def flush(self):
         """ Clean cache in `LlamaAttention` module """
@@ -281,8 +282,9 @@ class LlamaVerifier(ParallelVerifier):
         self.norm = RMSNorm(self.args.dim, eps=self.args.norm_eps).type(self.args.dtype)
         self.v_head = nn.Linear(self.args.dim, 1, bias=False).type(self.args.dtype)
 
-    def load(self, ckpt_dir: str, verbose: bool = True):
-        super().load(ckpt_dir, verbose=verbose, merge_lora=True)
+    def load(self, ckpt_dir: str, verbose: bool = True, **kwargs):
+        merge_lora = kwargs.get("merge_lora", True)
+        super().load(ckpt_dir, verbose=verbose, merge_lora=merge_lora)
 
 
 class LoraLlamaAttention(LlamaAttention):
@@ -477,6 +479,9 @@ class LoraLlama(Llama):
         logits = self.output(h) + apply_lora(h, self.lora_a_output, self.lora_b_output)
         return CausalLMOutputs(logits=self.logits_norm.forward(logits), hidden_states=h)
 
+    def load(self, ckpt_dir: str, verbose: bool = True, merge_lora: bool = False):
+        super().load(ckpt_dir=ckpt_dir, verbose=verbose, merge_lora=merge_lora)
+
     def init_weights(self):
         super().init_weights()
 
@@ -513,6 +518,9 @@ class LoraLlamaVerifier(LlamaVerifier):
         self.layers = torch.nn.ModuleList()
         for layer_id in range(args.n_layers):
             self.layers.append(LoraLlamaTransformerBlock(layer_id, args))
+
+    def load(self, ckpt_dir: str, verbose: bool = True, merge_lora: bool = False):
+        super().load(ckpt_dir=ckpt_dir, verbose=verbose, merge_lora=merge_lora)
 
     def init_weights(self):
         super().init_weights()

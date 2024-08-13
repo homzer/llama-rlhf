@@ -271,7 +271,8 @@ class Mistral(ParallelModelForCausalLM):
             model_parallel_world_size=self.model_parallel_world_size,
             global_rank=self.global_rank
         )
-        super().load(ckpt_dir, verbose=verbose, merge_lora=True)
+        merge_lora = kwargs.get("merge_lora", True)
+        super().load(ckpt_dir, verbose=verbose, merge_lora=merge_lora)
 
     def flush(self):
         """ Clean cache in `LlamaAttention` module """
@@ -335,7 +336,8 @@ class MistralVerifier(ParallelVerifier):
             model_parallel_world_size=self.model_parallel_world_size,
             global_rank=self.global_rank
         )
-        super().load(ckpt_dir, verbose=verbose, merge_lora=True)
+        merge_lora = kwargs.get("merge_lora", True)
+        super().load(ckpt_dir, verbose=verbose, merge_lora=merge_lora)
 
 
 class LoraMistralAttention(MistralAttention):
@@ -555,6 +557,9 @@ class LoraMistral(Mistral):
 
         return CausalLMOutputs(logits=self.logits_norm.forward(output), hidden_states=h)
 
+    def load(self, ckpt_dir: str, verbose: bool = True, merge_lora: bool = False):
+        super().load(ckpt_dir=ckpt_dir, verbose=verbose, merge_lora=merge_lora)
+
     # lora op
     def _freeze(self):
         """ Freeze all parameters but lora ones. """
@@ -578,6 +583,9 @@ class LoraMistralVerifier(MistralVerifier):
 
         # Freeze parameters
         self._freeze()
+
+    def load(self, ckpt_dir: str, verbose: bool = True, merge_lora: bool = False):
+        super().load(ckpt_dir=ckpt_dir, verbose=verbose, merge_lora=merge_lora)
 
     def _freeze(self):
         """ Freeze all parameters but lora ones. """

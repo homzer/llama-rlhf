@@ -74,7 +74,7 @@ def run(
             dtype=dtype
         )
         actor.load(actor_ckpt_dir if epoch == 0 else os.path.join(actor_save_dir, f"epoch-{epoch}"))
-        actor_buffer_collector = ActorBufferCollector(actor, actor_tokenizer, max_seq_len, temperature=0.98)
+        actor_buffer_collector = ActorBufferCollector(actor, actor_tokenizer, max_seq_len, temperature=1.0)
         actor_rollout_buffer = ActorRolloutBuffer()
         print('Actor buffer collecting ...')
         if use_chat_template:
@@ -152,6 +152,8 @@ def run(
         gc.collect()
         set_barrier()
 
+        print("Average Rewards: ", masked_mean(verifier_rollout_buffer.scores, actor_rollout_buffer.action_masks))
+
         rollout_buffer = RolloutBuffer(
             obs=actor_rollout_buffer.obs,
             actions=actor_rollout_buffer.actions,
@@ -160,8 +162,6 @@ def run(
             action_logits=actor_rollout_buffer.action_logits,
             action_masks=actor_rollout_buffer.action_masks
         )
-
-        print("Average Rewards: ", masked_mean(rollout_buffer.rewards, rollout_buffer.action_masks).mean())
 
         torch.save({
             'obs': rollout_buffer.obs[: max_forward_batch_size],

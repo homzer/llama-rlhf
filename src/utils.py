@@ -317,7 +317,7 @@ def powmax(tensor, exponent=1, dim=-1, eps=7e-5):
     return numerator / (denominator + eps)
 
 
-def masked_mean(x, mask=None, dim: int = -1, keepdim: bool = False, eps: float = 1e-12):
+def masked_mean(x, mask=None, dim: int = None, keepdim: bool = False, eps: float = 1e-12):
     if type(x) is torch.Tensor:
         if mask is None:
             mask = torch.full_like(x, fill_value=True)

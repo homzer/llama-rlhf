@@ -244,7 +244,8 @@ class Qwen(ParallelModelForCausalLM):
             model_parallel_world_size=self.model_parallel_world_size,
             global_rank=self.global_rank
         )
-        super().load(ckpt_dir, verbose=verbose, merge_lora=True)
+        merge_lora = kwargs.get("merge_lora", True)
+        super().load(ckpt_dir, verbose=verbose, merge_lora=merge_lora)
 
     # Copied from llama_hf.LlamaHf.flush
     def flush(self):
@@ -462,6 +463,9 @@ class LoraQwen(Qwen):
 
         self._freeze()
 
+    def load(self, ckpt_dir: str, verbose: bool = True, merge_lora: bool = False):
+        super().load(ckpt_dir=ckpt_dir, verbose=verbose, merge_lora=merge_lora)
+
     def _freeze(self):
         """ Freeze all parameters but lora ones. """
         frozen_names = []
@@ -497,7 +501,8 @@ class QwenVerifier(ParallelVerifier):
             model_parallel_world_size=self.model_parallel_world_size,
             global_rank=self.global_rank
         )
-        super().load(ckpt_dir, verbose=verbose, merge_lora=True)
+        merge_lora = kwargs.get("merge_lora", True)
+        super().load(ckpt_dir, verbose=verbose, merge_lora=merge_lora)
 
 
 class LoraQwenVerifier(QwenVerifier):
@@ -517,3 +522,6 @@ class LoraQwenVerifier(QwenVerifier):
             if 'lora' not in name and 'v_head' not in name:
                 param.requires_grad_(False)
                 frozen_names.append(name)
+
+    def load(self, ckpt_dir: str, verbose: bool = True, merge_lora: bool = False):
+        super().load(ckpt_dir=ckpt_dir, verbose=verbose, merge_lora=merge_lora)

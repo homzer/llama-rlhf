@@ -231,7 +231,8 @@ class MistralHf(ParallelModelForCausalLM):
             model_parallel_world_size=self.model_parallel_world_size,
             global_rank=self.global_rank
         )
-        super().load(ckpt_dir, verbose=verbose, merge_lora=True)
+        merge_lora = kwargs.get("merge_lora", True)
+        super().load(ckpt_dir, verbose=verbose, merge_lora=merge_lora)
 
     # Copied from llama_hf.LlamaHf.flush
     def flush(self):
