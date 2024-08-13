@@ -17,7 +17,8 @@ RolloutBufferSample = collections.namedtuple(
         "old_action_logits",
         "advantages",
         "returns",
-        "action_masks"
+        "action_masks",
+        "rewards"
     ]
 )
 
@@ -175,7 +176,8 @@ class RolloutBuffer:
                 old_action_logits=torch.tensor(self.action_logits[batch_indices]),
                 advantages=torch.tensor(self.advantages[batch_indices]),
                 returns=torch.tensor(self.returns[batch_indices]),
-                action_masks=torch.tensor(self.action_masks[batch_indices])
+                action_masks=torch.tensor(self.action_masks[batch_indices]),
+                rewards=torch.tensor(self.rewards[batch_indices])
             )
             start_idx += batch_size
 
