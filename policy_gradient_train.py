@@ -143,7 +143,7 @@ def run(
             dtype=dtype,
             lora_dtype=lora_dtype
         )
-        optimizer = torch.optim.Adam(policy.parameters(), lr=0.075 * lr if epoch <= 1 else lr)
+        optimizer = torch.optim.Adam(policy.parameters(), lr=lr)
         trainer = ParallelPolicyGradientTrainerForCausalLM(policy, optimizer)
         trainer.load_model(policy_ckpt_dir) if (
                 epoch == 0
@@ -157,7 +157,7 @@ def run(
                 if trainer.step % 100 == 0:
                     print(f'--------- STEP {trainer.step} OF {timer.total} ---------')
                     print('Loss: ', trainer_outputs.loss)
-                    print('Advantages: ', trainer_outputs.advantages)
+                    print('Rewards: ', trainer_outputs.rewards)
         trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))
 
         policy.cpu()
