@@ -15,6 +15,7 @@ RolloutBufferSample = collections.namedtuple(
         "actions",
         "old_values",
         "old_action_logits",
+        "old_action_logprobs",
         "advantages",
         "returns",
         "action_masks",
@@ -38,7 +39,8 @@ ActorRolloutBufferSample = collections.namedtuple(
         "obs",
         "actions",
         "action_logits",
-        "action_masks"
+        "action_masks",
+        "action_logprobs"
     ]
 )
 
@@ -89,6 +91,7 @@ class RolloutBuffer:
             values: np.ndarray,
             action_logits: np.ndarray,
             action_masks: np.ndarray,
+            action_logprobs: np.ndarray,
             gamma: float = 0.9,
             gae_lambda: float = 0.8,
             reward_normalize: bool = True
@@ -99,6 +102,7 @@ class RolloutBuffer:
         self.values = None
         self.action_logits = None
         self.action_masks = None
+        self.action_logprobs = None
         self.advantages = None
         self.returns = None
 
@@ -109,19 +113,20 @@ class RolloutBuffer:
         self.buffer_size = obs.shape[0]
         self.max_seq_len = obs.shape[1]
 
-        self._set(obs, actions, rewards, values, action_logits, action_masks)
+        self._set(obs, actions, rewards, values, action_logits, action_masks, action_logprobs)
 
         self.compute_returns_and_advantage()
 
     def __len__(self):
         return 0 if self.obs is None else self.obs.shape[0]
 
-    def _set(self, obs, actions, rewards, values, action_logits, action_masks):
+    def _set(self, obs, actions, rewards, values, action_logits, action_masks, action_logprobs):
         self.obs = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.int64)
         self.actions = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.int64)
         self.rewards = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.float32)
         self.values = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.float32)
         self.action_logits = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.float32)
+        self.action_logprobs = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.float32)
         self.action_masks = np.zeros((self.buffer_size, self.max_seq_len), dtype=bool)
         self.advantages = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.float32)
 
@@ -131,6 +136,7 @@ class RolloutBuffer:
         self.values[:, :] = values.copy()
         self.action_logits[:, :] = action_logits.copy()
         self.action_masks[:, :] = action_masks.copy()
+        self.action_logprobs[:, :] = action_logprobs.copy()
 
         assert np.sum(self.rewards[~ self.action_masks]) == 0  # Check rewards correctness
 
@@ -174,6 +180,7 @@ class RolloutBuffer:
                 actions=torch.tensor(self.actions[batch_indices]),
                 old_values=torch.tensor(self.values[batch_indices]),
                 old_action_logits=torch.tensor(self.action_logits[batch_indices]),
+                old_action_logprobs=torch.tensor(self.action_logprobs[batch_indices]),
                 advantages=torch.tensor(self.advantages[batch_indices]),
                 returns=torch.tensor(self.returns[batch_indices]),
                 action_masks=torch.tensor(self.action_masks[batch_indices]),
@@ -587,21 +594,23 @@ class ActorRolloutBuffer:
             obs: np.ndarray = None,
             actions: np.ndarray = None,
             action_logits: np.ndarray = None,
-            action_masks: np.ndarray = None
+            action_masks: np.ndarray = None,
+            action_logprobs: np.ndarray = None
     ):
         self.instructions = None
         self.obs = None
         self.actions = None
         self.action_logits = None
         self.action_masks = None
+        self.action_logprobs = None
 
         if obs is not None:
-            self._set(instructions, obs, actions, action_logits, action_masks)
+            self._set(instructions, obs, actions, action_logits, action_masks, action_logprobs)
 
     def __len__(self):
         return 0 if self.instructions is None else len(self.instructions)
 
-    def _set(self, instructions, obs, actions, action_logits, action_masks):
+    def _set(self, instructions, obs, actions, action_logits, action_masks, action_logprobs):
         buffer_size = obs.shape[0]
         max_seq_len = obs.shape[1]
 
@@ -609,21 +618,24 @@ class ActorRolloutBuffer:
         self.actions = np.zeros((buffer_size, max_seq_len), dtype=np.int64)
         self.action_logits = np.zeros((buffer_size, max_seq_len), dtype=np.float32)
         self.action_masks = np.zeros((buffer_size, max_seq_len), dtype=bool)
+        self.action_logprobs = np.zeros((buffer_size, max_seq_len), dtype=np.float32)
 
         self.instructions = np.array(instructions)
         self.obs[:, :] = obs.copy()
         self.actions[:, :] = actions.copy()
         self.action_logits[:, :] = action_logits.copy()
         self.action_masks[:, :] = action_masks.copy()
+        self.action_logprobs[:, :] = action_logprobs.copy()
 
-    def extend(self, rollout_buffer):
+    def extend(self, rollout_buffer: "ActorRolloutBuffer"):
         if self.obs is None:
             self._set(
                 rollout_buffer.instructions,
                 rollout_buffer.obs,
                 rollout_buffer.actions,
                 rollout_buffer.action_logits,
-                rollout_buffer.action_masks
+                rollout_buffer.action_masks,
+                rollout_buffer.action_logprobs
             )
         else:
             self.instructions = np.concatenate([self.instructions, rollout_buffer.instructions], axis=0)
@@ -631,6 +643,7 @@ class ActorRolloutBuffer:
             self.actions = np.concatenate([self.actions, rollout_buffer.actions], axis=0)
             self.action_logits = np.concatenate([self.action_logits, rollout_buffer.action_logits], axis=0)
             self.action_masks = np.concatenate([self.action_masks, rollout_buffer.action_masks], axis=0)
+            self.action_logprobs = np.concatenate([self.action_logprobs, rollout_buffer.action_logprobs], axis=0)
 
         return self
 
@@ -645,7 +658,8 @@ class ActorRolloutBuffer:
                 obs=self.obs[batch_indices],
                 actions=self.actions[batch_indices],
                 action_logits=self.action_logits[batch_indices],
-                action_masks=self.action_masks[batch_indices]
+                action_masks=self.action_masks[batch_indices],
+                action_logprobs=self.action_logprobs[batch_indices]
             )
             start_idx += batch_size
 

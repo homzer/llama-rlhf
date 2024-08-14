@@ -10,7 +10,7 @@ from src.tokenizers import Tokenizer
 from src.utils import sample_top_p, truncate
 
 ActionGeneratorOutputs = collections.namedtuple("ActionGeneratorOutputs", [
-    'outputs', 'obs', 'actions', 'action_logits', 'action_masks'
+    'outputs', 'obs', 'actions', 'action_logits', 'action_masks', 'action_logprobs'
 ])
 
 SolverGeneratorOutputs = collections.namedtuple("SolverGeneratorOutputs", [
@@ -246,6 +246,7 @@ class ActorGeneratorForCausalLM(SolverGeneratorForCausalLM):
         tokens = tokens.clone()
         unfinished_sequences = torch.ones(size=[bsz], dtype=torch.long, device=self.model.device())
         tokens_logits = torch.zeros(tokens.shape)
+        tokens_logprobs = torch.zeros(tokens.shape)
         for cur_pos in range(start_pos, self.max_seq_len):
             # if torch.all(input_masks[:, cur_pos][unfinished_sequences == 1]):
             #     print(f"Skipping {cur_pos} ...")
@@ -258,8 +259,12 @@ class ActorGeneratorForCausalLM(SolverGeneratorForCausalLM):
             # logits[:, prev_pos: cur_pos, :] = outputs.logits
             next_tokens = sampling_strategy(outputs.logits, self.temperature, self.top_p)
             tokens_logits = tokens_logits.to(outputs.logits)
+            tokens_logprobs = tokens_logprobs.to(outputs.logits)
             tokens_logits[:, prev_pos: cur_pos] = torch.gather(
                 outputs.logits, dim=-1, index=next_tokens.unsqueeze(-1)
+            ).squeeze(-1)
+            tokens_logprobs[:, prev_pos: cur_pos] = torch.gather(
+                torch.log_softmax(outputs.logits, dim=-1), dim=-1, index=next_tokens.unsqueeze(-1)
             ).squeeze(-1)
             next_token = next_tokens[:, -1].reshape(-1)
             next_token = torch.where(
@@ -274,8 +279,8 @@ class ActorGeneratorForCausalLM(SolverGeneratorForCausalLM):
                 break
 
         self.model.flush()
-        Outputs = collections.namedtuple("Outputs", ['tokens', 'tokens_logits'])
-        return Outputs(tokens=tokens, tokens_logits=tokens_logits)
+        Outputs = collections.namedtuple("Outputs", ['tokens', 'tokens_logits', 'tokens_logprobs'])
+        return Outputs(tokens=tokens, tokens_logits=tokens_logits, tokens_logprobs=tokens_logprobs)
 
     def forward(self, instructions: Union[List[str], List[List[int]]]) -> ActionGeneratorOutputs:
         self.model.eval()
@@ -296,6 +301,7 @@ class ActorGeneratorForCausalLM(SolverGeneratorForCausalLM):
             actions=output_tokens,
             action_logits=forward_outputs.tokens_logits,
             action_masks=output_masks,
+            action_logprobs=forward_outputs.tokens_logprobs
         )
 
 

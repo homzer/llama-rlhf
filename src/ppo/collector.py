@@ -7,7 +7,6 @@ from src.dataset import JsonDataset
 from src.evaluator import GSM8KEvaluator
 from src.models.modeling import ModelForCausalLM, ParallelModelForCausalLM, Verifier, ParallelVerifier
 from src.ppo.buffer import (
-    RolloutBuffer,
     PolicyRolloutBuffer,
     CriticRolloutBuffer,
     ActorRolloutBuffer,
@@ -23,46 +22,48 @@ from src.ppo.policy import AbstractPolicyForCausalLM, AbstractParallelPolicyForC
 from src.tokenizers.tokenizer import Tokenizer
 
 
-class BufferCollector:
-    def __init__(
-            self,
-            generator: CriticGeneratorForCausalLM,
-            policy: Union[AbstractPolicyForCausalLM, AbstractParallelPolicyForCausalLM],
-            buffer_size: int,
-            max_seq_len: int,
-    ):
-        self.generator = generator
-        self.policy = policy
-        self.max_seq_len = max_seq_len
-        self.buffer_size = buffer_size
-
-    def forward(self, instructions: List[str]) -> RolloutBuffer:
-        bzs = len(instructions)
-        with torch.no_grad():
-            policy_outputs = self.policy.forward(instructions)
-        obs = policy_outputs.obs.float().cpu().numpy()
-        actions = policy_outputs.actions.float().cpu().numpy()
-        values = policy_outputs.values.float().cpu().numpy()
-        action_logits = policy_outputs.action_logits.float().cpu().numpy()
-        action_masks = policy_outputs.action_masks.float().cpu().numpy()
-
-        rewards = np.zeros((bzs, self.max_seq_len), dtype=np.float32)
-        action_rewards = self.generator.forward(instructions, actions, action_masks)
-        for i in range(bzs):
-            rewards[i, :][action_masks[i]] = action_rewards[i]
-
-        rollout_buffer = RolloutBuffer(
-            obs=obs,
-            actions=actions,
-            rewards=rewards,
-            values=values,
-            action_logits=action_logits,
-            action_masks=action_masks
-        )
-
-        rollout_buffer.compute_returns_and_advantage()
-
-        return rollout_buffer
+# class BufferCollector:
+#     def __init__(
+#             self,
+#             generator: CriticGeneratorForCausalLM,
+#             policy: Union[AbstractPolicyForCausalLM, AbstractParallelPolicyForCausalLM],
+#             buffer_size: int,
+#             max_seq_len: int,
+#     ):
+#         self.generator = generator
+#         self.policy = policy
+#         self.max_seq_len = max_seq_len
+#         self.buffer_size = buffer_size
+#
+#     def forward(self, instructions: List[str]) -> RolloutBuffer:
+#         bzs = len(instructions)
+#         with torch.no_grad():
+#             policy_outputs = self.policy.forward(instructions)
+#         obs = policy_outputs.obs.float().cpu().numpy()
+#         actions = policy_outputs.actions.float().cpu().numpy()
+#         values = policy_outputs.values.float().cpu().numpy()
+#         action_logits = policy_outputs.action_logits.float().cpu().numpy()
+#         action_masks = policy_outputs.action_masks.float().cpu().numpy()
+#         action_logprobs = policy_outputs.action_logprobs.float().cpu().numpy()
+#
+#         rewards = np.zeros((bzs, self.max_seq_len), dtype=np.float32)
+#         action_rewards = self.generator.forward(instructions, actions, action_masks)
+#         for i in range(bzs):
+#             rewards[i, :][action_masks[i]] = action_rewards[i]
+#
+#         rollout_buffer = RolloutBuffer(
+#             obs=obs,
+#             actions=actions,
+#             rewards=rewards,
+#             values=values,
+#             action_logits=action_logits,
+#             action_masks=action_masks,
+#             action_logprobs=action_logprobs
+#         )
+#
+#         rollout_buffer.compute_returns_and_advantage()
+#
+#         return rollout_buffer
 
 
 class PolicyBufferCollector:
@@ -139,7 +140,8 @@ class ActorBufferCollector:
         actions = outputs.actions.float().cpu().numpy()
         action_logits = outputs.action_logits.float().cpu().numpy()
         action_masks = outputs.action_masks.float().cpu().numpy()
-        return ActorRolloutBuffer(instructions, obs, actions, action_logits, action_masks)
+        action_logprobs = outputs.action_logprobs.float().cpu().numpy()
+        return ActorRolloutBuffer(instructions, obs, actions, action_logits, action_masks, action_logprobs)
 
 
 class CriticBufferCollector:

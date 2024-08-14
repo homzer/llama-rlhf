@@ -121,7 +121,8 @@ def run(
             rewards=verifier_rollout_buffer.scores,
             values=verifier_rollout_buffer.scores,  # pseudo
             action_logits=policy_rollout_buffer.action_logits,
-            action_masks=policy_rollout_buffer.action_masks
+            action_masks=policy_rollout_buffer.action_masks,
+            action_logprobs=policy_rollout_buffer.action_logprobs
         )
 
         torch.save({

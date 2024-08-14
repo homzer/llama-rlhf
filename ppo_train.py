@@ -160,7 +160,8 @@ def run(
             rewards=verifier_rollout_buffer.scores,
             values=critic_rollout_buffer.scores,
             action_logits=actor_rollout_buffer.action_logits,
-            action_masks=actor_rollout_buffer.action_masks
+            action_masks=actor_rollout_buffer.action_masks,
+            action_logprobs=actor_rollout_buffer.action_logprobs
         )
 
         torch.save({
