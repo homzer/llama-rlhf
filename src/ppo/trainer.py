@@ -197,14 +197,25 @@ class ParallelPolicyGradientTrainerForCausalLM(ParallelTrainer):
         old_action_logprobs = rollout_data.old_action_logprobs.to(self.policy.device())
 
         outputs = self.policy.forward(obs)
-        rewards = torch.masked_select(rewards.view(-1), action_masks.view(-1))
 
         action_logprobs = torch.gather(
             torch.log_softmax(outputs.logits, dim=-1), dim=-1, index=actions.unsqueeze(-1)
         ).squeeze(-1)
+
+        ############## Logging ###############
+        buffer = {
+            "obs": obs.cpu().numpy(),
+            "actions": actions.cpu().numpy(),
+            "action_masks": action_masks.cpu().numpy(),
+            "rewards": rewards.float().cpu().numpy(),
+            "old_action_logprobs": old_action_logprobs.float().cpu().numpy(),
+            "action_logprobs": action_logprobs.float().cpu().numpy(),
+        }
+
         ratio = torch.exp(action_logprobs - old_action_logprobs)
         ratio = torch.masked_select(ratio.view(-1), action_masks.view(-1))
         # clipped surrogate loss
+        rewards = torch.masked_select(rewards.view(-1), action_masks.view(-1))
         actor_loss_1 = rewards * ratio
         actor_loss_2 = rewards * torch.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range)
         loss = - torch.min(actor_loss_1, actor_loss_2).mean()
@@ -213,5 +224,5 @@ class ParallelPolicyGradientTrainerForCausalLM(ParallelTrainer):
         loss.backward()
         self.optimizer.step()
 
-        Outputs = collections.namedtuple('Outputs', ['loss', 'rewards'])
-        return Outputs(loss=loss.item(), rewards=torch.mean(rewards).item())
+        Outputs = collections.namedtuple('Outputs', ['loss', 'rewards', 'buffer'])
+        return Outputs(loss=loss.item(), rewards=torch.mean(rewards).item(), buffer=buffer)
