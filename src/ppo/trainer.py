@@ -209,7 +209,7 @@ class ParallelPolicyGradientTrainerForCausalLM(ParallelTrainer):
             "action_masks": action_masks.cpu().numpy(),
             "rewards": rewards.float().cpu().numpy(),
             "old_action_logprobs": old_action_logprobs.float().cpu().numpy(),
-            "action_logprobs": action_logprobs.float().cpu().numpy(),
+            "action_logprobs": action_logprobs.detach().float().cpu().numpy(),
         }
 
         ratio = torch.exp(action_logprobs - old_action_logprobs)
