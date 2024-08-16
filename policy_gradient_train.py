@@ -159,7 +159,6 @@ def run(
                     print(f'--------- STEP {trainer.step} OF {timer.total} ---------')
                     print('Loss: ', trainer_outputs.loss)
                     print('Rewards: ', trainer_outputs.rewards)
-                torch.save(trainer_outputs.buffer, os.path.join(save_dir, f"train-buffer-{epoch}.bin"))
         trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))
 
         policy.cpu()

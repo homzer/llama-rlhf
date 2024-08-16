@@ -202,16 +202,6 @@ class ParallelPolicyGradientTrainerForCausalLM(ParallelTrainer):
             torch.log_softmax(outputs.logits, dim=-1), dim=-1, index=actions.unsqueeze(-1)
         ).squeeze(-1)
 
-        ############## Logging ###############
-        buffer = {
-            "obs": obs.cpu().numpy(),
-            "actions": actions.cpu().numpy(),
-            "action_masks": action_masks.cpu().numpy(),
-            "rewards": rewards.float().cpu().numpy(),
-            "old_action_logprobs": old_action_logprobs.float().cpu().numpy(),
-            "action_logprobs": action_logprobs.detach().float().cpu().numpy(),
-        }
-
         ratio = torch.exp(action_logprobs - old_action_logprobs)
         ratio = torch.masked_select(ratio.view(-1), action_masks.view(-1))
         # clipped surrogate loss
@@ -224,5 +214,5 @@ class ParallelPolicyGradientTrainerForCausalLM(ParallelTrainer):
         loss.backward()
         self.optimizer.step()
 
-        Outputs = collections.namedtuple('Outputs', ['loss', 'rewards', 'buffer'])
-        return Outputs(loss=loss.item(), rewards=torch.mean(rewards).item(), buffer=buffer)
+        Outputs = collections.namedtuple('Outputs', ['loss', 'rewards'])
+        return Outputs(loss=loss.item(), rewards=torch.mean(rewards).item())
