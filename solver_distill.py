@@ -12,7 +12,8 @@ from src.modeling import get_parallel_model
 from src.ppo.buffer import LogitsRolloutBuffer
 from src.ppo.collector import LogitsBufferCollector
 from src.trainer import ParallelSolverDistillTrainer
-from src.utils import setup_model_parallel, set_barrier, json_dump
+from src.utils import json_dump
+from src.parallel import setup_model_parallel, set_barrier
 
 
 def main(

@@ -15,7 +15,8 @@ from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs, Atten
     ParallelVerifier, VerifierOutputs
 from src.models.modeling_acts import RMSNorm, Clamp, LogitsNormalize
 from src.models.modeling_args import MistralArgs, LoraMistralArgs
-from src.utils import apply_rotary_emb, precompute_freqs_cis, set_model_parallel_barrier, apply_lora
+from src.utils import apply_rotary_emb, precompute_freqs_cis, apply_lora
+from src.parallel import set_model_parallel_barrier
 
 
 def repeat_kv(keys: torch.Tensor, values: torch.Tensor, repeats: int):

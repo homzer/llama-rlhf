@@ -11,7 +11,8 @@ from src.modeling import get_parallel_model, get_parallel_verifier
 from src.ppo.buffer import CriticRolloutBuffer, RolloutBuffer, ActorRolloutBuffer
 from src.ppo.collector import CriticBufferCollector, ActorBufferCollector
 from src.ppo.trainer import ParallelPolicyGradientTrainerForCausalLM
-from src.utils import setup_model_parallel, set_barrier, masked_mean, json_load
+from src.utils import masked_mean, json_load
+from src.parallel import setup_model_parallel, set_barrier
 
 
 def run(

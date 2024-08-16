@@ -9,7 +9,8 @@ import torch.nn as nn
 from src.criterion import PairwiseScoreLoss, KLDivLoss, DpoLoss, ReverseKLDivLoss, JSDivLoss, LastTokenScoreLoss
 from src.models.modeling import Module, ParallelModule, ParallelModelForCausalLM, ParallelVerifier
 from src.tokenizers import Tokenizer
-from src.utils import set_barrier, truncate
+from src.utils import truncate
+from src.parallel import set_barrier
 
 
 class Trainer:

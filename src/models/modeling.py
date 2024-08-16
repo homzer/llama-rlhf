@@ -13,7 +13,8 @@ from fairscale.nn.model_parallel.initialize import (
 )
 
 from src.checkpoint import Checkpoint
-from src.utils import set_barrier, load_safetensors
+from src.utils import load_safetensors
+from src.parallel import set_barrier
 
 CausalLMOutputs = collections.namedtuple('CausalLMOutputs', ['logits', 'hidden_states'])
 Seq2SeqLMOutputs = collections.namedtuple('Seq2SeqLMOutputs', ['logits', 'hidden_states'])

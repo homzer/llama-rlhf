@@ -14,7 +14,8 @@ from src.models.mistral import repeat_kv
 from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs, AttentionForCausalLM
 from src.models.modeling_acts import RMSNorm, Clamp, RotaryEmbedding
 from src.models.modeling_args import MistralArgsHf
-from src.utils import set_model_parallel_barrier, compute_position_ids, apply_rotary_pos_emb
+from src.utils import compute_position_ids, apply_rotary_pos_emb
+from src.parallel import set_model_parallel_barrier
 
 
 class MistralAttentionHf(AttentionForCausalLM):

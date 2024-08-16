@@ -6,7 +6,7 @@ from typing import List
 import safetensors
 import torch
 
-from src.utils import set_barrier
+from src.parallel import set_barrier
 
 
 class Checkpoint:

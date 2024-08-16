@@ -15,7 +15,8 @@ from src.models.modeling import AttentionForCausalLM, ParallelModelForCausalLM, 
     VerifierOutputs
 from src.models.modeling_acts import RotaryEmbedding, Clamp, RMSNorm, LogitsNormalize
 from src.models.modeling_args import BaichuanArgs, LoraBaichuanArgs
-from src.utils import set_model_parallel_barrier, compute_position_ids, apply_rotary_pos_emb, apply_lora
+from src.utils import compute_position_ids, apply_rotary_pos_emb, apply_lora
+from src.parallel import set_model_parallel_barrier
 
 
 class BaichuanAttention(AttentionForCausalLM):

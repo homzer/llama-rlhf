@@ -8,7 +8,7 @@ from src.dataset import ChatTemplateDataset, JsonDataset
 from src.entities import Timer
 from src.modeling import get_parallel_verifier
 from src.trainer import ParallelVerifierPointwiseTrainer
-from src.utils import setup_model_parallel
+from src.parallel import setup_model_parallel
 
 
 def main(

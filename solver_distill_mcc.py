@@ -9,7 +9,8 @@ from src.dataset import MultiOutputsConsistentDataset, JsonDataset
 from src.evaluator import SolverEvaluator
 from src.modeling import get_parallel_model
 from src.trainer import ParallelSolverMccDistillTrainer
-from src.utils import setup_model_parallel, json_dump
+from src.utils import json_dump
+from src.parallel import setup_model_parallel
 
 
 def run(

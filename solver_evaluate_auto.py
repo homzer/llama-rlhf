@@ -6,7 +6,8 @@ import fire
 from src.dataset import JsonDataset
 from src.evaluator import SolverEvaluator
 from src.modeling import get_parallel_model
-from src.utils import setup_model_parallel, json_dump
+from src.utils import json_dump
+from src.parallel import setup_model_parallel
 
 TASKS = ['GSM8K', 'BBH', 'ARC', 'AGIEval', 'CSQA', 'MMLU']
 LABEL_FILES = {

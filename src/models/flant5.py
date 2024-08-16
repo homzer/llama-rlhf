@@ -16,7 +16,8 @@ from transformers.models.t5.modeling_t5 import T5LayerNorm
 
 from src.models.modeling import ParallelModelForSeq2SeqLM, Seq2SeqLMOutputs
 from src.models.modeling_args import T5Config, LoraT5Config
-from src.utils import set_barrier, apply_lora
+from src.utils import apply_lora
+from src.parallel import set_barrier
 
 
 def _relative_position_bucket(_relative_position, _bidirectional=True, _num_buckets=32, _max_distance=128):
