@@ -10,7 +10,7 @@ from src.criterion import PairwiseScoreLoss, KLDivLoss, DpoLoss, ReverseKLDivLos
 from src.models.modeling import Module, ParallelModule, ParallelModelForCausalLM, ParallelVerifier
 from src.tokenizers import Tokenizer
 from src.utils import truncate
-from src.parallel import set_barrier
+from src.parallel.utils import set_barrier
 
 
 class Trainer:

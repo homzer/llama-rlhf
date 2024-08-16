@@ -9,7 +9,7 @@ from src.entities import Timer
 from src.modeling import get_parallel_model
 from src.trainer import ParallelSolverTrainer
 from src.utils import json_load
-from src.parallel import setup_model_parallel
+from src.parallel.utils import setup_model_parallel
 
 
 def main(

@@ -9,7 +9,7 @@ from src.dataset import PairwiseDataset, ChatTemplateDataset
 from src.entities import Timer
 from src.modeling import get_parallel_verifier
 from src.trainer import ParallelVerifierPairwiseTrainer
-from src.parallel import setup_model_parallel
+from src.parallel.utils import setup_model_parallel
 
 
 def main(

@@ -12,7 +12,7 @@ from src.ppo.buffer import CriticRolloutBuffer, RolloutBuffer, ActorRolloutBuffe
 from src.ppo.collector import CriticBufferCollector, ActorBufferCollector
 from src.ppo.trainer import ParallelPolicyGradientTrainerForCausalLM
 from src.utils import masked_mean, json_load
-from src.parallel import setup_model_parallel, set_barrier
+from src.parallel.utils import setup_model_parallel, set_barrier
 
 
 def run(

@@ -3,7 +3,9 @@ import os
 
 import fire
 
-from src.parallel import ParallelDataLoader, ParallelDataWriter, setup_model_parallel
+from src.parallel.dataloader import ParallelDataLoader
+from src.parallel.utils import setup_model_parallel
+from src.parallel.datawriter import ParallelDataWriter
 from src.dataset import JsonDataset, ChatTemplateDataset
 from src.entities import Timer
 from src.generator import GeneratorForCausalLM

@@ -16,7 +16,7 @@ from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs, Atten
 from src.models.modeling_acts import Clamp, RMSNorm, RotaryEmbedding, LogitsNormalize
 from src.models.modeling_args import QwenArgs, LoraQwenArgs
 from src.utils import compute_position_ids, apply_rotary_pos_emb, apply_lora
-from src.parallel import set_model_parallel_barrier
+from src.parallel.utils import set_model_parallel_barrier
 
 
 class QwenAttention(AttentionForCausalLM):

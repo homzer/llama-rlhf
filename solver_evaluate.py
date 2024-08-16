@@ -6,7 +6,7 @@ from src.dataset import JsonDataset, ChatTemplateDataset
 from src.evaluator import SolverEvaluator
 from src.modeling import get_parallel_model
 from src.utils import json_dump
-from src.parallel import setup_model_parallel
+from src.parallel.utils import setup_model_parallel
 
 
 def main(

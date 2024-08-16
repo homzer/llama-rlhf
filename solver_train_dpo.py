@@ -13,7 +13,7 @@ from src.ppo.buffer import LogitsRolloutBuffer, OutputRolloutBuffer
 from src.ppo.collector import LogitsBufferCollector, OutputBufferCollector
 from src.trainer import ParallelSolverDpoTrainer
 from src.utils import json_dump, json_load
-from src.parallel import setup_model_parallel, set_barrier
+from src.parallel.utils import setup_model_parallel, set_barrier
 
 
 def main(

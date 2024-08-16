@@ -16,7 +16,7 @@ from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs, Atten
 from src.models.modeling_acts import RMSNorm, Clamp, LogitsNormalize
 from src.models.modeling_args import LlamaArgs, LoraLlamaArgs
 from src.utils import apply_rotary_emb, precompute_freqs_cis, apply_lora
-from src.parallel import set_model_parallel_barrier
+from src.parallel.utils import set_model_parallel_barrier
 
 
 class LlamaAttention(AttentionForCausalLM):
