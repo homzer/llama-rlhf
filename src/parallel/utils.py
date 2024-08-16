@@ -33,14 +33,16 @@ ParallelInfos = collections.namedtuple("ParallelInfos", [
 
 
 def setup_model_parallel(
-        model_parallel_size: int = None, seed: int = None
+        model_parallel_size: int = None, pipeline_parallel_size: int = 1, seed: int = None
 ) -> ParallelInfos:
     global_rank: int = int(os.environ.get("RANK"))
     local_rank: int = int(os.environ.get("LOCAL_RANK"))
     world_size: int = int(os.environ.get("WORLD_SIZE"))
-
     init_process_group("nccl")
-    initialize_model_parallel(model_parallel_size or world_size)
+    initialize_model_parallel(
+        model_parallel_size_=model_parallel_size or (world_size // pipeline_parallel_size),
+        pipeline_length=pipeline_parallel_size
+    )
 
     model_parallel_world_size: int = get_model_parallel_world_size()
     model_parallel_rank: int = get_model_parallel_rank()
