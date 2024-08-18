@@ -11,6 +11,21 @@ from torch.distributed import init_process_group
 from src.utils import set_seed
 
 
+def get_rank() -> int:
+    """Return my global rank."""
+    return int(os.environ.get("RANK"))
+
+
+def get_local_rank() -> int:
+    """Return my local rank."""
+    return int(os.environ.get("LOCAL_RANK"))
+
+
+def get_world_size() -> int:
+    """Return the world size of the global group."""
+    return int(os.environ.get("WORLD_SIZE"))
+
+
 def get_data_parallel_src_rank() -> int:
     """Calculate the global rank corresponding to a local rank zero
     in the data parallel group."""

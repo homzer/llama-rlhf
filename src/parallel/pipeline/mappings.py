@@ -69,7 +69,8 @@ def _recv_backward(input_: torch.Tensor) -> torch.Tensor:
         return input_
 
     # Bypass the function if we are at the last pipe.
-    if get_pipeline_parallel_rank() == 0:
+    world_size = torch.distributed.get_world_size(group=group)
+    if get_pipeline_parallel_rank() == world_size - 1:
         return input_
 
     # Get the rank of the next pipe.
