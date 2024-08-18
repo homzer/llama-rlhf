@@ -39,6 +39,7 @@ def _send_backward(input_: torch.Tensor) -> None:
     # Get the rank of the previous pipe.
     dst = get_pipeline_parallel_ranks()[get_pipeline_parallel_rank() - 1]
     # Send.
+    print(f"I am rank {get_pipeline_parallel_rank()}, I send to {dst}.")
     torch.distributed.send(input_, dst=dst, group=group)
 
 
@@ -77,6 +78,7 @@ def _recv_backward(input_: torch.Tensor) -> torch.Tensor:
     src = get_pipeline_parallel_ranks()[get_pipeline_parallel_rank() + 1]
     # Receive.
     torch.distributed.recv(input_, src=src, group=group)
+    print(f"I am rank {get_pipeline_parallel_rank()}, I receive from {src}.")
 
     return input_
 
@@ -89,9 +91,9 @@ def _broadcast_forward(input_: torch.Tensor) -> torch.Tensor:
         return input_
 
     # Get the rank of the last pipe.
-    rank = get_pipeline_parallel_ranks()[-1]
+    src = get_pipeline_parallel_ranks()[-1]
     # Broadcast
-    torch.distributed.broadcast(input_, src=rank, group=group)
+    torch.distributed.broadcast(input_, src=src, group=group)
 
     return input_
 
@@ -104,9 +106,13 @@ def _broadcast_backward(input_: torch.Tensor) -> torch.Tensor:
         return input_
 
     # Get the rank of the first pipe.
-    rank = get_pipeline_parallel_ranks()[0]
+    src = get_pipeline_parallel_ranks()[0]
     # Broadcast
-    torch.distributed.broadcast(input_, src=rank, group=group)
+    if get_pipeline_parallel_rank() == 0:
+        print(f"I am rank {get_pipeline_parallel_rank()}, I broadcast to all.")
+    torch.distributed.broadcast(input_, src=src, group=group)
+    if get_pipeline_parallel_rank() != 0:
+        print(f"I am rank {get_pipeline_parallel_rank()}, I receive from {src}.")
 
     return input_
 
