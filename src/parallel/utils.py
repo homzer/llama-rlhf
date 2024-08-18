@@ -5,7 +5,7 @@ import sys
 import torch
 from fairscale.nn.model_parallel.initialize import get_data_parallel_world_size, initialize_model_parallel, \
     get_model_parallel_world_size, get_model_parallel_rank, get_model_parallel_src_rank, get_data_parallel_rank, \
-    get_model_parallel_group, get_data_parallel_group
+    get_model_parallel_group, get_data_parallel_group, get_pipeline_parallel_group
 from torch.distributed import init_process_group
 
 from src.utils import set_seed
@@ -17,6 +17,24 @@ def get_data_parallel_src_rank() -> int:
     global_rank = torch.distributed.get_rank()
     local_world_size = get_data_parallel_world_size()
     return (global_rank // local_world_size) * local_world_size
+
+
+def get_pipeline_parallel_rank() -> int:
+    """Return my rank for the pipeline parallel group."""
+    return torch.distributed.get_rank(group=get_pipeline_parallel_group())
+
+
+def get_pipeline_parallel_world_size() -> int:
+    """Return world size for the pipeline parallel group."""
+    return torch.distributed.get_world_size(group=get_pipeline_parallel_group())
+
+
+def get_pipeline_parallel_src_rank() -> int:
+    """Calculate the global rank corresponding to a local rank zero
+    in the pipeline parallel group."""
+    global_rank = torch.distributed.get_rank()
+    local_work_size = get_pipeline_parallel_world_size()
+    return (global_rank // local_work_size) * local_work_size
 
 
 ParallelInfos = collections.namedtuple("ParallelInfos", [
@@ -84,3 +102,8 @@ def set_model_parallel_barrier():
 def set_data_parallel_barrier():
     """ make sure that all other processes in data parallel group cannot continue until reach this op. """
     torch.distributed.barrier(get_data_parallel_group())
+
+
+def set_pipeline_parallel_barrier():
+    """ make sure that all other processes in pipeline parallel group cannot continue until reach this op. """
+    torch.distributed.barrier(get_pipeline_parallel_group())
