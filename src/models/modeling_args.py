@@ -12,7 +12,7 @@ from fairscale.nn.model_parallel.initialize import (
 )
 
 from src.utils import get_torch_dtype
-from src.parallel import get_data_parallel_src_rank
+from src.parallel.utils import get_data_parallel_src_rank
 
 HF_CONFIG_MAP = {
     "hidden_size": "dim",
