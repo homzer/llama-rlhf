@@ -220,9 +220,17 @@ def run(
         )
         critic_optimizer = torch.optim.Adam(critic.parameters(), lr=lr)
         critic_trainer = ParallelCriticTrainerForCausalLM(critic, critic_optimizer)
-        critic_trainer.load_model(critic_ckpt_dir) if (
-                epoch == 0
-        ) else critic_trainer.load(os.path.join(critic_save_dir, f"epoch-{epoch}"))
+        if epoch == 0:
+            critic_trainer.load_model(critic_ckpt_dir)
+            assert hasattr(critic, 'v_head')
+            critic.v_head = torch.nn.Linear(  # random re-init value function head
+                in_features=critic.v_head.weight.shape[1],
+                out_features=critic.v_head.weight.shape[0],
+                bias=False,
+                device=critic.v_head.weight.device
+            ).type(critic.v_head.weight.dtype)
+        else:
+            critic_trainer.load(os.path.join(critic_save_dir, f"epoch-{epoch}"))
         print('Critic training ...')
         timer = Timer(total=(len(rollout_buffer) // critic_max_batch_size) * inner_epochs, episode=100)
         for inner_epoch in range(inner_epochs):
