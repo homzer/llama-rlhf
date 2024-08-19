@@ -26,11 +26,11 @@ class KLDivLoss(Loss):
             logits: torch.Tensor,
             targets: torch.Tensor,
             masks: torch.Tensor = None,
-            T: float = 1.0
+            temperature: float = 1.0
     ):
         """
         Compute KL-Divergence loss.
-        :param T: Temperature, default to be 1.
+        :param temperature: Temperature, default to be 1.
         :param logits: the logits of the estimated distribution, before `softmax`
         :param targets: the target logits, before `softmax`.
         :param masks: Optional. For masked selection.
@@ -40,12 +40,9 @@ class KLDivLoss(Loss):
         bzs = logits.shape[0]
         logits = logits.view(-1, logits.size(-1))
         targets = targets.view(-1, targets.size(-1)).to(logits)
-        estimates = torch.softmax(logits.float(), dim=-1).type_as(logits)
-        targets = torch.softmax(targets.float() / T, dim=-1).type_as(targets)
-        estimates = powmax(estimates + self.eps)
-        targets = powmax(targets + self.eps)
-
-        loss = targets * (torch.log(targets) - torch.log(estimates))
+        loss = (torch.softmax(targets.float(), dim=-1) * (
+            torch.log_softmax(targets.float(), dim=-1) - torch.log_softmax(logits.float(), dim=-1)
+        )).type_as(logits)
         loss = torch.sum(loss, dim=-1)
         if self.return_scalar:
             if masks is not None:
@@ -68,13 +65,13 @@ class ReverseKLDivLoss(KLDivLoss):
             logits: torch.Tensor,
             targets: torch.Tensor,
             masks: torch.Tensor = None,
-            T: float = 1.0
+            temperature: float = 1.0
     ):
         bzs = logits.shape[0]
         logits = logits.view(-1, logits.size(-1))
         targets = targets.view(-1, targets.size(-1)).to(logits)
         estimates = torch.softmax(logits.float(), dim=-1).type_as(logits)
-        targets = torch.softmax(targets.float() / T, dim=-1).type_as(targets)
+        targets = torch.softmax(targets.float() / temperature, dim=-1).type_as(targets)
         estimates = powmax(estimates + self.eps)
         targets = powmax(targets + self.eps)
 
@@ -101,13 +98,13 @@ class JSDivLoss(KLDivLoss):
             logits: torch.Tensor,
             targets: torch.Tensor,
             masks: torch.Tensor = None,
-            T: float = 1.0
+            temperature: float = 1.0
     ):
         bzs = logits.shape[0]
         logits = logits.view(-1, logits.size(-1))
         targets = targets.view(-1, targets.size(-1)).to(logits)
         estimates = torch.softmax(logits.float(), dim=-1).type_as(logits)
-        targets = torch.softmax(targets.float() / T, dim=-1).type_as(targets)
+        targets = torch.softmax(targets.float() / temperature, dim=-1).type_as(targets)
         estimates = powmax(estimates + self.eps)
         targets = powmax(targets + self.eps)
         mediates = 0.5 * (targets + estimates)
@@ -324,8 +321,8 @@ class DpoLoss(Loss):
         log_probs = (chosen_log_probs - rejected_log_probs) - (ref_chosen_log_probs - ref_rejected_log_probs)
         # (chosen_log_probs - ref_chosen_log_probs) - (rejected_log_probs - ref_rejected_log_probs)
         loss = (
-            - F.logsigmoid(self.beta * log_probs) * (1 - self.label_smoothing)
-            - F.logsigmoid(- self.beta * log_probs) * self.label_smoothing
+                - F.logsigmoid(self.beta * log_probs) * (1 - self.label_smoothing)
+                - F.logsigmoid(- self.beta * log_probs) * self.label_smoothing
         )
         return loss.mean()
 
@@ -362,7 +359,8 @@ if __name__ == '__main__':
     ])
     # _reference_chosen_logits, _reference_rejected_logits = norm(_reference_chosen_logits), norm(_reference_rejected_logits)
     print(criterion.forward(
-        _chosen_logits, _rejected_logits, _chosen_labels, _rejected_labels, _chosen_masks, _rejected_masks, _reference_chosen_logits, _reference_rejected_logits
+        _chosen_logits, _rejected_logits, _chosen_labels, _rejected_labels, _chosen_masks, _rejected_masks,
+        _reference_chosen_logits, _reference_rejected_logits
     ))
     # _chosen_masks = torch.tensor([[False, False, False, False, True]])
     # _rejected_masks = torch.tensor([[True, True, True, True, False]])

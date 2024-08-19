@@ -227,7 +227,7 @@ class ParallelSolverDistillTrainer(ParallelSolverTrainer):
             logits=logits,
             targets=target_logits,
             masks=example.masks,
-            T=temperature
+            temperature=temperature
         )
         loss = loss_ce + loss_kl
         self._back_propagation(loss)
@@ -340,8 +340,8 @@ class ParallelSolverMccDistillTrainer(ParallelSolverTrainer):
         p = p[valid_batch_indices]
         q = q[valid_batch_indices]
         masks = (torch.sum(p, dim=-1) != 0)
-        p_loss = self.criterion_kl.forward(p, q, masks=masks, T=T)
-        q_loss = self.criterion_kl.forward(q, p, masks=masks, T=T)
+        p_loss = self.criterion_kl.forward(p, q, masks=masks, temperature=T)
+        q_loss = self.criterion_kl.forward(q, p, masks=masks, temperature=T)
         return (p_loss + q_loss) * 0.5
 
     def distill(
@@ -399,7 +399,7 @@ class ParallelSolverReferenceDistillTrainer(ParallelSolverTrainer):
             logits=logits,
             targets=target_logits,
             masks=masks,
-            T=temperature
+            temperature=temperature
         )
 
         target_logps = target_logps.to(logits)

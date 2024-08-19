@@ -10,7 +10,7 @@ from src.entities import Timer
 from src.modeling import get_parallel_model, get_parallel_verifier
 from src.ppo.buffer import CriticRolloutBuffer, RolloutBuffer, ActorRolloutBuffer
 from src.ppo.collector import CriticBufferCollector, ActorBufferCollector
-from src.ppo.trainer import ParallelPolicyGradientTrainerForCausalLM
+from src.ppo.trainer import ParallelPolicyGradientKLDivTrainerForCausalLM
 from src.utils import masked_mean, json_load
 from src.parallel.utils import setup_model_parallel, set_barrier
 
@@ -146,7 +146,7 @@ def run(
             lora_dtype=lora_dtype
         )
         optimizer = torch.optim.Adam(policy.parameters(), lr=lr)
-        trainer = ParallelPolicyGradientTrainerForCausalLM(policy, optimizer)
+        trainer = ParallelPolicyGradientKLDivTrainerForCausalLM(policy, optimizer)
         trainer.load_model(policy_ckpt_dir) if (
                 epoch == 0
         ) else trainer.load(os.path.join(save_dir, f"epoch-{epoch}"))

@@ -296,22 +296,6 @@ def load_safetensors(f: str) -> dict:
     return state_dict
 
 
-def merge_lora_state_dict(state_dict: dict) -> dict:
-    res_state_dict = {}
-    with torch.no_grad():
-        for name, param in state_dict.items():
-            if 'lora' not in name:
-                res_state_dict[name] = param.clone()
-            elif 'lora_a_' in name:
-                origin = name.replace('lora_a_', '')
-                original_dtype = state_dict[origin].dtype
-                w = state_dict[origin].float()
-                wa = state_dict[name].float()
-                wb = state_dict[name.replace('lora_a_', 'lora_b_')].float()
-                res_state_dict[origin] = (w + wb @ wa).clone().to(original_dtype)
-    return res_state_dict
-
-
 def merge_lora_checkpoints(
         ckpt_dir,
         world_size=8,

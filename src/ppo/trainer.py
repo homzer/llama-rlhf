@@ -2,7 +2,7 @@ import collections
 
 import torch
 
-from src.criterion import MSELoss
+from src.criterion import MSELoss, KLDivLoss
 from src.models.modeling import ParallelModelForCausalLM, ParallelVerifier
 from src.ppo.buffer import RolloutBufferSample
 from src.ppo.policy import AbstractPolicyForCausalLM, AbstractParallelPolicyForCausalLM
@@ -116,7 +116,7 @@ class ParallelActorTrainerForCausalLM(ParallelTrainer):
     def __init__(self, actor: ParallelModelForCausalLM, optimizer: torch.optim.Optimizer):
         super().__init__(actor, optimizer)
         self.actor = actor
-        self.clip_range = 0.5
+        self.clip_range = 0.2
         self.step = 0
 
     def forward(self, rollout_data: RolloutBufferSample):
@@ -209,6 +209,42 @@ class ParallelPolicyGradientTrainerForCausalLM(ParallelTrainer):
         actor_loss_1 = rewards * ratio
         actor_loss_2 = rewards * torch.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range)
         loss = - torch.min(actor_loss_1, actor_loss_2).mean()
+
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+
+        Outputs = collections.namedtuple('Outputs', ['loss', 'rewards'])
+        return Outputs(loss=loss.item(), rewards=torch.mean(rewards).item())
+
+
+class ParallelPolicyGradientKLDivTrainerForCausalLM(ParallelTrainer):
+    def __init__(self, policy: ParallelModelForCausalLM, optimizer: torch.optim.Optimizer):
+        super().__init__(policy, optimizer)
+        self.policy = policy
+        self.clip_range = 0.2
+        self.step = 0
+        self.criterion = KLDivLoss(return_scalar=False)
+
+    def forward(self, rollout_data: RolloutBufferSample):
+        self.policy.train()
+        self.step += 1
+
+        obs = rollout_data.observations.to(self.policy.device())
+        actions = rollout_data.actions.to(self.policy.device())
+        action_masks = rollout_data.action_masks.to(self.policy.device())
+        rewards = rollout_data.rewards.to(self.policy.device())
+
+        outputs = self.policy.forward(obs)
+
+        labels = outputs.logits.detach().clone()
+        batch_indices, sequence_indices = torch.meshgrid(
+            torch.arange(labels.shape[0]), torch.arange(labels.shape[1]), indexing="ij"
+        )
+        labels[batch_indices, sequence_indices, actions] = torch.sign(rewards) * 1e5
+        rewards = torch.masked_select(rewards.view(-1), action_masks.view(-1))
+        loss = torch.masked_select(self.criterion.forward(outputs.logits, labels).view(-1), action_masks.view(-1))
+        loss = torch.mean(torch.abs(rewards) * loss)
 
         self.optimizer.zero_grad()
         loss.backward()
