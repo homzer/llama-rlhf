@@ -244,7 +244,8 @@ class ParallelPolicyGradientKLDivTrainerForCausalLM(ParallelTrainer):
         labels[batch_indices, sequence_indices, actions] = (torch.sign(rewards) * 1e5).to(labels)
         rewards = torch.masked_select(rewards.view(-1), action_masks.view(-1))
         loss = torch.masked_select(self.criterion.forward(outputs.logits, labels).view(-1), action_masks.view(-1))
-        loss = torch.mean(torch.clamp(rewards, min=0.0) * loss)
+        clamp_rewards = torch.clamp(rewards, min=0.0)
+        loss = torch.mean(torch.masked_select(clamp_rewards * loss, torch.tensor(clamp_rewards != 0)))
 
         self.optimizer.zero_grad()
         loss.backward()
