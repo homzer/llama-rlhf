@@ -6,11 +6,9 @@ from torch.utils.data import DataLoader
 
 from src.dataset import JsonDataset, ChatTemplateDataset
 from src.entities import Timer
-from src.evaluator import SolverEvaluator
 from src.modeling import get_parallel_model
-from src.trainer import ParallelSolverTrainer
-from src.utils import json_dump
 from src.parallel.utils import setup_model_parallel
+from src.trainer import ParallelSolverTrainer
 
 
 def main(
@@ -28,18 +26,12 @@ def main(
         lora_rank: int = -1,
         lora_dtype: str = "float32",
         save_steps: int = 10000,
-        task: str = None,
-        label_file: str = None,
-        eval_batch_size: int = None,
-        log_dir: str = None,
         use_chat_template: bool = False,
         seed: int = None,
 ):
-    if log_dir is not None:
-        os.makedirs(log_dir, exist_ok=True)
     tokenizer_file = tokenizer_file or ckpt_dir
     config_file = config_file or ckpt_dir
-    parallel_infos = setup_model_parallel(seed=seed)
+    setup_model_parallel(seed=seed)
 
     model, tokenizer = get_parallel_model(
         model_type=model_type,
@@ -61,9 +53,6 @@ def main(
         optimizer=optimizer,
         max_seq_len=max_seq_len
     )
-    evaluator = SolverEvaluator(
-        model, tokenizer, eval_batch_size, max_seq_len
-    ) if task is not None else None
     trainer.load(ckpt_dir)
     for epoch in range(epochs):
         timer = Timer(total=len(dataloader), episode=100)
@@ -80,13 +69,6 @@ def main(
             if trainer.step % save_steps == 0:
                 trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))
         trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))
-        if evaluator is not None:
-            outputs = evaluator.forward(task, JsonDataset(label_file))
-            print("Evaluate Accuracy: ", outputs.acc, "Missing: ", outputs.missing)
-            if log_dir is not None and parallel_infos.local_rank == 0:
-                json_dump(outputs.datalist, os.path.join(
-                    log_dir, f'results-epoch-{epoch + 1}-{round(outputs.acc, 4)}.json'), indent=4
-                )
 
 
 if __name__ == '__main__':
