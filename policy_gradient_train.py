@@ -116,9 +116,6 @@ def run(
         set_barrier()
 
         print("Average Rewards: ", masked_mean(verifier_rollout_buffer.scores, policy_rollout_buffer.action_masks))
-        # Setting the reward of [EOS] token to 2.
-        for i, action_mask in enumerate(policy_rollout_buffer.action_masks):
-            verifier_rollout_buffer.scores[i][np.nonzero(action_mask)[0][-1]] = 2.0
 
         rollout_buffer = RolloutBuffer(
             obs=policy_rollout_buffer.obs,
@@ -129,6 +126,9 @@ def run(
             action_masks=policy_rollout_buffer.action_masks,
             action_logprobs=policy_rollout_buffer.action_logprobs
         )
+        # Setting the reward of [EOS] token to 2.0.
+        for i, action_mask in enumerate(rollout_buffer.action_masks):
+            rollout_buffer.rewards[i][np.nonzero(action_mask)[0][-1]] = 2.5
 
         policy, policy_tokenizer = get_parallel_model(
             model_type=policy_model_type,
