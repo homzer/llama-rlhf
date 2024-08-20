@@ -3,6 +3,7 @@ from torch.utils.data import DataLoader, Dataset, DistributedSampler
 
 
 class ParallelDataLoader(DataLoader):
+    """ Usage: dataloader = ParallelDataLoader(dataset, batch_size=batch_size) """
     def __init__(self, dataset: Dataset, batch_size: int, shuffle: bool = False):
         sampler = DistributedSampler(
             dataset,

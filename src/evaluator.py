@@ -11,6 +11,7 @@ from src.generator import GeneratorForCausalLM, GeneratorForVerifier
 from src.maths import math_equal
 from src.models.modeling import ModelForCausalLM, ParallelModelForCausalLM, Verifier, ParallelVerifier
 from src.tokenizers.tokenizer import Tokenizer
+from src.utils import convert_dataloader_data_to_list
 
 
 class SolverEvaluator:
@@ -46,25 +47,23 @@ class SolverEvaluator:
         dataloader = DataLoader(dataset, batch_size=self.batch_size)
         evaluator = self.evaluators[task]()
 
-        datalist = []
+        results = []
         timer = Timer(len(dataloader))
         for data in tqdm(dataloader):
             timer.step()
             outputs = self.generator.forward(data['instruction'])
+            datalist = convert_dataloader_data_to_list(data)
             for i, output in enumerate(outputs):
-                result_dict = dict()
-                for key in data.keys():
-                    result_dict[key] = data[key][i]
-                result_dict['output'] = output
-                datalist.append(result_dict)
+                datalist[i]['output'] = output
+            results.extend(datalist)
             print(data['instruction'][0].strip() + '\n' + outputs[0])
             print("---" * 10)
 
-        for data in datalist:  # TODO MATH
+        for data in results:  # TODO MATH
             data['predict'] = evaluator.forward(data['output'], data['label'] if task != "MATH" else None)
 
         Output = collections.namedtuple('Output', ['acc', 'datalist', 'missing', 'correct'])
-        return Output(acc=evaluator.accuracy, datalist=datalist, missing=evaluator.miss, correct=evaluator.correct)
+        return Output(acc=evaluator.accuracy, datalist=results, missing=evaluator.miss, correct=evaluator.correct)
 
 
 class VerifierEvaluator:
