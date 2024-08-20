@@ -2,6 +2,7 @@ import gc
 import os
 
 import fire
+import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
@@ -115,6 +116,9 @@ def run(
         set_barrier()
 
         print("Average Rewards: ", masked_mean(verifier_rollout_buffer.scores, policy_rollout_buffer.action_masks))
+        # Setting the reward of [EOS] token to 2.
+        for i, action_mask in enumerate(policy_rollout_buffer.action_masks):
+            verifier_rollout_buffer.scores[i][np.nonzero(action_mask)[0][-1]] = 2.0
 
         rollout_buffer = RolloutBuffer(
             obs=policy_rollout_buffer.obs,
@@ -125,16 +129,6 @@ def run(
             action_masks=policy_rollout_buffer.action_masks,
             action_logprobs=policy_rollout_buffer.action_logprobs
         )
-
-        torch.save({
-            'obs': rollout_buffer.obs[: max_forward_batch_size],
-            'actions': rollout_buffer.actions[: max_forward_batch_size],
-            'values': rollout_buffer.values[: max_forward_batch_size],
-            'rewards': rollout_buffer.rewards[: max_forward_batch_size],
-            'action_masks': rollout_buffer.action_masks[: max_forward_batch_size],
-            'advantages': rollout_buffer.advantages[: max_forward_batch_size],
-            'returns': rollout_buffer.returns[: max_forward_batch_size]
-        }, os.path.join(save_dir, f"buffer-{epoch}.bin"))
 
         policy, policy_tokenizer = get_parallel_model(
             model_type=policy_model_type,
@@ -161,6 +155,16 @@ def run(
                     print('Loss: ', trainer_outputs.loss)
                     print('Rewards: ', trainer_outputs.rewards)
         trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))
+
+        torch.save({
+            'obs': rollout_buffer.obs,
+            'actions': rollout_buffer.actions,
+            'values': rollout_buffer.values,
+            'rewards': rollout_buffer.rewards,
+            'action_masks': rollout_buffer.action_masks,
+            'advantages': rollout_buffer.advantages,
+            'returns': rollout_buffer.returns
+        }, os.path.join(save_dir, f"epoch-{epoch + 1}", f"buffer-{epoch}.bin"))
 
         policy.cpu()
         del policy
