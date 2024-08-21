@@ -16,6 +16,14 @@ from src.utils import masked_mean, json_load
 from src.parallel.utils import setup_model_parallel, set_barrier
 
 
+def re_scoring_eos_rewards(buffer: RolloutBuffer) -> RolloutBuffer:
+    # Setting the reward of [EOS] token to 1.0.
+    for i, action_mask in enumerate(buffer.action_masks):
+        buffer.rewards[i][np.nonzero(action_mask)[0][-1]] = 1.0
+
+    return buffer
+
+
 def run(
         train_file: str,
         save_dir: str,
@@ -126,9 +134,7 @@ def run(
             action_masks=policy_rollout_buffer.action_masks,
             action_logprobs=policy_rollout_buffer.action_logprobs
         )
-        # Setting the reward of [EOS] token to 2.0.
-        for i, action_mask in enumerate(rollout_buffer.action_masks):
-            rollout_buffer.rewards[i][np.nonzero(action_mask)[0][-1]] = 2.5
+        rollout_buffer = re_scoring_eos_rewards(rollout_buffer)
 
         policy, policy_tokenizer = get_parallel_model(
             model_type=policy_model_type,

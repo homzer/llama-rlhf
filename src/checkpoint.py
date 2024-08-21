@@ -30,6 +30,7 @@ class Checkpoint:
     def load_hf(cls, ckpt_files: List[str]) -> dict:
         state_dict = OrderedDict()
         for ckpt_file in ckpt_files:
+            ckpt_file = str(ckpt_file)
             if ckpt_file.endswith(".safetensors"):
                 with safetensors.safe_open(ckpt_file, "pt", device="cpu") as reader:
                     for k in reader.keys():
