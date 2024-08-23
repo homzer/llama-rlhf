@@ -285,6 +285,7 @@ class Pipe(Module):
         copy_streams = self._ensure_copy_streams()
 
         # The micro-batch index where the checkpointing stops.
+        # TODO: 这个开启或不开启diff不大
         checkpoint_stop = {"always": self.chunks, "except_last": self.chunks - 1, "never": 0}[self.checkpoint]
 
         self.pipeline = Pipeline(self.partitions, self.devices, copy_streams, self._skip_layout, checkpoint_stop)
