@@ -7,6 +7,7 @@ from src.models.modeling import ParallelModelForCausalLM, ParallelVerifier
 from src.ppo.buffer import RolloutBufferSample
 from src.ppo.policy import AbstractPolicyForCausalLM, AbstractParallelPolicyForCausalLM
 from src.trainer import ParallelTrainer, Trainer
+from src.utils import logits_assignment, powmax
 
 
 class PPOTrainerForCausalLM(Trainer):
@@ -222,7 +223,7 @@ class ParallelPolicyGradientKLDivTrainerForCausalLM(ParallelTrainer):
     def __init__(self, policy: ParallelModelForCausalLM, optimizer: torch.optim.Optimizer):
         super().__init__(policy, optimizer)
         self.policy = policy
-        self.clip_range = 0.2
+        self.delta = 0.6
         self.step = 0
         self.criterion = KLDivLoss(return_scalar=False)
 
@@ -238,14 +239,27 @@ class ParallelPolicyGradientKLDivTrainerForCausalLM(ParallelTrainer):
         outputs = self.policy.forward(obs)
 
         labels = outputs.logits.detach().clone()
-        batch_indices, sequence_indices = torch.meshgrid(
-            torch.arange(labels.shape[0]), torch.arange(labels.shape[1]), indexing="ij"
+
+        # Assignment for three dimensions tensor.
+        # batch_indices, sequence_indices = torch.meshgrid(
+        #     torch.arange(labels.shape[0]), torch.arange(labels.shape[1]), indexing="ij"
+        # )
+        # labels[batch_indices, sequence_indices, actions] = (torch.sign(rewards) * 1e5).to(labels)
+        labels = torch.softmax(labels.float(), dim=-1).type_as(labels)
+        labels = labels * logits_assignment(  # scaling
+            torch.ones_like(labels), actions, (1 + torch.sign(rewards) * self.delta).to(labels)
         )
-        labels[batch_indices, sequence_indices, actions] = (torch.sign(rewards) * 1e5).to(labels)
+        labels = powmax(labels, dim=-1)
+
+        loss = torch.masked_select(
+            self.criterion.forward(outputs.logits, labels, targets_after_softmax=True).view(-1),
+            action_masks.view(-1)
+        )
         rewards = torch.masked_select(rewards.view(-1), action_masks.view(-1))
-        loss = torch.masked_select(self.criterion.forward(outputs.logits, labels).view(-1), action_masks.view(-1))
-        clamp_rewards = torch.where(rewards > 0.0, rewards, 0.0)
-        loss = torch.mean(torch.masked_select(clamp_rewards * loss, clamp_rewards != 0))
+        # rewards_abs = torch.abs(rewards)
+        loss = torch.mean(loss * torch.abs(rewards))
+        # clamp_rewards = torch.where(rewards > 0.0, rewards, 0.0)
+        # loss = torch.mean(torch.masked_select(clamp_rewards * loss, clamp_rewards != 0))
 
         self.optimizer.zero_grad()
         loss.backward()

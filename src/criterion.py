@@ -26,23 +26,30 @@ class KLDivLoss(Loss):
             logits: torch.Tensor,
             targets: torch.Tensor,
             masks: torch.Tensor = None,
-            temperature: float = 1.0
+            temperature: float = 1.0,
+            targets_after_softmax: bool = False
     ):
         """
         Compute KL-Divergence loss.
         :param temperature: Temperature, default to be 1.
         :param logits: the logits of the estimated distribution, before `softmax`
-        :param targets: the target logits, before `softmax`.
+        :param targets: the target logits.
         :param masks: Optional. For masked selection.
+        :param targets_after_softmax: whether the targets are summed up to be 1.
         Shape is identical to the shape of `logits` up to last dim.
         :return: scalar loss.
         """
         bzs = logits.shape[0]
         logits = logits.view(-1, logits.size(-1))
         targets = targets.view(-1, targets.size(-1)).to(logits)
-        loss = (torch.softmax(targets.float(), dim=-1) * (
-            torch.log_softmax(targets.float(), dim=-1) - torch.log_softmax(logits.float(), dim=-1)
-        )).type_as(logits)
+        if targets_after_softmax:
+            loss = (targets.float() * (
+                torch.log(torch.clamp(targets.float(), min=1e-12)) - torch.log_softmax(logits.float(), dim=-1)
+            )).type_as(logits)
+        else:
+            loss = (torch.softmax(targets.float(), dim=-1) * (
+                torch.log_softmax(targets.float(), dim=-1) - torch.log_softmax(logits.float(), dim=-1)
+            )).type_as(logits)
         loss = torch.sum(loss, dim=-1)
         if self.return_scalar:
             if masks is not None:

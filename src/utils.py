@@ -225,11 +225,11 @@ def reconstruct_logits_from_dicts(
     return logits
 
 
-def powmax(tensor, exponent=1, dim=-1, eps=7e-5):
+def powmax(tensor, exponent=1, dim=-1, eps=1e-12):
     """ Similar to softmax, perform power max on vectors along one specific dimension. """
     numerator = torch.pow(tensor, exponent=exponent)
     denominator = torch.sum(numerator, dim=dim, keepdim=True)
-    return numerator / (denominator + eps)
+    return (numerator.float() / torch.clamp(denominator.float(), min=eps)).type_as(tensor)
 
 
 def masked_mean(x, mask=None, dim: int = None, keepdim: bool = False, eps: float = 1e-12):
@@ -408,6 +408,26 @@ def convert_dataloader_data_to_list(data: dict) -> List[dict]:
             result_dict[k] = v[i]
         result_dicts.append(result_dict)
     return result_dicts
+
+
+def logits_assignment(
+        logits: torch.Tensor, indices: torch.Tensor, targets: torch.Tensor
+) -> torch.Tensor:
+    """
+    assignment targets to logits according to the indices.
+    :param logits: [b, s, v]
+    :param indices: [b, s]
+    :param targets: [b, s]
+    :return: modified logits.
+    """
+    assert len(logits.shape) == 3
+    assert len(indices.shape) == 2
+    assert indices.shape == targets.shape
+    batch_indices, sequence_indices = torch.meshgrid(
+        torch.arange(logits.shape[0]), torch.arange(logits.shape[1]), indexing="ij"
+    )
+    logits[batch_indices, sequence_indices, indices] = targets
+    return logits
 
 
 # ===============================================================
