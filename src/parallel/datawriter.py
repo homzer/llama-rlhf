@@ -24,8 +24,9 @@ class ParallelDataWriter:
     def __del__(self):
         self.writer.close()
 
-    def write(self, s: str):
+    def write(self, s: str, flush: bool = False):
         if self.global_rank == self.model_parallel_src_rank:
             self.writer.write(s)
-            self.writer.flush()
+            if flush:
+                self.writer.flush()
         set_model_parallel_barrier()

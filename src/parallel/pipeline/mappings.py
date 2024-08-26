@@ -59,10 +59,11 @@ def _recv_forward(input_: torch.Tensor) -> torch.Tensor:
 
     # Get the rank of the previous pipe.
     src = get_pipeline_parallel_ranks()[get_pipeline_parallel_rank() - 1]
+    output = torch.empty_like(input_)
     # Receive.
-    torch.distributed.recv(input_, src=src, group=group)
+    torch.distributed.recv(output, src=src, group=group)
 
-    return input_
+    return output
 
 
 def _recv_backward(input_: torch.Tensor) -> torch.Tensor:
@@ -79,10 +80,10 @@ def _recv_backward(input_: torch.Tensor) -> torch.Tensor:
 
     # Get the rank of the next pipe.
     src = get_pipeline_parallel_ranks()[get_pipeline_parallel_rank() + 1]
+    output = torch.empty_like(input_)
     # Receive.
-    torch.distributed.recv(input_, src=src, group=group)
-
-    return input_
+    torch.distributed.recv(output, src=src, group=group)
+    return output
 
 
 def _broadcast_forward(input_: torch.Tensor) -> torch.Tensor:
@@ -95,9 +96,10 @@ def _broadcast_forward(input_: torch.Tensor) -> torch.Tensor:
     # Get the rank of the last pipe.
     src = get_pipeline_parallel_ranks()[-1]
     # Broadcast
-    torch.distributed.broadcast(input_, src=src, group=group)
+    output = input_ if get_pipeline_parallel_rank() == src else torch.empty_like(input_)
+    torch.distributed.broadcast(output, src=src, group=group)
 
-    return input_
+    return output
 
 
 def _broadcast_backward(input_: torch.Tensor) -> torch.Tensor:
@@ -110,9 +112,9 @@ def _broadcast_backward(input_: torch.Tensor) -> torch.Tensor:
     # Get the rank of the first pipe.
     src = get_pipeline_parallel_ranks()[0]
     # Broadcast
-    torch.distributed.broadcast(input_, src=src, group=group)
-
-    return input_
+    output = input_ if get_pipeline_parallel_rank() == src else torch.empty_like(input_)
+    torch.distributed.broadcast(output, src=src, group=group)
+    return output
 
 
 class _SendToPipelineParallelRegion(torch.autograd.Function):
