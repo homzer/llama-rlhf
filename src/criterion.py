@@ -72,7 +72,8 @@ class ReverseKLDivLoss(KLDivLoss):
             logits: torch.Tensor,
             targets: torch.Tensor,
             masks: torch.Tensor = None,
-            temperature: float = 1.0
+            temperature: float = 1.0,
+            targets_after_softmax: bool = False
     ):
         bzs = logits.shape[0]
         logits = logits.view(-1, logits.size(-1))
@@ -105,7 +106,8 @@ class JSDivLoss(KLDivLoss):
             logits: torch.Tensor,
             targets: torch.Tensor,
             masks: torch.Tensor = None,
-            temperature: float = 1.0
+            temperature: float = 1.0,
+            targets_after_softmax: bool = False
     ):
         bzs = logits.shape[0]
         logits = logits.view(-1, logits.size(-1))
