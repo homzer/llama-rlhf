@@ -16,6 +16,13 @@ class JsonDataset(Dataset):
             self.datalist = json_load(f)
         else:
             self.datalist = f
+        self.check_for_none()
+
+    def check_for_none(self):
+        for data in self.datalist:
+            for key in data.keys():
+                if data[key] is None:
+                    data[key] = ""  # omit
 
     def __len__(self):
         return len(self.datalist)
