@@ -129,7 +129,6 @@ class ParallelActorTrainerForCausalLM(ParallelTrainer):
         action_masks = rollout_data.action_masks.to(self.actor.device())
         advantages = rollout_data.advantages.to(self.actor.device())
         old_action_logprobs = rollout_data.old_action_logprobs.to(self.actor.device())
-        ref_action_logprobs = rollout_data.ref_action_logprobs.to(self.actor.device())
 
         outputs = self.actor.forward(obs)
         action_logprobs = torch.gather(
@@ -146,18 +145,20 @@ class ParallelActorTrainerForCausalLM(ParallelTrainer):
         actor_loss_2 = advantages * torch.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range)
         loss = - torch.min(actor_loss_1, actor_loss_2).mean()
 
-        # For logging only, compute kl divergence using mse loss
-        kl_div = torch.masked_select(
-            (0.5 * (action_logprobs - ref_action_logprobs) ** 2).view(-1),
-            action_masks.view(-1)
-        )
+        kl_div = 0
+        if rollout_data.ref_action_logprobs is not None:
+            ref_action_logprobs = rollout_data.ref_action_logprobs.to(self.actor.device())
+            # For logging only, compute kl divergence using mse loss
+            kl_div = torch.masked_select(
+                (0.5 * (action_logprobs.detach() - ref_action_logprobs) ** 2).view(-1), action_masks.view(-1)
+            ).mean().item()
 
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
 
         Outputs = collections.namedtuple('Outputs', ['loss', 'advantages', "kl"])
-        return Outputs(loss=loss.item(), advantages=torch.mean(advantages).item(), kl=torch.mean(kl_div).item())
+        return Outputs(loss=loss.item(), advantages=torch.mean(advantages).item(), kl=kl_div)
 
 
 class ParallelCriticTrainerForCausalLM(ParallelTrainer):
