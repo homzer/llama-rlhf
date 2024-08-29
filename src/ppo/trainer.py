@@ -250,10 +250,11 @@ class ParallelPolicyGradientKLDivTrainerForCausalLM(ParallelTrainer):
         return loss
 
     def ignore_negative_reward_loss(self, logits, rewards, actions, action_masks) -> torch.Tensor:
+        scaling_coef = 3.0
         labels = logits.detach().clone()
         labels = torch.softmax(labels.float(), dim=-1).type_as(labels)
         labels = labels * logits_assignment(  # scaling
-            torch.ones_like(labels), actions, 2.0
+            torch.ones_like(labels), actions, scaling_coef
         )
         labels = powmax(labels, dim=-1)
         loss = torch.masked_select(
