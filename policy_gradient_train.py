@@ -84,9 +84,7 @@ def run(
             timer.step()
             policy_rollout_buffer.extend(policy_buffer_collector.forward(data['instruction']))
             print(data['instruction'][-1])
-            print(policy_tokenizer.decode(
-                policy_rollout_buffer.actions[-1][policy_rollout_buffer.action_masks[-1]].tolist()
-            ))
+            print(policy_rollout_buffer.responses[-1])
 
         policy.cpu()
         del policy
@@ -170,7 +168,7 @@ def run(
             'action_masks': rollout_buffer.action_masks,
             'advantages': rollout_buffer.advantages,
             'returns': rollout_buffer.returns
-        }, os.path.join(save_dir, f"epoch-{epoch + 1}", f"buffer-{epoch}.bin"))
+        }, os.path.join(save_dir, f"epoch-{epoch + 1}", f"buffer.bin"))
 
         policy.cpu()
         del policy

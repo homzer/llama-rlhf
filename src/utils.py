@@ -411,18 +411,17 @@ def convert_dataloader_data_to_list(data: dict) -> List[dict]:
 
 
 def logits_assignment(
-        logits: torch.Tensor, indices: torch.Tensor, targets: torch.Tensor
+        logits: torch.Tensor, indices: torch.Tensor, targets: Union[torch.Tensor, int, float]
 ) -> torch.Tensor:
     """
     assignment targets to logits according to the indices.
     :param logits: [b, s, v]
     :param indices: [b, s]
-    :param targets: [b, s]
+    :param targets: [b, s] or scalar
     :return: modified logits.
     """
     assert len(logits.shape) == 3
     assert len(indices.shape) == 2
-    assert indices.shape == targets.shape
     batch_indices, sequence_indices = torch.meshgrid(
         torch.arange(logits.shape[0]), torch.arange(logits.shape[1]), indexing="ij"
     )

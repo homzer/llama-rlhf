@@ -233,6 +233,39 @@ class ParallelPolicyGradientKLDivTrainerForCausalLM(ParallelTrainer):
         self.step = 0
         self.criterion = KLDivLoss(return_scalar=False)
 
+    def modified_kl_loss(self, logits, rewards, actions, action_masks) -> torch.Tensor:
+        labels = logits.detach().clone()
+        labels = torch.softmax(labels.float(), dim=-1).type_as(labels)
+        labels = labels * logits_assignment(  # scaling
+            torch.ones_like(labels), actions, (1 + torch.sign(rewards) * self.delta).to(labels)
+        )
+        labels = powmax(labels, dim=-1)
+
+        loss = torch.masked_select(
+            self.criterion.forward(logits, labels, targets_after_softmax=True).view(-1),
+            action_masks.view(-1)
+        )
+        rewards = torch.masked_select(rewards.view(-1), action_masks.view(-1))
+        loss = torch.mean(loss * torch.abs(rewards))
+        return loss
+
+    def ignore_negative_reward_loss(self, logits, rewards, actions, action_masks) -> torch.Tensor:
+        labels = logits.detach().clone()
+        labels = torch.softmax(labels.float(), dim=-1).type_as(labels)
+        labels = labels * logits_assignment(  # scaling
+            torch.ones_like(labels), actions, 2.0
+        )
+        labels = powmax(labels, dim=-1)
+        loss = torch.masked_select(
+            self.criterion.forward(logits, labels, targets_after_softmax=True).view(-1),
+            action_masks.view(-1)
+        )
+        threshold = -1.0
+        clamp_rewards = torch.where(rewards > threshold, rewards, 0.0)
+        clamp_rewards = torch.where(rewards < 0, rewards - threshold, clamp_rewards)
+        loss = torch.mean(torch.masked_select(clamp_rewards * loss, clamp_rewards != 0.0))
+        return loss
+
     def forward(self, rollout_data: RolloutBufferSample):
         self.policy.train()
         self.step += 1
@@ -244,29 +277,8 @@ class ParallelPolicyGradientKLDivTrainerForCausalLM(ParallelTrainer):
 
         outputs = self.policy.forward(obs)
 
-        labels = outputs.logits.detach().clone()
-
-        # Assignment for three dimensions tensor.
-        # batch_indices, sequence_indices = torch.meshgrid(
-        #     torch.arange(labels.shape[0]), torch.arange(labels.shape[1]), indexing="ij"
-        # )
-        # labels[batch_indices, sequence_indices, actions] = (torch.sign(rewards) * 1e5).to(labels)
-        labels = torch.softmax(labels.float(), dim=-1).type_as(labels)
-        labels = labels * logits_assignment(  # scaling
-            torch.ones_like(labels), actions, (1 + torch.sign(rewards) * self.delta).to(labels)
-        )
-        labels = powmax(labels, dim=-1)
-
-        loss = torch.masked_select(
-            self.criterion.forward(outputs.logits, labels, targets_after_softmax=True).view(-1),
-            action_masks.view(-1)
-        )
-        rewards = torch.masked_select(rewards.view(-1), action_masks.view(-1))
-        # rewards_abs = torch.abs(rewards)
-        loss = torch.mean(loss * torch.abs(rewards))
-        # clamp_rewards = torch.where(rewards > 0.0, rewards, 0.0)
-        # loss = torch.mean(torch.masked_select(clamp_rewards * loss, clamp_rewards != 0))
-
+        # loss = self.modified_kl_loss(outputs.logits, rewards, actions, action_masks)
+        loss = self.ignore_negative_reward_loss(outputs.logits, rewards, actions, action_masks)
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
