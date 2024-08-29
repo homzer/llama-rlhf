@@ -166,13 +166,13 @@ class LogitsGeneratorForCausalLM:
     def prepare_for_generation(
             self,
             instructions: Union[List[str], List[List[int]]],
-            outputs: Union[List[str], List[List[int]]]
+            responses: Union[List[str], List[List[int]]]
     ):
         """ TODO: duplicated code with `ParallelSolverTrainer().prepare_for_generation()` """
         bsz = len(instructions)
         tokens = torch.full((bsz, self.max_seq_len), self.tokenizer.pad_id).long()
         labels = torch.full((bsz, self.max_seq_len), -100).long()
-        for i, (instruction, output) in enumerate(zip(instructions, outputs)):
+        for i, (instruction, response) in enumerate(zip(instructions, responses)):
             if isinstance(instruction, str):
                 instruction_ids = self.tokenizer.encode(instruction, bos=True, eos=False)
             elif isinstance(instruction, list) and isinstance(instruction[0], int):
@@ -180,12 +180,12 @@ class LogitsGeneratorForCausalLM:
             else:
                 raise TypeError(type(instruction))
 
-            if isinstance(output, str):
-                output_ids = self.tokenizer.encode(output, bos=False, eos=True)
-            elif isinstance(output, list) and isinstance(output[0], int):
-                output_ids = output
+            if isinstance(response, str):
+                output_ids = self.tokenizer.encode(response, bos=False, eos=True)
+            elif isinstance(response, list) and isinstance(response[0], int):
+                output_ids = response
             else:
-                raise TypeError(type(output))
+                raise TypeError(type(response))
 
             instruction_ids, output_ids = truncate(instruction_ids, output_ids, self.max_seq_len)
             instr_len, output_len = len(instruction_ids), len(output_ids)
@@ -205,10 +205,10 @@ class LogitsGeneratorForCausalLM:
     def forward(
             self,
             instructions: Union[List[str], List[List[int]]],
-            outputs: Union[List[str], List[List[int]]]
+            responses: Union[List[str], List[List[int]]]
     ) -> LogitsGeneratorOutputs:
         self.model.eval()
-        prep_outputs = self.prepare_for_generation(instructions, outputs)
+        prep_outputs = self.prepare_for_generation(instructions, responses)
         logits = self.model_forward(prep_outputs.tokens).logits
         
         # retrieve token probs

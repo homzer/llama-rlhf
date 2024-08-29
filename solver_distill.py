@@ -64,7 +64,7 @@ def main(
             lora_rank=-1
         )
         teacher.load(teacher_ckpt_dir, merge_lora=True)
-        buffer_collector = LogitsBufferCollector(teacher, teacher_tokenizer, teacher_max_seq_len)
+        buffer_collector = LogitsBufferCollector(teacher, teacher_tokenizer, teacher_max_seq_len, logits_topk=5)
         rollout_buffer = LogitsRolloutBuffer()
         timer = Timer(len(dataloader), episode=10)
         for data in dataloader:

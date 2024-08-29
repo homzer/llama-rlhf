@@ -19,7 +19,8 @@ RolloutBufferSample = collections.namedtuple(
         "advantages",
         "returns",
         "action_masks",
-        "rewards"
+        "rewards",
+        "ref_action_logprobs"
     ]
 )
 
@@ -40,7 +41,8 @@ ActorRolloutBufferSample = collections.namedtuple(
         "actions",
         "action_logits",
         "action_masks",
-        "action_logprobs"
+        "action_logprobs",
+        "responses"
     ]
 )
 
@@ -92,8 +94,10 @@ class RolloutBuffer:
             action_logits: np.ndarray,
             action_masks: np.ndarray,
             action_logprobs: np.ndarray,
+            ref_action_logprobs: np.ndarray = None,
             gamma: float = 0.9,
             gae_lambda: float = 0.8,
+            kl_coef: float = 0.1,
             reward_normalize: bool = True
     ):
         self.obs = None
@@ -103,24 +107,26 @@ class RolloutBuffer:
         self.action_logits = None
         self.action_masks = None
         self.action_logprobs = None
+        self.ref_action_logprobs = None
         self.advantages = None
         self.returns = None
 
         self.gamma = gamma
         self.gae_lambda = gae_lambda
+        self.kl_coef = kl_coef
         self.reward_normalize = reward_normalize
 
         self.buffer_size = obs.shape[0]
         self.max_seq_len = obs.shape[1]
 
-        self._set(obs, actions, rewards, values, action_logits, action_masks, action_logprobs)
+        self._set(obs, actions, rewards, values, action_logits, action_masks, action_logprobs, ref_action_logprobs)
 
         self.compute_returns_and_advantage()
 
     def __len__(self):
         return 0 if self.obs is None else self.obs.shape[0]
 
-    def _set(self, obs, actions, rewards, values, action_logits, action_masks, action_logprobs):
+    def _set(self, obs, actions, rewards, values, action_logits, action_masks, action_logprobs, action_ref_logprobs=None):
         self.obs = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.int64)
         self.actions = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.int64)
         self.rewards = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.float32)
@@ -137,36 +143,32 @@ class RolloutBuffer:
         self.action_logits[:, :] = action_logits.copy()
         self.action_masks[:, :] = action_masks.copy()
         self.action_logprobs[:, :] = action_logprobs.copy()
+        if action_ref_logprobs is not None:
+            self.ref_action_logprobs[:, :] = action_ref_logprobs.copy()
 
         assert np.sum(self.rewards[~ self.action_masks]) == 0  # Check rewards correctness
+        # Adding KL penalty
+        self.rewards += - self.kl_coef * self.compute_kl_penalty()
 
         if self.reward_normalize:
-            # Normalize
+            # Normalize rewards
             self.rewards = (self.rewards - np.mean(
-                self.rewards[self.action_masks])) / (
-                                   np.std(self.rewards[self.action_masks]) + 1e-12)
-            self.rewards[~ self.action_masks] = 0.0
+                self.rewards[self.action_masks])) / (np.std(self.rewards[self.action_masks]) + 1e-12)
+
+        self.rewards[~ self.action_masks] = 0.0
+
+    def compute_kl_penalty(self):
+        if self.ref_action_logprobs is None:
+            return np.zeros_like(self.action_logprobs)
+        return 0.5 * (self.action_logprobs - self.ref_action_logprobs) ** 2  # using mse loss
 
     def compute_returns_and_advantage(self):
         last_gae_lam = 0
         for step in reversed(range(self.max_seq_len - 1)):
             next_values = self.values[:, step + 1] * np.where(self.action_masks[:, step + 1], 1, 0)
-            # \delta_t = r_t + \gamma V_{t+1} - V_t
             delta = self.rewards[:, step] + self.gamma * next_values - self.values[:, step]
             last_gae_lam = delta + self.gamma * self.gae_lambda * last_gae_lam * self.action_masks[:, step + 1]
-            # A_t     = \delta_t
-            #         = r_t + \gamma V_{t+1} - V_t
-            # A_{t-1} = \delta_{t-1} + \gamma\delta_t
-            #         = r_{t-1} + \gamma r_t + \gamma^2 V_{t+1} - V_{t-1}
-            # A_{t-2} = \delta_{t-2} + \gamma\delta_{t-1} + \gamma^2\delta_t
-            #         = r_{t-2} + \gamma r_{t-1} + \gamma^2 r_t + \gamma^3 V_{t+1} - V_{t-2}
-            # A_{t-3} = \delta_{t-3} + \gamma\delta_{t-2} + \gamma^2\delta_{t-1} + \gamma^3\delta_t
-            #         = r_{t-3} + \gamma r_{t-2} + \gamma^2 r_{t-1} + \gamma^3 r_t + \gamma^4 V_{t+1} - V_{t-3}
             self.advantages[:, step] = last_gae_lam
-        # R_t     = r_t + \gamma V_{t+1}
-        # R_{t-1} = r_{t-1} + \gamma r_t + \gamma^2 V_{t+1}
-        # R_{t-2} = r_{t-2} + \gamma r_{t-1} + \gamma^2 r_t + \gamma^3 V_{t+1}
-        # R_{t-3} = r_{t-3} + \gamma r_{t-2} + \gamma^2 r_{t-1} + \gamma^3 r_t + \gamma^4 V_{t+1}
         self.returns = self.advantages + self.values
 
     def get(self, batch_size: int) -> Generator[RolloutBufferSample, None, None]:
@@ -184,7 +186,8 @@ class RolloutBuffer:
                 advantages=torch.tensor(self.advantages[batch_indices]),
                 returns=torch.tensor(self.returns[batch_indices]),
                 action_masks=torch.tensor(self.action_masks[batch_indices]),
-                rewards=torch.tensor(self.rewards[batch_indices])
+                rewards=torch.tensor(self.rewards[batch_indices]),
+                ref_action_logprobs=torch.tensor(self.ref_action_logprobs[batch_indices])
             )
             start_idx += batch_size
 
@@ -273,8 +276,9 @@ class LogitsRolloutBuffer:
             outputs: Union[List[str], np.ndarray] = None,
             logits: torch.Tensor = None,
             output_tokens_logps: Union[np.ndarray, torch.Tensor] = None,
-            logits_topk: int = 5
+            logits_topk: int = None
     ):
+        self.ignore_logits = logits_topk is None or logits_topk <= 0
         self.logits = None
         self.instructions = None
         self.outputs = None
@@ -289,7 +293,8 @@ class LogitsRolloutBuffer:
             assert logits is not None
             assert outputs is not None
             assert output_tokens_logps is not None
-            self._set(instructions, outputs, SlimLogits(logits=logits, n=logits_topk), output_tokens_logps)
+            logits = None if self.ignore_logits else SlimLogits(logits=logits, n=logits_topk)
+            self._set(instructions, outputs, logits, output_tokens_logps)
 
     def save(self, save_dir: str, overwrite: bool = True, self_clean: bool = False):
         os.makedirs(save_dir, exist_ok=True)
@@ -300,7 +305,7 @@ class LogitsRolloutBuffer:
                 writer.write(json.dumps(dict(
                     instruction=self.instructions[i],
                     output=self.outputs[i],
-                    logits=self.logits[i].to_dict(),
+                    logits={} if self.ignore_logits else self.logits[i].to_dict(),
                     output_tokens_logps=self.output_tokens_logps[i].tolist(),
                 ), ensure_ascii=False) + '\n')
         if self_clean:
@@ -325,7 +330,7 @@ class LogitsRolloutBuffer:
                     self.output_tokens_logps.append(data['output_tokens_logps'])
         self.instructions = np.array(self.instructions)
         self.outputs = np.array(self.outputs)
-        self.logits = SlimLogits().from_dict(self.logits)
+        self.logits = None if self.ignore_logits else SlimLogits().from_dict(self.logits)
         self.output_tokens_logps = np.array(self.output_tokens_logps)
         print("Loading done!")
         return self
@@ -335,17 +340,13 @@ class LogitsRolloutBuffer:
             assert self.__cache_outputs is not None
             assert self.__cache_logits is not None
             assert self.__cache_output_tokens_logps is not None
-            # self.instructions = np.concatenate([self.instructions, self.__cache_instructions], axis=0)
             self.instructions = np.stack([*self.instructions, *self.__cache_instructions], axis=0)
-            # self.outputs = np.concatenate([self.outputs, self.__cache_outputs], axis=0)
             self.outputs = np.stack([*self.outputs, *self.__cache_outputs], axis=0)
-            self.logits.extend(self.__cache_logits)
-            # self.output_tokens_logps = np.concatenate(
-            #     [self.output_tokens_logps, self.__cache_output_tokens_logps], axis=0
-            # )
             self.output_tokens_logps = np.stack(
                 [*self.output_tokens_logps, *self.__cache_output_tokens_logps], axis=0
             )
+            if not self.ignore_logits:
+                self.logits.extend(self.__cache_logits)
             self.__cache_logits = None
             self.__cache_instructions = None
             self.__cache_outputs = None
@@ -368,14 +369,12 @@ class LogitsRolloutBuffer:
     def __len__(self):
         self.__flush()
         if self.instructions is not None:
-            assert len(self.instructions) == len(self.logits)
             assert len(self.instructions) == len(self.outputs)
             assert len(self.instructions) == len(self.output_tokens_logps)
-            return len(self.logits)
+            return len(self.instructions)
         return 0
 
     def _set(self, instructions, outputs, logits: SlimLogits, output_tokens_logps):
-        assert len(instructions) == len(logits)
         if not isinstance(instructions, np.ndarray):
             instructions = np.array(instructions)
         if not isinstance(outputs, np.ndarray):
@@ -384,11 +383,13 @@ class LogitsRolloutBuffer:
             output_tokens_logps = output_tokens_logps.float().cpu().numpy()
         self.instructions = instructions
         self.outputs = outputs
-        self.logits = logits
+        if not self.ignore_logits:
+            self.logits = logits
         self.output_tokens_logps = output_tokens_logps
 
     def extend(self, rollout_buffer: "LogitsRolloutBuffer"):
         if len(self) == 0:
+            self.ignore_logits = rollout_buffer.ignore_logits
             self._set(
                 rollout_buffer.instructions,
                 rollout_buffer.outputs,
@@ -400,28 +401,21 @@ class LogitsRolloutBuffer:
                 if self.__cache_instructions is None:
                     self.__cache_instructions = rollout_buffer.instructions
                     self.__cache_outputs = rollout_buffer.outputs
-                    self.__cache_logits = rollout_buffer.logits
+                    if not self.ignore_logits:
+                        self.__cache_logits = rollout_buffer.logits
                     self.__cache_output_tokens_logps = rollout_buffer.output_tokens_logps
                 else:
-                    # self.__cache_instructions = np.concatenate(
-                    #     [self.__cache_instructions, rollout_buffer.instructions], axis=0
-                    # )
                     self.__cache_instructions = np.stack(
                         [*self.__cache_instructions, *rollout_buffer.instructions], axis=0
                     )
-                    # self.__cache_outputs = np.concatenate(
-                    #     [self.__cache_instructions, rollout_buffer.outputs], axis=0
-                    # )
                     self.__cache_outputs = np.stack(
                         [*self.__cache_instructions, *rollout_buffer.outputs], axis=0
                     )
-                    self.__cache_logits.extend(rollout_buffer.logits)
-                    # self.__cache_output_tokens_logps = np.concatenate(
-                    #     [self.__cache_output_tokens_logps, rollout_buffer.output_tokens_logps], axis=0
-                    # )
                     self.__cache_output_tokens_logps = np.stack(
                         [*self.__cache_output_tokens_logps, *rollout_buffer.output_tokens_logps], axis=0
                     )
+                    if not self.ignore_logits:
+                        self.__cache_logits.extend(rollout_buffer.logits)
                 if len(self.__cache_instructions) > 1000:
                     self.__flush()
         return self
@@ -437,7 +431,7 @@ class LogitsRolloutBuffer:
             yield torch.tensor(self.output_tokens_logps[batch_indices])
             start_idx += batch_size
 
-    def get(self, batch_size: int, fetch_logits: bool = True) -> Generator[LogitsRolloutBufferSample, None, None]:
+    def get(self, batch_size: int) -> Generator[LogitsRolloutBufferSample, None, None]:
         self.__flush()
         size = len(self)
         indices = np.arange(size)
@@ -445,7 +439,7 @@ class LogitsRolloutBuffer:
         while start_idx < size:
             batch_indices = indices[start_idx: start_idx + batch_size]
             logits = None
-            if fetch_logits:
+            if not self.ignore_logits:
                 logits = torch.zeros(
                     (len(batch_indices), self.logits.max_seq_len, self.logits.vocab_size), dtype=torch.float32
                 )
@@ -597,7 +591,8 @@ class ActorRolloutBuffer:
             actions: np.ndarray = None,
             action_logits: np.ndarray = None,
             action_masks: np.ndarray = None,
-            action_logprobs: np.ndarray = None
+            action_logprobs: np.ndarray = None,
+            responses: List[str] = None
     ):
         self.instructions = None
         self.obs = None
@@ -605,14 +600,15 @@ class ActorRolloutBuffer:
         self.action_logits = None
         self.action_masks = None
         self.action_logprobs = None
+        self.responses = None
 
         if obs is not None:
-            self._set(instructions, obs, actions, action_logits, action_masks, action_logprobs)
+            self._set(instructions, obs, actions, action_logits, action_masks, action_logprobs, responses)
 
     def __len__(self):
         return 0 if self.instructions is None else len(self.instructions)
 
-    def _set(self, instructions, obs, actions, action_logits, action_masks, action_logprobs):
+    def _set(self, instructions, obs, actions, action_logits, action_masks, action_logprobs, responses):
         buffer_size = obs.shape[0]
         max_seq_len = obs.shape[1]
 
@@ -628,6 +624,7 @@ class ActorRolloutBuffer:
         self.action_logits[:, :] = action_logits.copy()
         self.action_masks[:, :] = action_masks.copy()
         self.action_logprobs[:, :] = action_logprobs.copy()
+        self.responses = np.array(responses)
 
     def extend(self, rollout_buffer: "ActorRolloutBuffer"):
         if self.obs is None:
@@ -637,7 +634,8 @@ class ActorRolloutBuffer:
                 rollout_buffer.actions,
                 rollout_buffer.action_logits,
                 rollout_buffer.action_masks,
-                rollout_buffer.action_logprobs
+                rollout_buffer.action_logprobs,
+                rollout_buffer.responses
             )
         else:
             self.instructions = np.concatenate([self.instructions, rollout_buffer.instructions], axis=0)
@@ -646,6 +644,7 @@ class ActorRolloutBuffer:
             self.action_logits = np.concatenate([self.action_logits, rollout_buffer.action_logits], axis=0)
             self.action_masks = np.concatenate([self.action_masks, rollout_buffer.action_masks], axis=0)
             self.action_logprobs = np.concatenate([self.action_logprobs, rollout_buffer.action_logprobs], axis=0)
+            self.responses = np.concatenate([self.responses, rollout_buffer.responses], axis=0)
 
         return self
 
@@ -661,7 +660,8 @@ class ActorRolloutBuffer:
                 actions=self.actions[batch_indices],
                 action_logits=self.action_logits[batch_indices],
                 action_masks=self.action_masks[batch_indices],
-                action_logprobs=self.action_logprobs[batch_indices]
+                action_logprobs=self.action_logprobs[batch_indices],
+                responses=self.responses[batch_indices]
             )
             start_idx += batch_size
 

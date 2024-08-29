@@ -8,11 +8,11 @@ from torch.utils.data import DataLoader
 from src.dataset import JsonDataset, ChatTemplateDataset
 from src.entities import Timer
 from src.modeling import get_parallel_model, get_parallel_verifier
-from src.ppo.buffer import CriticRolloutBuffer, RolloutBuffer, ActorRolloutBuffer
-from src.ppo.collector import CriticBufferCollector, ActorBufferCollector
+from src.parallel.utils import setup_model_parallel, set_barrier
+from src.ppo.buffer import CriticRolloutBuffer, RolloutBuffer, ActorRolloutBuffer, LogitsRolloutBuffer
+from src.ppo.collector import CriticBufferCollector, ActorBufferCollector, LogitsBufferCollector
 from src.ppo.trainer import ParallelActorTrainerForCausalLM, ParallelCriticTrainerForCausalLM
 from src.utils import masked_mean, json_load
-from src.parallel.utils import setup_model_parallel, set_barrier
 
 
 def run(
@@ -33,6 +33,7 @@ def run(
         critic_tokenizer_file: str = None,
         verifier_config_file: str = None,
         verifier_tokenizer_file: str = None,
+        reference_ckpt_dir: str = None,
         actor_lora_rank: int = -1,
         actor_lora_dtype: str = "bfloat16",
         critic_lora_rank: int = -1,
@@ -85,10 +86,7 @@ def run(
         for data in dataloader:
             timer.step()
             actor_rollout_buffer.extend(actor_buffer_collector.forward(data['instruction']))
-            print(data['instruction'][-1])
-            print(actor_tokenizer.decode(
-                actor_rollout_buffer.actions[-1][actor_rollout_buffer.action_masks[-1]].tolist()
-            ))
+            print(actor_rollout_buffer.instructions[-1], '\n', actor_rollout_buffer.responses[-1])
 
         actor.cpu()
         del actor
@@ -96,6 +94,37 @@ def run(
         torch.cuda.empty_cache()
         gc.collect()
         set_barrier()
+
+        reference_rollout_buffer = None
+        if reference_ckpt_dir is not None:
+            # Collecting reference logprobs
+            reference, reference_tokenizer = get_parallel_model(
+                model_type=actor_model_type,
+                config_file=actor_config_file,
+                max_seq_len=max_seq_len,
+                tokenizer_file=actor_tokenizer_file,
+                lora_rank=-1,
+                dtype=dtype
+            )
+            reference.load(reference_ckpt_dir)
+            reference_buffer_collector = LogitsBufferCollector(
+                model=reference, tokenizer=reference_tokenizer, max_seq_len=max_seq_len
+            )
+            reference_rollout_buffer = LogitsRolloutBuffer()
+            print('Reference buffer collecting ...')
+            timer = Timer(total=len(actor_rollout_buffer) // max_forward_batch_size, episode=10)
+            for data in actor_rollout_buffer.get(max_forward_batch_size):
+                timer.step()
+                reference_rollout_buffer.extend(
+                    reference_buffer_collector.forward(data.instructions, data.responses)
+                )
+
+            reference.cpu()
+            del reference
+            del reference_buffer_collector
+            torch.cuda.empty_cache()
+            gc.collect()
+            set_barrier()
 
         critic, critic_tokenizer = get_parallel_verifier(
             model_type=critic_model_type,
@@ -106,6 +135,13 @@ def run(
             dtype=dtype
         )
         critic.load(critic_ckpt_dir if epoch == 0 else os.path.join(critic_save_dir, f"epoch-{epoch}"))
+        if epoch == 0:  # random initialize value head
+            critic.v_head = torch.nn.Linear(
+                in_features=critic.v_head.in_features,
+                out_features=critic.v_head.out_features,
+                bias=False,
+                device=critic.v_head.weight.device
+            ).type(dtype)
         critic_buffer_collector = CriticBufferCollector(critic, critic_tokenizer, max_seq_len)
         critic_rollout_buffer = CriticRolloutBuffer()
         print('Critic buffer collecting ...')
@@ -162,7 +198,10 @@ def run(
             values=critic_rollout_buffer.scores,
             action_logits=actor_rollout_buffer.action_logits,
             action_masks=actor_rollout_buffer.action_masks,
-            action_logprobs=actor_rollout_buffer.action_logprobs
+            action_logprobs=actor_rollout_buffer.action_logprobs,
+            ref_action_logprobs=reference_rollout_buffer.output_tokens_logps if (
+                    reference_rollout_buffer is not None
+            ) else None
         )
 
         torch.save({
@@ -173,7 +212,7 @@ def run(
             'action_masks': rollout_buffer.action_masks[: max_forward_batch_size],
             'advantages': rollout_buffer.advantages[: max_forward_batch_size],
             'returns': rollout_buffer.returns[: max_forward_batch_size]
-        }, os.path.join(actor_save_dir, f"buffer-{epoch}.bin"))
+        }, os.path.join(actor_save_dir, f"epoch-{epoch + 1}", "buffer.bin"))
 
         actor, actor_tokenizer = get_parallel_model(
             model_type=actor_model_type,
@@ -199,6 +238,7 @@ def run(
                     print(f'--------- STEP {actor_trainer.step} OF {timer.total} ---------')
                     print('Loss: ', trainer_outputs.loss)
                     print('Advantages: ', trainer_outputs.advantages)
+                    print('KL Divergence: ', trainer_outputs.kl)
         actor_trainer.save(os.path.join(actor_save_dir, f"epoch-{epoch + 1}"))
 
         actor.cpu()

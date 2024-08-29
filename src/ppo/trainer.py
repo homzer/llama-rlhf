@@ -128,31 +128,36 @@ class ParallelActorTrainerForCausalLM(ParallelTrainer):
         actions = rollout_data.actions.to(self.actor.device())
         action_masks = rollout_data.action_masks.to(self.actor.device())
         advantages = rollout_data.advantages.to(self.actor.device())
-        old_action_logits = rollout_data.old_action_logits.to(self.actor.device())
+        old_action_logprobs = rollout_data.old_action_logprobs.to(self.actor.device())
+        ref_action_logprobs = rollout_data.ref_action_logprobs.to(self.actor.device())
 
         outputs = self.actor.forward(obs)
-        action_logits = torch.gather(
-            outputs.logits,
-            dim=-1,
-            index=actions.unsqueeze(-1)
+        action_logprobs = torch.gather(
+            torch.log_softmax(outputs.logits, dim=-1), dim=-1, index=actions.unsqueeze(-1)
         ).squeeze(-1)
 
         # Normalize advantage
         advantages = torch.masked_select(advantages.view(-1), action_masks.view(-1))
         # ratio between old and new policy, should be one at the first iteration
-        ratio = torch.exp(action_logits - old_action_logits)
+        ratio = torch.exp(action_logprobs - old_action_logprobs)
         ratio = torch.masked_select(ratio.view(-1), action_masks.view(-1))
         # clipped surrogate loss
         actor_loss_1 = advantages * ratio
         actor_loss_2 = advantages * torch.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range)
         loss = - torch.min(actor_loss_1, actor_loss_2).mean()
 
+        # For logging only, compute kl divergence using mse loss
+        kl_div = torch.masked_select(
+            (0.5 * (action_logprobs - ref_action_logprobs) ** 2).view(-1),
+            action_masks.view(-1)
+        )
+
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
 
-        Outputs = collections.namedtuple('Outputs', ['loss', 'advantages'])
-        return Outputs(loss=loss.item(), advantages=torch.mean(advantages).item())
+        Outputs = collections.namedtuple('Outputs', ['loss', 'advantages', "kl"])
+        return Outputs(loss=loss.item(), advantages=torch.mean(advantages).item(), kl=torch.mean(kl_div).item())
 
 
 class ParallelCriticTrainerForCausalLM(ParallelTrainer):

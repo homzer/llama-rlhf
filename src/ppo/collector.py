@@ -135,13 +135,14 @@ class ActorBufferCollector:
         )
 
     def forward(self, instructions: List[str]) -> ActorRolloutBuffer:
-        outputs = self.generator.forward(instructions)
-        obs = outputs.obs.float().cpu().numpy()
-        actions = outputs.actions.float().cpu().numpy()
-        action_logits = outputs.action_logits.float().cpu().numpy()
-        action_masks = outputs.action_masks.float().cpu().numpy()
-        action_logprobs = outputs.action_logprobs.float().cpu().numpy()
-        return ActorRolloutBuffer(instructions, obs, actions, action_logits, action_masks, action_logprobs)
+        generator_outputs = self.generator.forward(instructions)
+        obs = generator_outputs.obs.float().cpu().numpy()
+        actions = generator_outputs.actions.float().cpu().numpy()
+        action_logits = generator_outputs.action_logits.float().cpu().numpy()
+        action_masks = generator_outputs.action_masks.float().cpu().numpy()
+        action_logprobs = generator_outputs.action_logprobs.float().cpu().numpy()
+        responses = generator_outputs.outputs
+        return ActorRolloutBuffer(instructions, obs, actions, action_logits, action_masks, action_logprobs, responses)
 
 
 class CriticBufferCollector:
@@ -195,19 +196,19 @@ class LogitsBufferCollector:
             model: Union[ModelForCausalLM, ParallelModelForCausalLM],
             tokenizer: Tokenizer,
             max_seq_len: int,
-            logits_topk: int = 5
+            logits_topk: int = None
     ):
         self.logits_topk = logits_topk
         self.generator = LogitsGeneratorForCausalLM(
             model=model, tokenizer=tokenizer, max_seq_len=max_seq_len
         )
 
-    def forward(self, instructions: List[str], outputs: List[str]) -> LogitsRolloutBuffer:
-        assert len(instructions) == len(outputs)
-        generator_outputs = self.generator.forward(instructions, outputs)
+    def forward(self, instructions: List[str], responses: List[str]) -> LogitsRolloutBuffer:
+        assert len(instructions) == len(responses)
+        generator_outputs = self.generator.forward(instructions, responses)
         return LogitsRolloutBuffer(
             instructions=instructions,
-            outputs=outputs,
+            outputs=responses,
             logits=generator_outputs.logits,
             output_tokens_logps=generator_outputs.tokens_logps,
             logits_topk=self.logits_topk

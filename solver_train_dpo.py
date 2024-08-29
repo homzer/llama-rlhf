@@ -102,7 +102,9 @@ def main(
             lora_dtype=lora_dtype
         )
         reference.load(reference_ckpt_dir, merge_lora=True)
-        reference_buffer_collector = LogitsBufferCollector(reference, reference_tokenizer, reference_max_seq_len)
+        reference_buffer_collector = LogitsBufferCollector(
+            reference, reference_tokenizer, reference_max_seq_len, logits_topk=5
+        )
         reference_rejected_rollout_buffer = LogitsRolloutBuffer()
         reference_chosen_rollout_buffer = LogitsRolloutBuffer()
         timer = Timer(len(chosen_rollout_buffer) // reference_forward_batch_size, episode=10)
