@@ -258,7 +258,7 @@ def run(
             dtype=dtype,
             lora_dtype=critic_lora_dtype,
         )
-        critic_optimizer = torch.optim.Adam(critic.parameters(), lr=lr)
+        critic_optimizer = torch.optim.Adam(critic.parameters(), lr=max(1e-5, lr))
         critic_trainer = ParallelCriticTrainerForCausalLM(critic, critic_optimizer)
         if epoch == 0:
             critic_trainer.load_model(critic_ckpt_dir)
