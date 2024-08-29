@@ -338,7 +338,8 @@ class LogitsRolloutBuffer:
     def __flush(self):
         if self.__cache_instructions is not None:
             assert self.__cache_outputs is not None
-            assert self.__cache_logits is not None
+            if not self.ignore_logits:
+                assert self.__cache_logits is not None
             assert self.__cache_output_tokens_logps is not None
             self.instructions = np.stack([*self.instructions, *self.__cache_instructions], axis=0)
             self.outputs = np.stack([*self.outputs, *self.__cache_outputs], axis=0)
