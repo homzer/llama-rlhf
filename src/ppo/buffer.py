@@ -205,7 +205,9 @@ class RolloutBuffer:
                 returns=torch.tensor(self.returns[batch_indices]),
                 action_masks=torch.tensor(self.action_masks[batch_indices]),
                 rewards=torch.tensor(self.rewards[batch_indices]),
-                ref_action_logprobs=torch.tensor(self.ref_action_logprobs[batch_indices])
+                ref_action_logprobs=torch.tensor(self.ref_action_logprobs[batch_indices]) if (
+                        self.ref_action_logprobs is not None
+                ) else None
             )
             start_idx += batch_size
 
