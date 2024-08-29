@@ -129,24 +129,24 @@ class RolloutBuffer:
         return 0 if self.obs is None else self.obs.shape[0]
 
     def _set(self, obs, actions, rewards, values, action_logits, action_masks, action_logprobs, action_ref_logprobs=None):
-        self.obs = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.int64)
-        self.actions = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.int64)
-        self.rewards = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.float32)
-        self.values = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.float32)
-        self.action_logits = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.float32)
-        self.action_logprobs = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.float32)
-        self.action_masks = np.zeros((self.buffer_size, self.max_seq_len), dtype=bool)
-        self.advantages = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.float32)
+        # self.obs = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.int64)
+        # self.actions = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.int64)
+        # self.rewards = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.float32)
+        # self.values = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.float32)
+        # self.action_logits = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.float32)
+        # self.action_logprobs = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.float32)
+        # self.action_masks = np.zeros((self.buffer_size, self.max_seq_len), dtype=bool)
+        # self.advantages = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.float32)
 
-        self.obs[:, :] = obs.copy()
-        self.actions[:, :] = actions.copy()
-        self.rewards[:, :] = rewards.copy()
-        self.values[:, :] = values.copy()
-        self.action_logits[:, :] = action_logits.copy()
-        self.action_masks[:, :] = action_masks.copy()
-        self.action_logprobs[:, :] = action_logprobs.copy()
+        self.obs = obs.copy()
+        self.actions = actions.copy()
+        self.rewards = rewards.copy()
+        self.values = values.copy()
+        self.action_logits = action_logits.copy()
+        self.action_masks = action_masks.copy()
+        self.action_logprobs = action_logprobs.copy()
         if action_ref_logprobs is not None:
-            self.ref_action_logprobs[:, :] = action_ref_logprobs.copy()
+            self.ref_action_logprobs = action_ref_logprobs.copy()
 
         assert np.sum(self.rewards[~ self.action_masks]) == 0  # Check rewards correctness
 
