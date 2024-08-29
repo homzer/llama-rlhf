@@ -73,7 +73,7 @@ def run(
             dtype=dtype
         )
         policy.load(policy_ckpt_dir if epoch == 0 else os.path.join(save_dir, f"epoch-{epoch}"))
-        policy_buffer_collector = ActorBufferCollector(policy, policy_tokenizer, max_seq_len, temperature=1.0)
+        policy_buffer_collector = ActorBufferCollector(policy, policy_tokenizer, max_seq_len, temperature=1.2)
         policy_rollout_buffer = ActorRolloutBuffer()
         print('Policy buffer collecting ...')
         if use_chat_template:
