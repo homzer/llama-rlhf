@@ -261,9 +261,10 @@ class ParallelPolicyGradientKLDivTrainerForCausalLM(ParallelTrainer):
             action_masks.view(-1)
         )
         threshold = -1.0
+        beta = 0.2
         clamp_rewards = torch.masked_select(rewards.view(-1), action_masks.view(-1))
         clamp_rewards = torch.where(clamp_rewards > threshold, clamp_rewards, 0.0)
-        clamp_rewards = torch.where(clamp_rewards < 0, clamp_rewards - threshold, clamp_rewards)
+        clamp_rewards = torch.where(clamp_rewards < 0, (clamp_rewards - threshold) * beta, clamp_rewards)
         loss = torch.mean(torch.masked_select(clamp_rewards * loss, clamp_rewards != 0.0))
         return loss
 
