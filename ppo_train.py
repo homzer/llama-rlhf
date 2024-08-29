@@ -219,16 +219,6 @@ def run(
             use_last_token_reward=use_last_token_reward
         )
 
-        torch.save({
-            'obs': rollout_buffer.obs[: max_forward_batch_size],
-            'actions': rollout_buffer.actions[: max_forward_batch_size],
-            'values': rollout_buffer.values[: max_forward_batch_size],
-            'rewards': rollout_buffer.rewards[: max_forward_batch_size],
-            'action_masks': rollout_buffer.action_masks[: max_forward_batch_size],
-            'advantages': rollout_buffer.advantages[: max_forward_batch_size],
-            'returns': rollout_buffer.returns[: max_forward_batch_size]
-        }, os.path.join(actor_save_dir, f"epoch-{epoch + 1}", "buffer.bin"))
-
         actor, actor_tokenizer = get_parallel_model(
             model_type=actor_model_type,
             config_file=actor_config_file,
@@ -255,6 +245,16 @@ def run(
                     print('Advantages: ', trainer_outputs.advantages)
                     print('KL Divergence: ', trainer_outputs.kl)
         actor_trainer.save(os.path.join(actor_save_dir, f"epoch-{epoch + 1}"))
+
+        torch.save({
+            'obs': rollout_buffer.obs[: max_forward_batch_size],
+            'actions': rollout_buffer.actions[: max_forward_batch_size],
+            'values': rollout_buffer.values[: max_forward_batch_size],
+            'rewards': rollout_buffer.rewards[: max_forward_batch_size],
+            'action_masks': rollout_buffer.action_masks[: max_forward_batch_size],
+            'advantages': rollout_buffer.advantages[: max_forward_batch_size],
+            'returns': rollout_buffer.returns[: max_forward_batch_size]
+        }, os.path.join(actor_save_dir, f"epoch-{epoch + 1}", "buffer.bin"))
 
         actor.cpu()
         del actor
