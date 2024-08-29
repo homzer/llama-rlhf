@@ -305,9 +305,9 @@ class LogitsRolloutBuffer:
         self.output_tokens_logps = None
 
         self.__cache_logits = None
-        self.__cache_instructions = None
-        self.__cache_outputs = None
-        self.__cache_output_tokens_logps = None
+        # self.__cache_instructions = None
+        # self.__cache_outputs = None
+        # self.__cache_output_tokens_logps = None
 
         if instructions is not None:
             assert logits is not None
@@ -356,27 +356,30 @@ class LogitsRolloutBuffer:
         return self
 
     def __flush(self):
-        if self.__cache_instructions is not None:
-            assert self.__cache_outputs is not None
-            if not self.ignore_logits:
-                assert self.__cache_logits is not None
-            assert self.__cache_output_tokens_logps is not None
-            self.instructions = np.stack([*self.instructions, *self.__cache_instructions], axis=0)
-            self.outputs = np.stack([*self.outputs, *self.__cache_outputs], axis=0)
-            self.output_tokens_logps = np.stack(
-                [*self.output_tokens_logps, *self.__cache_output_tokens_logps], axis=0
-            )
-            if not self.ignore_logits:
-                self.logits.extend(self.__cache_logits)
-            self.__cache_logits = None
-            self.__cache_instructions = None
-            self.__cache_outputs = None
-            self.__cache_output_tokens_logps = None
-        else:
-            assert self.__cache_outputs is None
-            if not self.ignore_logits:
-                assert self.__cache_logits is None
-            assert self.__cache_output_tokens_logps is None
+        if self.__cache_logits is not None:
+            self.logits.extend(self.__cache_logits)
+
+        # if self.__cache_instructions is not None:
+        #     assert self.__cache_outputs is not None
+        #     if not self.ignore_logits:
+        #         assert self.__cache_logits is not None
+        #     assert self.__cache_output_tokens_logps is not None
+        #     self.instructions = np.stack([*self.instructions, *self.__cache_instructions], axis=0)
+        #     self.outputs = np.stack([*self.outputs, *self.__cache_outputs], axis=0)
+        #     self.output_tokens_logps = np.stack(
+        #         [*self.output_tokens_logps, *self.__cache_output_tokens_logps], axis=0
+        #     )
+        #     if not self.ignore_logits:
+        #         self.logits.extend(self.__cache_logits)
+        #     self.__cache_logits = None
+        #     self.__cache_instructions = None
+        #     self.__cache_outputs = None
+        #     self.__cache_output_tokens_logps = None
+        # else:
+        #     assert self.__cache_outputs is None
+        #     if not self.ignore_logits:
+        #         assert self.__cache_logits is None
+        #     assert self.__cache_output_tokens_logps is None
 
     def __reset(self):
         self.logits = None
@@ -384,9 +387,9 @@ class LogitsRolloutBuffer:
         self.outputs = None
         self.output_tokens_logps = None
         self.__cache_logits = None
-        self.__cache_instructions = None
-        self.__cache_outputs = None
-        self.__cache_output_tokens_logps = None
+        # self.__cache_instructions = None
+        # self.__cache_outputs = None
+        # self.__cache_output_tokens_logps = None
 
     def __len__(self):
         self.__flush()
@@ -419,27 +422,38 @@ class LogitsRolloutBuffer:
                 rollout_buffer.output_tokens_logps
             )
         else:
-            if len(rollout_buffer) > 0:  # TODO Extremely slow, using cache
-                if self.__cache_instructions is None:
-                    self.__cache_instructions = rollout_buffer.instructions
-                    self.__cache_outputs = rollout_buffer.outputs
-                    if not self.ignore_logits:
+            if len(rollout_buffer) > 0:
+                self.instructions = np.concatenate([self.instructions, rollout_buffer.instructions], axis=0)
+                self.outputs = np.concatenate([self.outputs, rollout_buffer.outputs], axis=0)
+                self.output_tokens_logps = np.concatenate(
+                    [self.output_tokens_logps, rollout_buffer.output_tokens_logps], axis=0)
+                if not self.ignore_logits:  # Extremely slow, using cache
+                    if self.__cache_logits is None:
                         self.__cache_logits = rollout_buffer.logits
-                    self.__cache_output_tokens_logps = rollout_buffer.output_tokens_logps
-                else:
-                    self.__cache_instructions = np.stack(
-                        [*self.__cache_instructions, *rollout_buffer.instructions], axis=0
-                    )
-                    self.__cache_outputs = np.stack(
-                        [*self.__cache_instructions, *rollout_buffer.outputs], axis=0
-                    )
-                    self.__cache_output_tokens_logps = np.stack(
-                        [*self.__cache_output_tokens_logps, *rollout_buffer.output_tokens_logps], axis=0
-                    )
-                    if not self.ignore_logits:
+                    else:
                         self.__cache_logits.extend(rollout_buffer.logits)
-                if len(self.__cache_instructions) > 1000:
+                if self.__cache_logits is not None and len(self.__cache_logits) > 1000:
                     self.__flush()
+
+                # if self.__cache_instructions is None:
+                #     self.__cache_instructions = rollout_buffer.instructions
+                #     self.__cache_outputs = rollout_buffer.outputs
+                #     if not self.ignore_logits:
+                #         self.__cache_logits = rollout_buffer.logits
+                #     self.__cache_output_tokens_logps = rollout_buffer.output_tokens_logps
+                # else:
+                #     self.__cache_instructions = np.stack(
+                #         [*self.__cache_instructions, *rollout_buffer.instructions], axis=0
+                #     )
+                #     self.__cache_outputs = np.stack(
+                #         [*self.__cache_instructions, *rollout_buffer.outputs], axis=0
+                #     )
+                #     self.__cache_output_tokens_logps = np.stack(
+                #         [*self.__cache_output_tokens_logps, *rollout_buffer.output_tokens_logps], axis=0
+                #     )
+                #     if not self.ignore_logits:
+                #         self.__cache_logits.extend(rollout_buffer.logits)
+
         return self
 
     def get_logps(self, batch_size: int) -> Generator[torch.Tensor, None, None]:
