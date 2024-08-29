@@ -136,7 +136,7 @@ class RolloutBuffer:
         # self.action_logits = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.float32)
         # self.action_logprobs = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.float32)
         # self.action_masks = np.zeros((self.buffer_size, self.max_seq_len), dtype=bool)
-        # self.advantages = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.float32)
+        self.advantages = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.float32)
 
         self.obs = obs.copy()
         self.actions = actions.copy()
