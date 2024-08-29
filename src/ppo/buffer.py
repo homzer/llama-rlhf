@@ -353,7 +353,8 @@ class LogitsRolloutBuffer:
             self.__cache_output_tokens_logps = None
         else:
             assert self.__cache_outputs is None
-            assert self.__cache_logits is None
+            if not self.ignore_logits:
+                assert self.__cache_logits is None
             assert self.__cache_output_tokens_logps is None
 
     def __reset(self):
