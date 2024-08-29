@@ -98,7 +98,8 @@ class RolloutBuffer:
             gamma: float = 0.9,
             gae_lambda: float = 0.8,
             kl_coef: float = 0.1,
-            reward_normalize: bool = True
+            reward_normalize: bool = True,
+            use_last_token_reward: bool = False
     ):
         self.obs = None
         self.actions = None
@@ -115,6 +116,7 @@ class RolloutBuffer:
         self.gae_lambda = gae_lambda
         self.kl_coef = kl_coef
         self.reward_normalize = reward_normalize
+        self.use_last_token_reward = use_last_token_reward
 
         self.buffer_size = obs.shape[0]
         self.max_seq_len = obs.shape[1]
@@ -148,10 +150,26 @@ class RolloutBuffer:
 
         assert np.sum(self.rewards[~ self.action_masks]) == 0  # Check rewards correctness
 
+        if self.use_last_token_reward:
+            last_token_rewards = np.zeros_like(self.rewards)
+            for i in range(self.buffer_size):
+                last_token_idx = np.nonzero(self.action_masks[i])[0][-1].item()
+                last_token_rewards[i][last_token_idx] = self.rewards[i][last_token_idx]
+            self.rewards = last_token_rewards
+
         if self.reward_normalize:
             # Normalize rewards
-            self.rewards = (self.rewards - np.mean(
-                self.rewards[self.action_masks])) / (np.std(self.rewards[self.action_masks]) + 1e-12)
+            if self.use_last_token_reward:
+                reward_masks = np.full_like(self.action_masks, fill_value=False)
+                for i in range(self.buffer_size):
+                    last_token_idx = np.nonzero(self.action_masks[i])[0][-1].item()
+                    reward_masks[i][last_token_idx] = True
+                self.rewards = (self.rewards - np.mean(
+                    self.rewards[self.action_masks])) / (np.std(self.rewards[self.action_masks]))
+                self.rewards[~ reward_masks] = 0.0
+            else:
+                self.rewards = (self.rewards - np.mean(
+                    self.rewards[self.action_masks])) / (np.std(self.rewards[self.action_masks]))
         # Adding KL penalty
         self.rewards += - self.kl_coef * self.compute_kl_penalty()
 

@@ -4,6 +4,7 @@ import os
 import fire
 import torch
 from torch.utils.data import DataLoader
+import numpy as np
 
 from src.dataset import JsonDataset, ChatTemplateDataset
 from src.entities import Timer
@@ -58,7 +59,8 @@ def run(
         lr: float = 1e-5,
         dtype: str = "bfloat16",
         begin_epoch: int = 0,
-        use_chat_template: bool = False
+        use_chat_template: bool = False,
+        use_last_token_reward: bool = False
 ):
     setup_model_parallel()
     os.makedirs(actor_save_dir, exist_ok=True)
@@ -194,7 +196,14 @@ def run(
         gc.collect()
         set_barrier()
 
-        print("Average Rewards: ", masked_mean(verifier_rollout_buffer.scores, actor_rollout_buffer.action_masks))
+        if use_last_token_reward:
+            rewards = []
+            for i in range(len(verifier_rollout_buffer)):
+                last_idx = np.nonzero(actor_rollout_buffer.action_masks[i])[0][-1].item()
+                rewards.append(verifier_rollout_buffer.scores[i][last_idx])
+            print("Average Rewards: ", np.mean(rewards))
+        else:
+            print("Average Rewards: ", masked_mean(verifier_rollout_buffer.scores, actor_rollout_buffer.action_masks))
 
         rollout_buffer = RolloutBuffer(
             obs=actor_rollout_buffer.obs,
@@ -206,7 +215,8 @@ def run(
             action_logprobs=actor_rollout_buffer.action_logprobs,
             ref_action_logprobs=reference_rollout_buffer.output_tokens_logps if (
                     reference_rollout_buffer is not None
-            ) else None
+            ) else None,
+            use_last_token_reward=use_last_token_reward
         )
 
         torch.save({
