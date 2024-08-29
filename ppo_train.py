@@ -15,6 +15,16 @@ from src.ppo.trainer import ParallelActorTrainerForCausalLM, ParallelCriticTrain
 from src.utils import masked_mean, json_load
 
 
+def random_init_v_head(critic):
+    assert hasattr(critic, 'v_head')
+    critic.v_head = torch.nn.Linear(  # random re-init value function head
+        in_features=critic.v_head.weight.shape[1],
+        out_features=critic.v_head.weight.shape[0],
+        bias=False,
+        device=critic.v_head.weight.device
+    ).type(critic.v_head.weight.dtype)
+
+
 def run(
         train_file: str,
 
@@ -136,12 +146,7 @@ def run(
         )
         critic.load(critic_ckpt_dir if epoch == 0 else os.path.join(critic_save_dir, f"epoch-{epoch}"))
         if epoch == 0:  # random initialize value head
-            critic.v_head = torch.nn.Linear(
-                in_features=critic.v_head.in_features,
-                out_features=critic.v_head.out_features,
-                bias=False,
-                device=critic.v_head.weight.device
-            ).type(dtype)
+            random_init_v_head(critic)
         critic_buffer_collector = CriticBufferCollector(critic, critic_tokenizer, max_seq_len)
         critic_rollout_buffer = CriticRolloutBuffer()
         print('Critic buffer collecting ...')
@@ -260,17 +265,9 @@ def run(
         )
         critic_optimizer = torch.optim.Adam(critic.parameters(), lr=max(1e-5, lr))
         critic_trainer = ParallelCriticTrainerForCausalLM(critic, critic_optimizer)
+        critic_trainer.load_model(critic_ckpt_dir if epoch == 0 else os.path.join(critic_save_dir, f"epoch-{epoch}"))
         if epoch == 0:
-            critic_trainer.load_model(critic_ckpt_dir)
-            assert hasattr(critic, 'v_head')
-            critic.v_head = torch.nn.Linear(  # random re-init value function head
-                in_features=critic.v_head.weight.shape[1],
-                out_features=critic.v_head.weight.shape[0],
-                bias=False,
-                device=critic.v_head.weight.device
-            ).type(critic.v_head.weight.dtype)
-        else:
-            critic_trainer.load(os.path.join(critic_save_dir, f"epoch-{epoch}"))
+            random_init_v_head(critic)
         print('Critic training ...')
         timer = Timer(total=(len(rollout_buffer) // critic_max_batch_size) * inner_epochs, episode=100)
         for inner_epoch in range(inner_epochs):

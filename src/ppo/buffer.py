@@ -147,13 +147,13 @@ class RolloutBuffer:
             self.ref_action_logprobs[:, :] = action_ref_logprobs.copy()
 
         assert np.sum(self.rewards[~ self.action_masks]) == 0  # Check rewards correctness
-        # Adding KL penalty
-        self.rewards += - self.kl_coef * self.compute_kl_penalty()
 
         if self.reward_normalize:
             # Normalize rewards
             self.rewards = (self.rewards - np.mean(
                 self.rewards[self.action_masks])) / (np.std(self.rewards[self.action_masks]) + 1e-12)
+        # Adding KL penalty
+        self.rewards += - self.kl_coef * self.compute_kl_penalty()
 
         self.rewards[~ self.action_masks] = 0.0
 
