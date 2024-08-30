@@ -17,9 +17,9 @@ from src.parallel.utils import setup_model_parallel, set_barrier
 
 
 def re_scoring_eos_rewards(buffer: RolloutBuffer) -> RolloutBuffer:
-    # Setting the reward of [EOS] token to 1.0.
+    # Setting the reward of [EOS] token to average reward of the sequence.
     for i, action_mask in enumerate(buffer.action_masks):
-        buffer.rewards[i][np.nonzero(action_mask)[0][-1]] = 1.0
+        buffer.rewards[i][np.nonzero(action_mask)[0][-1]] = np.mean(buffer.rewards[i][action_mask])
 
     return buffer
 
