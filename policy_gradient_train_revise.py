@@ -44,7 +44,7 @@ def update_policy_rollout_buffer(
         p_begin = np.nonzero(policy_buffer.action_masks[i])[0][0]
         r_begin = np.nonzero(reviser_buffer.action_masks[i])[0][0]
         length = min(
-            len(policy_buffer.action_masks[i]) - p_begin,
+            len(policy_buffer.action_masks[i]) - p_begin - 1,
             np.nonzero(reviser_buffer.action_masks[i])[0][-1] - r_begin + 1
         )
         p_end = p_begin + length
