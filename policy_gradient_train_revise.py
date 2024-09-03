@@ -4,6 +4,7 @@ import os
 import fire
 import torch
 from torch.utils.data import DataLoader
+import numpy as np
 
 from policy_gradient_train import re_scoring_eos_rewards
 from src.dataset import JsonDataset, ChatTemplateDataset
@@ -31,6 +32,32 @@ def get_reviser_dataset(origin_dataset: JsonDataset, responses: list) -> JsonDat
             }),
         ))
     return JsonDataset(results)
+
+
+def update_policy_rollout_buffer(
+        policy_buffer: ActorRolloutBuffer, reviser_buffer: ActorRolloutBuffer
+) -> ActorRolloutBuffer:
+
+    assert len(policy_buffer) == len(reviser_buffer)
+
+    for i in range(len(policy_buffer)):
+        p_begin = np.nonzero(policy_buffer.action_masks[i])[0][0]
+        r_begin = np.nonzero(reviser_buffer.action_masks[i])[0][0]
+        length = min(
+            len(policy_buffer.action_masks[i]) - p_begin,
+            np.nonzero(reviser_buffer.action_masks[i])[0][-1] - r_begin + 1
+        )
+        p_end = p_begin + length
+        r_end = r_begin + length
+
+        policy_buffer.obs[i][p_begin: p_end] = reviser_buffer.obs[i][r_begin: r_end]
+        policy_buffer.actions[i][p_begin: p_end] = reviser_buffer.actions[i][r_begin: r_end]
+        policy_buffer.action_masks[i][p_begin: p_end] = reviser_buffer.action_masks[i][r_begin: r_end]
+        policy_buffer.action_logits[i][p_begin: p_end] = reviser_buffer.action_logits[i][r_begin: r_end]
+        policy_buffer.action_logprobs[i][p_begin: p_end] = reviser_buffer.action_logprobs[i][r_begin: r_end]
+        policy_buffer.responses[i] = reviser_buffer.responses[i]
+
+    return policy_buffer
 
 
 def run(
@@ -132,7 +159,7 @@ def run(
             print(data['instruction'][-1])
             print(reviser_rollout_buffer.responses[-1])
         # Replace policy's response with reviser's response
-        policy_rollout_buffer.responses = reviser_rollout_buffer.responses.copy()
+        policy_rollout_buffer = update_policy_rollout_buffer(policy_rollout_buffer, reviser_rollout_buffer)
 
         reviser.cpu()
         del reviser
