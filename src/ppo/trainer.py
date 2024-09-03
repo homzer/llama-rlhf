@@ -261,7 +261,7 @@ class ParallelPolicyGradientKLDivTrainerForCausalLM(ParallelTrainer):
             self.criterion.forward(logits, labels, targets_after_softmax=True).view(-1),
             action_masks.view(-1)
         )
-        threshold = -1.0
+        threshold = 0.0
         beta = 0.2
         clamp_rewards = torch.masked_select(rewards.view(-1), action_masks.view(-1))
         clamp_rewards = torch.where(clamp_rewards > threshold, clamp_rewards, 0.0)
