@@ -145,7 +145,7 @@ def run(
             dtype=dtype
         )
         reviser.load(reviser_ckpt_dir)
-        reviser_buffer_collector = ActorBufferCollector(reviser, reviser_tokenizer, reviser_max_seq_len, temperature=1.2)
+        reviser_buffer_collector = ActorBufferCollector(reviser, reviser_tokenizer, reviser_max_seq_len)
         reviser_rollout_buffer = ActorRolloutBuffer()
         print("Reviser buffer collecting ...")
         reviser_dataset = get_reviser_dataset(dataset, policy_rollout_buffer.responses)
