@@ -50,7 +50,7 @@ def update_policy_rollout_buffer(
         p_end = p_begin + length
         r_end = r_begin + length
 
-        policy_buffer.obs[i][p_begin: p_end] = reviser_buffer.obs[i][r_begin: r_end]
+        policy_buffer.obs[i][p_begin + 1: p_end + 1] = reviser_buffer.obs[i][r_begin + 1: r_end + 1]
         policy_buffer.actions[i][p_begin: p_end] = reviser_buffer.actions[i][r_begin: r_end]
         policy_buffer.action_masks[i][p_begin: p_end] = reviser_buffer.action_masks[i][r_begin: r_end]
         policy_buffer.action_logits[i][p_begin: p_end] = reviser_buffer.action_logits[i][r_begin: r_end]
