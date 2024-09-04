@@ -130,7 +130,7 @@ class GeneratorForVerifier:
         for i, score in enumerate(tokens_scores):
             result_tokens_scores.append(torch.masked_select(score, examples.masks[i]).tolist())
         if self.reduce == "mean":
-            scores = masked_mean(tokens_scores, examples.masks).tolist()
+            scores = masked_mean(tokens_scores, examples.masks, dim=-1).tolist()
         else:  # "last"
             scores = []
             for i, score in enumerate(tokens_scores):
