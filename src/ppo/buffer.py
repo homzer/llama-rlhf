@@ -358,6 +358,7 @@ class LogitsRolloutBuffer:
     def __flush(self):
         if self.__cache_logits is not None:
             self.logits.extend(self.__cache_logits)
+            self.__cache_logits = None
 
         # if self.__cache_instructions is not None:
         #     assert self.__cache_outputs is not None
