@@ -55,6 +55,7 @@ class KLDivLoss(Loss):
             if masks is not None:
                 masks = masks.view(-1).to(logits.device)
                 loss = torch.masked_select(loss, masks)
+            loss[torch.isnan(loss)] = 0.  # avoid nan
             return loss.mean()
         else:
             if masks is not None:
