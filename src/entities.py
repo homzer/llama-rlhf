@@ -86,7 +86,7 @@ class SlimLogits:
         index = self.indices[i]  # [s, n]
         logits = torch.full(
             (self.max_seq_len, self.vocab_size),
-            fill_value=torch.finfo(torch.get_default_dtype()).min
+            fill_value=-1e4
         )
         for j in range(self.max_seq_len):
             logits[j, index[j]] = value[j].to(logits)
