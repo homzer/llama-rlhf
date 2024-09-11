@@ -172,9 +172,7 @@ def main(
                 model=student,
                 tokenizer=student_tokenizer,
                 optimizer=optimizer,
-                max_seq_len=student_max_seq_len,
-                use_reverse_kl=use_reverse_kl,
-                use_js=use_js
+                max_seq_len=student_max_seq_len
             )
         trainer.load(student_ckpt_dir) if (
                 epoch == 0

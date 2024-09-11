@@ -189,8 +189,7 @@ class ParallelSolverDistillTrainer(ParallelSolverTrainer):
             optimizer: torch.optim.Optimizer,
             max_seq_len: int,
             accumulation_steps: int = 1,
-            use_reverse_kl: bool = False,
-            use_js: bool = False
+            loss_type: str = "kld"
     ):
         super().__init__(
             model=model,
@@ -200,11 +199,15 @@ class ParallelSolverDistillTrainer(ParallelSolverTrainer):
             accumulation_steps=accumulation_steps
         )
         self.criterion_ce = nn.CrossEntropyLoss(ignore_index=-100)
-        self.criterion_kl = KLDivLoss()
-        if use_reverse_kl:
+        assert loss_type in ["kld", "reversed_kld", "jsd"]
+        if loss_type == "kld":
+            self.criterion_kl = KLDivLoss()
+        elif loss_type == "reversed_kld":
             self.criterion_kl = ReverseKLDivLoss()
-        if use_js:
+        elif loss_type == "jsd":
             self.criterion_kl = JSDivLoss()
+        else:
+            raise ValueError(loss_type)
 
     def distill(
             self,
@@ -212,14 +215,13 @@ class ParallelSolverDistillTrainer(ParallelSolverTrainer):
             outputs: List[str],
             target_logits: torch.Tensor,
             alpha: float = 1.0,
-            beta: float = 1.0,
             temperature: float = 1.0
     ):
         self.model.train()
         example = self.prepare_for_training(instructions=instructions, outputs=outputs)
         logits = self.model.forward(example.tokens).logits
 
-        loss_ce = beta * self.criterion_ce.forward(
+        loss_ce = self.criterion_ce.forward(
             input=logits.view(-1, logits.size(-1)),
             target=example.labels.view(-1).to(logits.device)
         )
