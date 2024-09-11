@@ -232,23 +232,23 @@ def powmax(tensor, exponent=1, dim=-1, eps=1e-12):
     return (numerator.float() / torch.clamp(denominator.float(), min=eps)).type_as(tensor)
 
 
-def masked_mean(x, mask=None, dim: int = None, keepdim: bool = False, eps: float = 1e-12):
+def masked_mean(x, mask=None, dim: int = None, keepdim: bool = False):
     if type(x) is torch.Tensor:
         if mask is None:
             mask = torch.full_like(x, fill_value=True)
         assert x.shape == mask.shape
-        mask = mask.to(x.dtype)
-        return torch.sum(
-            x * mask, dim=dim, keepdim=keepdim
-        ) / (torch.sum(mask, dim=dim, keepdim=keepdim) + eps)
+        mask_sum = torch.sum(mask, dim=dim, keepdim=keepdim)
+        mask_sum = torch.where(mask_sum == 0, 0.0001, mask_sum)
+        mask_sum = mask_sum.to(x.dtype)
+        return torch.sum(x * mask, dim=dim, keepdim=keepdim) / mask_sum
     elif type(x) is np.ndarray:
         if mask is None:
             mask = np.full_like(x, fill_value=True)
         assert x.shape == mask.shape
-        mask = mask.astype(x.dtype)
-        return np.sum(
-            x * mask, axis=dim, keepdims=keepdim
-        ) / (np.sum(mask, axis=dim, keepdims=keepdim) + eps)
+        mask_sum = np.sum(mask, axis=dim, keepdims=keepdim)
+        mask_sum = np.where(mask_sum == 0, 0.0001, mask_sum)
+        mask_sum = mask_sum.astype(x.dtype)
+        return np.sum(x * mask, axis=dim, keepdims=keepdim) / mask_sum
     else:
         raise TypeError
 

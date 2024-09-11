@@ -337,9 +337,10 @@ class DpoLoss(Loss):
 
 
 class DiscriminativeDPOLoss(Loss):
-    def __init__(self, beta: float = 0.2, reduce: str = "sum"):
+    def __init__(self, beta: float = 0.2, gamma: float = 0.0, reduce: str = "mean"):
         super().__init__()
         self.beta = beta
+        self.gamma = gamma
         assert reduce in ["sum", "mean"]
         self.reduce = reduce
 
@@ -352,7 +353,7 @@ class DiscriminativeDPOLoss(Loss):
         masks = masks.to(logits.device)
         logprobs = torch.sum(logprobs * masks, dim=-1) if (
             self.reduce == "sum"
-        ) else torch.sum(logprobs * masks, dim=-1)  # [b]
+        ) else masked_mean(logprobs, masks, dim=-1)  # [b]
         return logprobs
 
     def forward(
@@ -372,7 +373,7 @@ class DiscriminativeDPOLoss(Loss):
         """
         chosen_logprobs = self.prepare_for_loss(chosen_logits, chosen_masks)
         rejected_logprobs = self.prepare_for_loss(rejected_logits, rejected_masks)
-        loss = - torch.nn.functional.logsigmoid(self.beta * (chosen_logprobs - rejected_logprobs)).mean()
+        loss = - torch.nn.functional.logsigmoid(self.beta * (chosen_logprobs - rejected_logprobs) - self.gamma).mean()
         return loss
 
 
