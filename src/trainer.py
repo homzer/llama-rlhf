@@ -232,7 +232,7 @@ class ParallelSolverDistillTrainer(ParallelSolverTrainer):
         loss = loss_ce + loss_kl
         self._back_propagation(loss)
         Output = collections.namedtuple('Output', ['loss', 'logits', 'loss_kl', 'loss_ce'])
-        return Output(logits=logits, loss=loss, loss_kl=loss_kl, loss_ce=loss_ce)
+        return Output(logits=logits, loss=loss.item(), loss_kl=loss_kl.item(), loss_ce=loss_ce.item())
 
 
 class ParallelSolverTripleDistillTrainer(ParallelSolverTrainer):
