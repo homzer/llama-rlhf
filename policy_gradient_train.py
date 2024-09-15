@@ -9,11 +9,11 @@ from torch.utils.data import DataLoader
 from src.dataset import JsonDataset, ChatTemplateDataset
 from src.entities import Timer
 from src.modeling import get_parallel_model, get_parallel_verifier
+from src.parallel.utils import setup_model_parallel, set_barrier
 from src.ppo.buffer import CriticRolloutBuffer, RolloutBuffer, ActorRolloutBuffer
 from src.ppo.collector import CriticBufferCollector, ActorBufferCollector
-from src.ppo.trainer import ParallelPolicyGradientKLDivTrainerForCausalLM
+from src.ppo.trainer import ParallelPolicyGradientTrainerForCausalLM
 from src.utils import masked_mean, json_load
-from src.parallel.utils import setup_model_parallel, set_barrier
 
 
 def re_scoring_eos_rewards(buffer: RolloutBuffer) -> RolloutBuffer:
@@ -144,7 +144,7 @@ def run(
             lora_dtype=lora_dtype
         )
         optimizer = torch.optim.Adam(policy.parameters(), lr=lr)
-        trainer = ParallelPolicyGradientKLDivTrainerForCausalLM(policy, optimizer)
+        trainer = ParallelPolicyGradientTrainerForCausalLM(policy, optimizer)
         trainer.load_model(policy_ckpt_dir) if (
                 epoch == 0
         ) else trainer.load(os.path.join(save_dir, f"epoch-{epoch}"))
