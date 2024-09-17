@@ -129,13 +129,6 @@ class RolloutBuffer:
         return 0 if self.obs is None else self.obs.shape[0]
 
     def _set(self, obs, actions, rewards, values, action_logits, action_masks, action_logprobs, ref_action_logprobs=None):
-        # self.obs = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.int64)
-        # self.actions = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.int64)
-        # self.rewards = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.float32)
-        # self.values = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.float32)
-        # self.action_logits = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.float32)
-        # self.action_logprobs = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.float32)
-        # self.action_masks = np.zeros((self.buffer_size, self.max_seq_len), dtype=bool)
         self.advantages = np.zeros((self.buffer_size, self.max_seq_len), dtype=np.float32)
 
         self.obs = obs.copy()

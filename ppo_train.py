@@ -59,6 +59,7 @@ def run(
         lr: float = 1e-5,
         dtype: str = "bfloat16",
         begin_epoch: int = 0,
+        kl_coef: float = 0.1,
         use_chat_template: bool = False,
         use_last_token_reward: bool = False
 ):
@@ -216,7 +217,8 @@ def run(
             ref_action_logprobs=reference_rollout_buffer.output_tokens_logps if (
                     reference_rollout_buffer is not None
             ) else None,
-            use_last_token_reward=use_last_token_reward
+            use_last_token_reward=use_last_token_reward,
+            kl_coef=kl_coef
         )
 
         actor, actor_tokenizer = get_parallel_model(
