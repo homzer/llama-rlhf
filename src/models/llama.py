@@ -9,6 +9,7 @@ from fairscale.nn.model_parallel.layers import (
     ColumnParallelLinear,
     ParallelEmbedding
 )
+from torch.nn.modules.module import T
 
 from src.checkpoint import CheckpointForLlama
 from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs, AttentionForCausalLM, \
@@ -235,6 +236,12 @@ class Llama(ParallelModelForCausalLM):
         """ Clean cache in `LlamaAttention` module """
         for i in range(self.args.n_layers):
             self.layers[i].attention.flush()
+        set_model_parallel_barrier()
+
+    def rearrange_kv_cache(self, indices: torch.Tensor):
+        """ Rearrange the order of the KV cache in `LlamaAttention` module """
+        for i in range(self.args.n_layers):
+            self.layers[i].attention.rearrange(indices)
         set_model_parallel_barrier()
 
 

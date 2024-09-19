@@ -131,15 +131,25 @@ def pickle_dump(obj, f):
     return f
 
 
-def sample_top_p(probs, p):
+def sample_top_p(probs: torch.Tensor, p: float = 1.0, num_samples: int = 1):
+    """
+    perform top-p sampling on the last dim
+    :param probs: any tensor with shape [..., vocab_size], probability distribution
+    :param p: top probability
+    :param num_samples: number of sampled tokens, default to 1.
+    :return: next_tokens with shape [..., num_samples]
+    """
+    origin_shape = probs.shape[:-1]
+    probs = torch.reshape(probs, shape=[-1, probs.shape[-1]])
     probs_sort, probs_idx = torch.sort(probs, dim=-1, descending=True)
     probs_sum = torch.cumsum(probs_sort, dim=-1)
     mask = probs_sum - probs_sort > p
     probs_sort[mask] = 0.0
     probs_sort.div_(probs_sort.sum(dim=-1, keepdim=True))
-    next_token = torch.multinomial(probs_sort, num_samples=1)
-    next_token = torch.gather(probs_idx, -1, next_token)
-    return next_token
+    next_tokens = torch.multinomial(probs_sort, num_samples=num_samples)
+    next_tokens = torch.gather(probs_idx, -1, next_tokens)
+    next_tokens = torch.reshape(next_tokens, shape=[*origin_shape, num_samples])
+    return next_tokens
 
 
 def cross_entropy(logits, labels, weights=None, keepdim=False):

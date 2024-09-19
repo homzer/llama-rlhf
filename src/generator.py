@@ -67,18 +67,12 @@ class GeneratorForCausalLM:
         bsz = tokens.shape[0]
         prev_pos = 0
         tokens = tokens.clone()
-        hidden_states = None
         unfinished_sequences = torch.ones(size=[bsz], dtype=torch.long, device=self.model.device())
         for cur_pos in range(start_pos, self.max_seq_len):
             with torch.no_grad():
                 outputs = self.model.forward(
                     tokens[:, prev_pos: cur_pos], prev_pos, use_cache=True
                 )
-            if hidden_states is None:
-                hidden_states = torch.zeros(
-                    (*tokens.shape, outputs.hidden_states.shape[-1]),
-                ).to(outputs.hidden_states)
-            hidden_states[:, prev_pos: cur_pos, :] = outputs.hidden_states
             next_tokens = sampling_strategy(outputs.logits, self.temperature, self.top_p)  # [b, s]
             next_token = next_tokens[:, -1].reshape(-1)
             next_token = torch.where(
@@ -96,7 +90,8 @@ class GeneratorForCausalLM:
         Outputs = collections.namedtuple("Outputs", ['tokens'])
         return Outputs(tokens=tokens)
 
-    def get_output_masks(self, tokens, prompt_lengths):
+    def get_output_masks(self, tokens, input_masks):
+        prompt_lengths = torch.sum(input_masks, dim=-1)
         output_masks = torch.full_like(tokens, fill_value=True)
         for i, t in enumerate(tokens.tolist()):
             output_masks[i][: prompt_lengths[i] - 1] = False
@@ -123,8 +118,7 @@ class GeneratorForCausalLM:
         forward_outputs = self.model_forward(
             prep_outputs.tokens, prep_outputs.input_masks, prep_outputs.start_pos
         )
-        prompt_lengths = torch.sum(prep_outputs.input_masks, dim=-1)
-        output_masks = self.get_output_masks(forward_outputs.tokens, prompt_lengths)
+        output_masks = self.get_output_masks(forward_outputs.tokens, prep_outputs.input_masks)
         responses = self.decode_response(forward_outputs.tokens, output_masks)
         return responses
 
@@ -192,3 +186,138 @@ class GeneratorForVerifier:
                 scores.append(score[ids[-1].item() if len(ids) > 0 else -1].item())
         Output = collections.namedtuple('Output', ['scores', 'tokens_scores'])
         return Output(scores=scores, tokens_scores=result_tokens_scores)
+
+
+class VerifierAugmentedGeneratorForCausalLM(GeneratorForCausalLM):
+    def __init__(
+            self,
+            policy: Union[ModelForCausalLM, ParallelModelForCausalLM],
+            verifier: Union[Verifier, ParallelVerifier],
+            tokenizer: Tokenizer,  # tokenizers of policy and verifier must be the same
+            max_seq_len: int,
+            beam_size: int = 1,
+            span_size: int = 1,
+            tree_size: int = 1,
+            temperature: float = 1.0
+    ):
+        super().__init__(
+            model=policy,
+            tokenizer=tokenizer,
+            max_seq_len=max_seq_len,
+            temperature=temperature
+        )
+        self.policy = policy
+        self.policy_device = policy.device()
+        self.verifier = verifier
+        self.verifier_device = verifier.device()
+        self.tokenizer = tokenizer
+        self.max_seq_len = max_seq_len
+        self.beam_size = beam_size
+        self.span_size = span_size
+        self.tree_size = tree_size
+
+    def move_policy_to_cpu(self):
+        self.policy.cpu()
+        torch.cuda.empty_cache()
+
+    def move_policy_to_gpu(self):
+        self.policy.cuda(self.policy_device)
+
+    def move_verifier_to_cpu(self):
+        self.verifier.cpu()
+        torch.cuda.empty_cache()
+
+    def move_verifier_to_gpu(self):
+        self.verifier.cuda(self.verifier_device)
+
+    def simulate(self, logits: torch.Tensor) -> torch.Tensor:
+        logits = logits[:, -1, :]
+        logits = torch.reshape(logits, shape=[-1, self.beam_size, self.tree_size, logits.shape[-1]])
+        probs = torch.softmax(logits / self.temperature, dim=-1)
+        next_tokens = sample_top_p(probs, num_samples=1)  # [batch_size, beam_size, tree_size, 1]
+        return next_tokens.reshape(-1)
+
+    def expand(self, logits: torch.Tensor, tree_size: int = None) -> torch.Tensor:
+        tree_size = tree_size or self.tree_size
+        assert (self.beam_size * self.tree_size) % tree_size == 0
+        beam_size = (self.beam_size * self.tree_size) // tree_size
+        logits = logits[:, -1, :]
+        logits = torch.reshape(logits, shape=[-1, beam_size, tree_size, logits.shape[-1]])
+        # select master tree branch
+        logits = logits[:, :, 0, :]  # [batch_size, beam_size, vocab_size]
+        probs = torch.softmax(logits / self.temperature, dim=-1)
+        next_tokens = sample_top_p(probs, num_samples=tree_size)  # [batch_size, beam_size, tree_size]
+        return next_tokens.reshape(-1)
+
+    def verify(self, tokens: torch.Tensor) -> torch.Tensor:
+        tokens = tokens.clone()
+        self.move_policy_to_cpu()
+        self.move_verifier_to_gpu()
+        with torch.no_grad():
+            scores = self.verifier.forward(tokens).scores  # [batch_size * beam_size * tree_size, seq_len]
+        self.move_verifier_to_cpu()
+        self.move_policy_to_gpu()
+        scores = scores[:, -self.span_size:]
+        scores = torch.mean(scores, dim=-1).reshape(-1, self.beam_size * self.tree_size)
+        scores_values, scores_indices = torch.topk(scores, k=self.beam_size)  # [batch_size, beam_size]
+        scores_indices += (torch.arange(0, len(scores_indices)) * self.beam_size * self.tree_size).unsqueeze(-1)
+        scores_indices = scores_indices[:, :, None].expand(
+            scores_indices.shape[0], self.beam_size, self.tree_size
+        ).reshape(-1)
+        # pruning
+        self.policy.rearrange_kv_cache(scores_indices)
+        select_tokens = tokens[scores_indices]  # [batch_size * beam_size * tree_size, seq_len]
+        return select_tokens
+
+    def expand_tensor(self, x: torch.Tensor) -> torch.Tensor:
+        """ expand the dimension of `batch_size` into `batch_size * beam_size * tree_size` """
+        x = x.clone()
+        b, seq_len = x.shape
+        x = x[:, None, :].expand(b, self.beam_size * self.tree_size, seq_len).reshape(-1, seq_len)
+        return x
+
+    def model_forward(self, tokens: torch.Tensor, input_masks: torch.Tensor = None, start_pos: int = None):
+        self.policy.eval()
+        self.verifier.eval()
+        unfinished_sequences = torch.ones(
+            size=[tokens.shape[0]], dtype=torch.long, device=self.model.device()
+        )
+        prev_pos = 0
+        span_step = 0
+        for cur_pos in range(start_pos, self.max_seq_len):
+            with torch.no_grad():
+                outputs = self.policy.forward(
+                    tokens[:, prev_pos: cur_pos], prev_pos, use_cache=True
+                )
+
+            if span_step == 0:  # expansion
+                next_tokens = self.expand(outputs.logits)
+            else:  # simulation
+                next_tokens = self.simulate(outputs.logits)
+
+            #############################################################
+
+            next_tokens = torch.where(input_masks[:, cur_pos], tokens[:, cur_pos], next_tokens)
+            tokens[:, cur_pos] = next_tokens
+
+            if span_step == self.span_size - 1:  # verification
+                tokens = self.verify(tokens)
+
+            span_step = (span_step + 1) % self.span_size
+            prev_pos = cur_pos
+            unfinished_sequences = unfinished_sequences * (next_tokens != self.tokenizer.eos_id).long()
+            if unfinished_sequences.max() == 0:
+                break
+
+        self.policy.flush()
+        Outputs = collections.namedtuple("Outputs", ['tokens'])
+        return Outputs(tokens=tokens)
+
+    def forward(self, instructions: Union[List[str], List[List[int]]]) -> List[str]:
+        prepare_outputs = self.prepare_for_generation(instructions)
+        tokens = self.expand_tensor(prepare_outputs.tokens)
+        input_masks = self.expand_tensor(prepare_outputs.input_masks)
+        forward_outputs = self.model_forward(tokens, input_masks, prepare_outputs.start_pos)
+        output_masks = self.get_output_masks(forward_outputs.tokens, input_masks)
+        responses = self.decode_response(forward_outputs.tokens, output_masks)
+        return responses

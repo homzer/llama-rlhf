@@ -72,7 +72,12 @@ class ModelForCausalLM(Module):
         raise NotImplementedError
 
     def flush(self):
+        """ clean KV cache """
         raise NotImplementedError
+
+    def rearrange_kv_cache(self, indices: torch.Tensor):
+        """ rearrange the order of the KV cache """
+        pass
 
 
 # Encoder-only
@@ -192,7 +197,12 @@ class ParallelModelForCausalLM(ParallelModule):
         raise NotImplementedError
 
     def flush(self):
+        """ clean KV cache """
         raise NotImplementedError
+
+    def rearrange_kv_cache(self, indices: torch.Tensor):
+        """ rearrange the order of the KV cache """
+        pass
 
 
 class ParallelModelForMaskedLM(ParallelModule):
@@ -245,12 +255,18 @@ class AttentionForCausalLM(nn.Module):
     def apply_cache(self, xk, xv, start_pos):
         bsz, seq_len, n_heads, head_dim = xk.shape
         if self.cache_k is None:
-            self.cache_k = torch.zeros(
-                (bsz, self.max_seq_len, n_heads, head_dim)
+            delattr(self, 'cache_k')
+            self.register_buffer(
+                name='cache_k',
+                tensor=torch.zeros((bsz, self.max_seq_len, n_heads, head_dim)),
+                persistent=False
             )
         if self.cache_v is None:
-            self.cache_v = torch.zeros(
-                (bsz, self.max_seq_len, n_heads, head_dim)
+            delattr(self, 'cache_v')
+            self.register_buffer(
+                name='cache_v',
+                tensor=torch.zeros((bsz, self.max_seq_len, n_heads, head_dim)),
+                persistent=False
             )
 
         self.cache_k = self.cache_k.to(xk)
@@ -283,3 +299,15 @@ class AttentionForCausalLM(nn.Module):
         """ Clean cache for next inference. """
         self.cache_v = None
         self.cache_k = None
+
+    def rearrange(self, indices: torch.Tensor):
+        """
+        rearrange the order of kv cache
+        :param indices: [batch_size]
+        :return:
+        """
+        assert self.cache_k is not None
+        assert self.cache_v is not None
+        assert len(indices.shape) == 1
+        self.cache_k = self.cache_k[indices]
+        self.cache_v = self.cache_v[indices]

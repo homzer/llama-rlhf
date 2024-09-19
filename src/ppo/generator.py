@@ -46,8 +46,7 @@ class SolverGeneratorForCausalLM(GeneratorForCausalLM):
         forward_outputs = self.model_forward(
             prep_outputs.tokens, prep_outputs.input_masks, prep_outputs.start_pos
         )
-        prompt_lengths = torch.sum(prep_outputs.input_masks, dim=-1)
-        output_masks = self.get_output_masks(forward_outputs.tokens, prompt_lengths)
+        output_masks = self.get_output_masks(forward_outputs.tokens, prep_outputs.input_masks)
         outputs = self.decode_response(forward_outputs.tokens, output_masks)
         # input tokens shift left to get output tokens
         output_tokens = torch.zeros_like(forward_outputs.tokens)
@@ -191,9 +190,7 @@ class ActorGeneratorForCausalLM(SolverGeneratorForCausalLM):
         forward_outputs = self.model_forward(
             prep_outputs.tokens, prep_outputs.input_masks, prep_outputs.start_pos
         )
-
-        prompt_lengths = torch.sum(prep_outputs.input_masks, dim=-1)
-        output_masks = self.get_output_masks(forward_outputs.tokens, prompt_lengths)
+        output_masks = self.get_output_masks(forward_outputs.tokens, prep_outputs.input_masks)
         outputs = self.decode_response(forward_outputs.tokens, output_masks)
         # input tokens shift left to get output tokens
         output_tokens = torch.zeros_like(forward_outputs.tokens)
