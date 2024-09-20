@@ -232,10 +232,8 @@ class VerifierAugmentedGeneratorForCausalLM(GeneratorForCausalLM):
 
     def simulate(self, logits: torch.Tensor) -> torch.Tensor:
         logits = logits[:, -1, :]
-        logits = torch.reshape(logits, shape=[-1, self.beam_size, self.tree_size, logits.shape[-1]])
-        probs = torch.softmax(logits / self.temperature, dim=-1)
-        next_tokens = sample_top_p(probs, num_samples=1)  # [batch_size, beam_size, tree_size, 1]
-        return next_tokens.reshape(-1)
+        next_tokens = sample_top_p(torch.softmax(logits / self.temperature, dim=-1), num_samples=1)
+        return next_tokens.reshape(-1)  # [batch_size * beam_size * tree_size]
 
     def expand(self, logits: torch.Tensor, tree_size: int = None) -> torch.Tensor:
         tree_size = tree_size or self.tree_size
@@ -250,17 +248,18 @@ class VerifierAugmentedGeneratorForCausalLM(GeneratorForCausalLM):
         return next_tokens.reshape(-1)
 
     def verify(self, tokens: torch.Tensor) -> torch.Tensor:
+        # TODO
         tokens = tokens.clone()
         self.move_policy_to_cpu()
-        self.move_verifier_to_gpu()
         with torch.no_grad():
             scores = self.verifier.forward(tokens).scores  # [batch_size * beam_size * tree_size, seq_len]
-        self.move_verifier_to_cpu()
         self.move_policy_to_gpu()
         scores = scores[:, -self.span_size:]
         scores = torch.mean(scores, dim=-1).reshape(-1, self.beam_size * self.tree_size)
         scores_values, scores_indices = torch.topk(scores, k=self.beam_size)  # [batch_size, beam_size]
-        scores_indices += (torch.arange(0, len(scores_indices)) * self.beam_size * self.tree_size).unsqueeze(-1)
+        scores_indices += (
+                torch.arange(0, len(scores_indices)) * self.beam_size * self.tree_size
+        ).unsqueeze(-1).to(scores_indices)
         scores_indices = scores_indices[:, :, None].expand(
             scores_indices.shape[0], self.beam_size, self.tree_size
         ).reshape(-1)
