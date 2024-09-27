@@ -114,11 +114,19 @@ class ParallelPPOTrainerForCausalLM(ParallelTrainer):
 
 
 class ParallelActorTrainerForCausalLM(ParallelTrainer):
-    def __init__(self, actor: ParallelModelForCausalLM, optimizer: torch.optim.Optimizer):
+    def __init__(
+            self,
+            actor: ParallelModelForCausalLM,
+            optimizer: torch.optim.Optimizer,
+            clip_range: float = 0.2,
+            sft_coef: float = 0.0
+    ):
         super().__init__(actor, optimizer)
         self.actor = actor
-        self.clip_range = 0.2
+        self.clip_range = clip_range
+        self.sft_coef = sft_coef
         self.step = 0
+        self.sft_criterion = torch.nn.CrossEntropyLoss()
 
     def forward(self, rollout_data: RolloutBufferSample):
         self.actor.train()
@@ -143,22 +151,41 @@ class ParallelActorTrainerForCausalLM(ParallelTrainer):
         # clipped surrogate loss
         actor_loss_1 = advantages * ratio
         actor_loss_2 = advantages * torch.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range)
-        loss = - torch.min(actor_loss_1, actor_loss_2).mean()
+        actor_loss = - torch.min(actor_loss_1, actor_loss_2).mean()
 
-        kl_div = 0
+        # sft loss
+        sft_loss = torch.tensor(0.0, device=self.actor.device())
+        if self.sft_coef != 0.0:
+            sft_target = actions.view(-1)
+            sft_target[~ action_masks.view(-1)] = -100
+            sft_loss = self.sft_coef * self.sft_criterion.forward(
+                input=outputs.logits.view(-1, outputs.logits.shape[-1]),
+                target=sft_target
+            )
+
+        loss = actor_loss + sft_loss
+
+        kl_div = torch.tensor(0.0, device=self.actor.device())
         if rollout_data.ref_action_logprobs is not None:
             ref_action_logprobs = rollout_data.ref_action_logprobs.to(self.actor.device())
             # For logging only, compute kl divergence using mse loss
             kl_div = torch.masked_select(
                 (0.5 * (action_logprobs.detach() - ref_action_logprobs) ** 2).view(-1), action_masks.view(-1)
-            ).mean().item()
+            ).mean()
 
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
 
-        Outputs = collections.namedtuple('Outputs', ['loss', 'advantages', "kl"])
-        return Outputs(loss=loss.item(), advantages=torch.mean(advantages).item(), kl=kl_div)
+        Outputs = collections.namedtuple('Outputs', [
+            'loss', "actor_loss", 'advantages', "kl", "sft_loss"])
+        return Outputs(
+            loss=loss.item(),
+            actor_loss=actor_loss.item(),
+            advantages=torch.mean(advantages).item(),
+            kl=kl_div.item(),
+            sft_loss=sft_loss.item()
+        )
 
 
 class ParallelCriticTrainerForCausalLM(ParallelTrainer):
