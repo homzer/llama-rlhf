@@ -4,6 +4,7 @@ from typing import List, Union
 import torch
 
 from src.models.modeling import ModelForCausalLM, ParallelModelForCausalLM, ParallelVerifier, Verifier
+from src.parallel import set_model_parallel_barrier
 from src.tokenizers.tokenizer import Tokenizer
 from src.utils import sample_top_p, masked_mean, truncate
 
@@ -188,11 +189,11 @@ class GeneratorForVerifier:
         return Output(scores=scores, tokens_scores=result_tokens_scores)
 
 
-class VerifierAugmentedGeneratorForCausalLM(GeneratorForCausalLM):
+class ValueAugmentedSamplingGeneratorForCausalLM(GeneratorForCausalLM):
     def __init__(
             self,
             policy: Union[ModelForCausalLM, ParallelModelForCausalLM],
-            verifier: Union[Verifier, ParallelVerifier],
+            critic: Union[Verifier, ParallelVerifier],
             tokenizer: Tokenizer,  # tokenizers of policy and verifier must be the same
             max_seq_len: int,
             beam_size: int = 1,
@@ -208,8 +209,8 @@ class VerifierAugmentedGeneratorForCausalLM(GeneratorForCausalLM):
         )
         self.policy = policy
         self.policy_device = policy.device()
-        self.verifier = verifier
-        self.verifier_device = verifier.device()
+        self.critic = critic
+        self.critic_device = critic.device()
         self.tokenizer = tokenizer
         self.max_seq_len = max_seq_len
         self.beam_size = beam_size
@@ -223,17 +224,11 @@ class VerifierAugmentedGeneratorForCausalLM(GeneratorForCausalLM):
     def move_policy_to_gpu(self):
         self.policy.cuda(self.policy_device)
 
-    def move_verifier_to_cpu(self):
-        self.verifier.cpu()
-        torch.cuda.empty_cache()
-
-    def move_verifier_to_gpu(self):
-        self.verifier.cuda(self.verifier_device)
-
     def simulate(self, logits: torch.Tensor) -> torch.Tensor:
         logits = logits[:, -1, :]
-        next_tokens = sample_top_p(torch.softmax(logits / self.temperature, dim=-1), num_samples=1)
-        return next_tokens.reshape(-1)  # [batch_size * beam_size * tree_size]
+        probs = torch.softmax(logits / self.temperature, dim=-1)
+        next_tokens = sample_top_p(probs, num_samples=1)  # [batch_size, beam_size, tree_size, 1]
+        return next_tokens.reshape(-1)
 
     def expand(self, logits: torch.Tensor, tree_size: int = None) -> torch.Tensor:
         tree_size = tree_size or self.tree_size
@@ -247,22 +242,28 @@ class VerifierAugmentedGeneratorForCausalLM(GeneratorForCausalLM):
         next_tokens = sample_top_p(probs, num_samples=tree_size)  # [batch_size, beam_size, tree_size]
         return next_tokens.reshape(-1)
 
-    def verify(self, tokens: torch.Tensor) -> torch.Tensor:
-        # TODO
+    def verify(self, tokens: torch.Tensor, unfinished_sequences: torch.Tensor) -> (torch.Tensor, torch.Tensor):
         tokens = tokens.clone()
+        unfinished_sequences = unfinished_sequences.bool()
         self.move_policy_to_cpu()
+        set_model_parallel_barrier()
         with torch.no_grad():
-            scores = self.verifier.forward(tokens).scores  # [batch_size * beam_size * tree_size, seq_len]
+            scores = self.critic.forward(tokens).scores  # [batch_size * beam_size * tree_size, seq_len]
         self.move_policy_to_gpu()
+        set_model_parallel_barrier()
         scores = scores[:, -self.span_size:]
-        scores = torch.mean(scores, dim=-1).reshape(-1, self.beam_size * self.tree_size)
-        scores_values, scores_indices = torch.topk(scores, k=self.beam_size)  # [batch_size, beam_size]
-        scores_indices += (
-                torch.arange(0, len(scores_indices)) * self.beam_size * self.tree_size
-        ).unsqueeze(-1).to(scores_indices)
+        scores = torch.mean(scores, dim=-1)  # [b]
+        scores = torch.where(unfinished_sequences, scores, float("-inf"))  # ignore finished sequences
+        scores_values, scores_indices = torch.topk(
+            scores.reshape(-1, self.beam_size * self.tree_size), k=self.beam_size
+        )  # [batch_size, beam_size]
+        scores_indices += (torch.arange(0, len(scores_indices)) * self.beam_size * self.tree_size).unsqueeze(-1).to(scores_indices)
         scores_indices = scores_indices[:, :, None].expand(
             scores_indices.shape[0], self.beam_size, self.tree_size
         ).reshape(-1)
+        scores_indices = torch.where(  # skip finished sequences
+            unfinished_sequences, scores_indices, torch.arange(0, scores_indices.shape[0]).to(scores_indices)
+        )
         # pruning
         self.policy.rearrange_kv_cache(scores_indices)
         select_tokens = tokens[scores_indices]  # [batch_size * beam_size * tree_size, seq_len]
@@ -277,7 +278,7 @@ class VerifierAugmentedGeneratorForCausalLM(GeneratorForCausalLM):
 
     def model_forward(self, tokens: torch.Tensor, input_masks: torch.Tensor = None, start_pos: int = None):
         self.policy.eval()
-        self.verifier.eval()
+        self.critic.eval()
         unfinished_sequences = torch.ones(
             size=[tokens.shape[0]], dtype=torch.long, device=self.model.device()
         )
@@ -298,15 +299,15 @@ class VerifierAugmentedGeneratorForCausalLM(GeneratorForCausalLM):
 
             next_tokens = torch.where(input_masks[:, cur_pos], tokens[:, cur_pos], next_tokens)
             tokens[:, cur_pos] = next_tokens
-
-            if span_step == self.span_size - 1:  # verification
-                tokens = self.verify(tokens)
-
-            span_step = (span_step + 1) % self.span_size
-            prev_pos = cur_pos
             unfinished_sequences = unfinished_sequences * (next_tokens != self.tokenizer.eos_id).long()
             if unfinished_sequences.max() == 0:
                 break
+
+            if span_step == self.span_size - 1:  # verification
+                tokens = self.verify(tokens, unfinished_sequences)
+
+            span_step = (span_step + 1) % self.span_size
+            prev_pos = cur_pos
 
         self.policy.flush()
         Outputs = collections.namedtuple("Outputs", ['tokens'])
