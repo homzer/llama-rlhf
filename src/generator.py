@@ -10,6 +10,8 @@ from src.utils import sample_top_p, masked_mean, truncate
 
 
 def sampling_strategy(logits: torch.Tensor, t: float, p: float):
+    if len(logits.shape) == 2:
+        logits = logits[:, None, :]  # [b, 1, v]
     assert len(logits.shape) == 3
     seq_length = logits.shape[1]
     # only perform sampling on the last token
@@ -30,7 +32,7 @@ class GeneratorForCausalLM:
             tokenizer: Tokenizer,
             max_seq_len: int,
             temperature: float = 0.0,
-            top_p: float = 0.95
+            top_p: float = 1.0
     ):
         self.model = model
         self.vocab_size = tokenizer.vocab_size
@@ -112,6 +114,79 @@ class GeneratorForCausalLM:
         for t, m in zip(tokens, shifted_output_masks):
             responses.append(self.tokenizer.decode(t[m].tolist()))
         return responses
+
+    def forward(self, instructions: Union[List[str], List[List[int]]]) -> List[str]:
+        self.model.eval()
+        prep_outputs = self.prepare_for_generation(instructions)
+        forward_outputs = self.model_forward(
+            prep_outputs.tokens, prep_outputs.input_masks, prep_outputs.start_pos
+        )
+        output_masks = self.get_output_masks(forward_outputs.tokens, prep_outputs.input_masks)
+        responses = self.decode_response(forward_outputs.tokens, output_masks)
+        return responses
+
+
+class ForcedDiversityGeneratorForCausalLM(GeneratorForCausalLM):
+    def __init__(
+            self,
+            model: Union[ModelForCausalLM, ParallelModelForCausalLM],
+            tokenizer: Tokenizer,
+            max_seq_len: int,
+            temperature: float = 0.0,
+            top_p: float = 1.0
+    ):
+        super().__init__(
+            model=model,
+            tokenizer=tokenizer,
+            max_seq_len=max_seq_len,
+            temperature=temperature,
+            top_p=top_p
+        )
+        self.recorded_tokens: List[torch.Tensor] = []
+
+    def reset(self):
+        self.recorded_tokens = []
+
+    def sample(self, logits: torch.Tensor, tokens: torch.Tensor, cur_pos: int, temperature: float, top_p: float):
+        # check for recorded_tokens
+        bsz = tokens.shape[0]
+        logits = logits[:, -1, :]  # [b, v]
+        logits_masks = torch.full_like(logits, fill_value=True, dtype=torch.bool)  # [b, v]
+        for i in range(bsz):
+            for recorded_token in self.recorded_tokens:
+                if (recorded_token[: cur_pos] == tokens[i]).all():
+                    logits_masks[i][recorded_token[cur_pos]] = False
+        logits = logits - (1 - logits_masks) * 10000.
+        next_tokens = sampling_strategy(logits, temperature, top_p)
+        return next_tokens
+
+    def model_forward(self, tokens: torch.Tensor, input_masks: torch.Tensor = None, start_pos: int = None):
+        bsz = tokens.shape[0]
+        prev_pos = 0
+        tokens = tokens.clone()
+        unfinished_sequences = torch.ones(size=[bsz], dtype=torch.long, device=self.model.device())
+        for cur_pos in range(start_pos, self.max_seq_len):
+            with torch.no_grad():
+                outputs = self.model.forward(
+                    tokens[:, prev_pos: cur_pos], prev_pos, use_cache=True
+                )
+            next_tokens = self.sample(outputs.logits, tokens, cur_pos, self.temperature, self.top_p)  # [b, s]
+            next_tokens = next_tokens[:, -1].reshape(-1)
+            next_tokens = torch.where(
+                input_masks[:, cur_pos], tokens[:, cur_pos], next_tokens
+            )
+            tokens[:, cur_pos] = next_tokens
+            prev_pos = cur_pos
+            unfinished_sequences = unfinished_sequences * (
+                    next_tokens != self.tokenizer.eos_id
+            ).long()
+            if unfinished_sequences.max() == 0:
+                break
+
+        self.model.flush()
+        self.recorded_tokens.extend(torch.split(tokens, 1))
+        Outputs = collections.namedtuple("Outputs", ['tokens'])
+        return Outputs(tokens=tokens)
 
     def forward(self, instructions: Union[List[str], List[List[int]]]) -> List[str]:
         self.model.eval()
