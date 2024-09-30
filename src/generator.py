@@ -66,6 +66,9 @@ class GeneratorForCausalLM:
             start_pos=min_prompt_size,
         )
 
+    def sampling(self, logits: torch.Tensor, **kwargs) -> torch.Tensor:
+        return sampling_strategy(logits, self.temperature, self.top_p)
+
     def model_forward(self, tokens: torch.Tensor, input_masks: torch.Tensor = None, start_pos: int = None):
         bsz = tokens.shape[0]
         prev_pos = 0
@@ -76,15 +79,16 @@ class GeneratorForCausalLM:
                 outputs = self.model.forward(
                     tokens[:, prev_pos: cur_pos], prev_pos, use_cache=True
                 )
-            next_tokens = sampling_strategy(outputs.logits, self.temperature, self.top_p)  # [b, s]
-            next_token = next_tokens[:, -1].reshape(-1)
-            next_token = torch.where(
-                input_masks[:, cur_pos], tokens[:, cur_pos], next_token
+            # next_tokens = sampling_strategy(outputs.logits, self.temperature, self.top_p)  # [b, s]
+            next_tokens = self.sampling(outputs.logits, tokens=tokens, cur_pos=cur_pos)  # [b, s]
+            next_tokens = next_tokens[:, -1].reshape(-1)
+            next_tokens = torch.where(
+                input_masks[:, cur_pos], tokens[:, cur_pos], next_tokens
             )
-            tokens[:, cur_pos] = next_token
+            tokens[:, cur_pos] = next_tokens
             prev_pos = cur_pos
             unfinished_sequences = unfinished_sequences * (
-                    next_token != self.tokenizer.eos_id
+                    next_tokens != self.tokenizer.eos_id
             ).long()
             if unfinished_sequences.max() == 0:
                 break
@@ -132,6 +136,7 @@ class ForcedDiversityGeneratorForCausalLM(GeneratorForCausalLM):
             model: Union[ModelForCausalLM, ParallelModelForCausalLM],
             tokenizer: Tokenizer,
             max_seq_len: int,
+            num_samples: int = 1,
             temperature: float = 0.0,
             top_p: float = 1.0
     ):
@@ -142,60 +147,37 @@ class ForcedDiversityGeneratorForCausalLM(GeneratorForCausalLM):
             temperature=temperature,
             top_p=top_p
         )
-        self.recorded_tokens: List[torch.Tensor] = []
+        self.num_samples = num_samples
+        self.recorded_tokens = None
 
-    def reset(self):
-        self.recorded_tokens = []
-
-    def sample(self, logits: torch.Tensor, tokens: torch.Tensor, cur_pos: int, temperature: float, top_p: float):
+    def sampling(self, logits: torch.Tensor, **kwargs) -> torch.Tensor:
         # check for recorded_tokens
-        bsz = tokens.shape[0]
+        tokens, cur_pos = kwargs.get("tokens"), kwargs.get("cur_pos")
         logits = logits[:, -1, :]  # [b, v]
         logits_masks = torch.full_like(logits, fill_value=False, dtype=torch.bool)  # [b, v]
-        for i in range(bsz):
-            for recorded_token in self.recorded_tokens:
-                if (recorded_token[: cur_pos] == tokens[i]).all():
+        for i in range(tokens.shape[0]):
+            for recorded_token in self.recorded_tokens[i]:
+                if (recorded_token[: cur_pos] == tokens[i][: cur_pos]).all():
                     logits_masks[i][recorded_token[cur_pos]] = True
         logits = logits - logits_masks * 10000.
-        next_tokens = sampling_strategy(logits, temperature, top_p)
+        next_tokens = sampling_strategy(logits, self.temperature, self.top_p)
         return next_tokens
 
-    def model_forward(self, tokens: torch.Tensor, input_masks: torch.Tensor = None, start_pos: int = None):
-        bsz = tokens.shape[0]
-        prev_pos = 0
-        tokens = tokens.clone()
-        unfinished_sequences = torch.ones(size=[bsz], dtype=torch.long, device=self.model.device())
-        for cur_pos in range(start_pos, self.max_seq_len):
-            with torch.no_grad():
-                outputs = self.model.forward(
-                    tokens[:, prev_pos: cur_pos], prev_pos, use_cache=True
-                )
-            next_tokens = self.sample(outputs.logits, tokens, cur_pos, self.temperature, self.top_p)  # [b, s]
-            next_tokens = next_tokens[:, -1].reshape(-1)
-            next_tokens = torch.where(
-                input_masks[:, cur_pos], tokens[:, cur_pos], next_tokens
-            )
-            tokens[:, cur_pos] = next_tokens
-            prev_pos = cur_pos
-            unfinished_sequences = unfinished_sequences * (
-                    next_tokens != self.tokenizer.eos_id
-            ).long()
-            if unfinished_sequences.max() == 0:
-                break
-
-        self.model.flush()
-        self.recorded_tokens.extend(torch.split(tokens, 1))
-        Outputs = collections.namedtuple("Outputs", ['tokens'])
-        return Outputs(tokens=tokens)
-
-    def forward(self, instructions: Union[List[str], List[List[int]]]) -> List[str]:
+    def forward(self, instructions: Union[List[str], List[List[int]]]) -> List[List[str]]:
         self.model.eval()
         prep_outputs = self.prepare_for_generation(instructions)
-        forward_outputs = self.model_forward(
-            prep_outputs.tokens, prep_outputs.input_masks, prep_outputs.start_pos
-        )
-        output_masks = self.get_output_masks(forward_outputs.tokens, prep_outputs.input_masks)
-        responses = self.decode_response(forward_outputs.tokens, output_masks)
+        responses = [[] for _ in range(len(instructions))]
+        self.recorded_tokens = [[] for _ in range(len(instructions))]
+        for _ in range(self.num_samples):
+            forward_outputs = self.model_forward(
+                prep_outputs.tokens, prep_outputs.input_masks, prep_outputs.start_pos
+            )
+            for i, recorded_token in enumerate(self.recorded_tokens):
+                recorded_token.append(forward_outputs.tokens[i])
+            output_masks = self.get_output_masks(forward_outputs.tokens, prep_outputs.input_masks)
+            for i, response in enumerate(self.decode_response(forward_outputs.tokens, output_masks)):
+                responses[i].append(response)
+        self.recorded_tokens = None
         return responses
 
 
