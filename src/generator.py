@@ -151,12 +151,12 @@ class ForcedDiversityGeneratorForCausalLM(GeneratorForCausalLM):
         # check for recorded_tokens
         bsz = tokens.shape[0]
         logits = logits[:, -1, :]  # [b, v]
-        logits_masks = torch.full_like(logits, fill_value=True, dtype=torch.bool)  # [b, v]
+        logits_masks = torch.full_like(logits, fill_value=False, dtype=torch.bool)  # [b, v]
         for i in range(bsz):
             for recorded_token in self.recorded_tokens:
                 if (recorded_token[: cur_pos] == tokens[i]).all():
-                    logits_masks[i][recorded_token[cur_pos]] = False
-        logits = logits - (1 - logits_masks) * 10000.
+                    logits_masks[i][recorded_token[cur_pos]] = True
+        logits = logits - logits_masks * 10000.
         next_tokens = sampling_strategy(logits, temperature, top_p)
         return next_tokens
 
