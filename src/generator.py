@@ -1,4 +1,5 @@
 import collections
+import random
 from typing import List, Union
 
 import torch
@@ -157,7 +158,7 @@ class ForcedDiversityGeneratorForCausalLM(GeneratorForCausalLM):
         logits_masks = torch.full_like(logits, fill_value=False, dtype=torch.bool)  # [b, v]
         for i in range(tokens.shape[0]):
             for recorded_token in self.recorded_tokens[i]:
-                if (recorded_token[: cur_pos] == tokens[i][: cur_pos]).all():
+                if random.randint(0, 1) == 1 and (recorded_token[: cur_pos] == tokens[i][: cur_pos]).all():
                     logits_masks[i][recorded_token[cur_pos]] = True
         logits = logits - logits_masks * 10000.
         next_tokens = sampling_strategy(logits, self.temperature, self.top_p)
