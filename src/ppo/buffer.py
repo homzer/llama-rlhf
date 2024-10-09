@@ -98,6 +98,7 @@ class RolloutBuffer:
             gamma: float = 0.9,
             gae_lambda: float = 0.8,
             kl_coef: float = 0.1,
+            reward_mu: float = 0.0,
             reward_normalize: bool = True,
             use_last_token_reward: bool = False
     ):
@@ -115,6 +116,7 @@ class RolloutBuffer:
         self.gamma = gamma
         self.gae_lambda = gae_lambda
         self.kl_coef = kl_coef
+        self.reward_mu = reward_mu
         self.reward_normalize = reward_normalize
         self.use_last_token_reward = use_last_token_reward
 
@@ -161,8 +163,9 @@ class RolloutBuffer:
                     self.rewards[self.action_masks])) / (np.std(self.rewards[self.action_masks]))
                 self.rewards[~ reward_masks] = 0.0
             else:
-                self.rewards = (self.rewards - np.mean(
-                    self.rewards[self.action_masks])) / (np.std(self.rewards[self.action_masks]))
+                self.rewards = self.reward_mu + (self.rewards - np.mean(
+                    self.rewards[self.action_masks]
+                )) / (np.std(self.rewards[self.action_masks]))
         # Adding KL penalty
         self.rewards += - self.kl_coef * self.compute_kl_penalty()
 
