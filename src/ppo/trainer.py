@@ -154,9 +154,9 @@ class ParallelActorTrainerForCausalLM(ParallelTrainer):
         actor_loss = - torch.min(actor_loss_1, actor_loss_2).mean()
 
         # sft loss
-        sft_loss = torch.tensor(0.0, device=self.actor.device())
+        sft_loss = 0.0
         if self.sft_coef != 0.0:
-            sft_target = actions.view(-1)
+            sft_target = actions.clone().detach().view(-1)
             sft_target[~ action_masks.view(-1)] = -100
             sft_loss = self.sft_coef * self.sft_criterion.forward(
                 input=outputs.logits.view(-1, outputs.logits.shape[-1]),
@@ -165,7 +165,7 @@ class ParallelActorTrainerForCausalLM(ParallelTrainer):
 
         loss = actor_loss + sft_loss
 
-        kl_div = torch.tensor(0.0, device=self.actor.device())
+        kl_div = 0.0
         if rollout_data.ref_action_logprobs is not None:
             ref_action_logprobs = rollout_data.ref_action_logprobs.to(self.actor.device())
             # For logging only, compute kl divergence using mse loss
@@ -183,8 +183,8 @@ class ParallelActorTrainerForCausalLM(ParallelTrainer):
             loss=loss.item(),
             actor_loss=actor_loss.item(),
             advantages=torch.mean(advantages).item(),
-            kl=kl_div.item(),
-            sft_loss=sft_loss.item()
+            kl=kl_div.item() if isinstance(kl_div, torch.Tensor) else kl_div,
+            sft_loss=sft_loss.item() if isinstance(sft_loss, torch.Tensor) else sft_loss
         )
 
 

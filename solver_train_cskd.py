@@ -25,7 +25,7 @@ def main(
         dtype: str = "float16",
         lora_rank: int = -1,
         lora_dtype: str = "float32",
-        chunk_size: int = 10000,
+        chunk_size: int = -1,
         seed: int = None,
 ):
     if tokenizer_file is None:
@@ -53,6 +53,7 @@ def main(
     )
     trainer.load(ckpt_dir)
     datalist = json_load(train_file)
+    chunk_size = chunk_size if chunk_size > 0 else len(datalist)
     epochs = len(datalist) // chunk_size
 
     for epoch in range(epochs):
