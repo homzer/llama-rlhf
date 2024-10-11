@@ -63,9 +63,9 @@ class LlamaTokenizer(Tokenizer):
                 dialog = re.sub(r"</s>$", "", dialog)
             enc = [*self.model.Encode(dialog), *enc] if i == 0 else [self.bos_id, *self.model.Encode(dialog), *enc]
             encode.extend(enc)
-        if bos and encode[0] != self.bos_id:
+        if bos and (len(encode) == 0 or encode[0] != self.bos_id):
             encode = [self.bos_id, *encode]
-        if eos and encode[-1] != self.eos_id:
+        if eos and (len(encode) == 0 or encode[-1] != self.eos_id):
             encode = [*encode, self.eos_id]
         return encode
 
