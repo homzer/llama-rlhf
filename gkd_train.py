@@ -27,7 +27,8 @@ def run(
         teacher_config_file: str = None,
         teacher_tokenizer_file: str = None,
         logits_topk: int = 5,
-        alpha: float = 1.0,
+        kl_coef: float = 1.0,
+        ce_coef: float = 1.0,
         lora_rank: int = -1,
         lora_dtype: str = "bfloat16",
         max_batch_size: int = 1,
@@ -132,7 +133,8 @@ def run(
                     instructions=data.instructions,
                     outputs=data.outputs,
                     target_logits=data.logits,
-                    alpha=alpha
+                    kl_coef=kl_coef,
+                    ce_coef=ce_coef
                 )
                 if trainer.step % 100 == 0:
                     print(f'--------- STEP {trainer.step} OF {timer.total} ---------')

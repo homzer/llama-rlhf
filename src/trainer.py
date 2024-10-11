@@ -214,27 +214,37 @@ class ParallelSolverDistillTrainer(ParallelSolverTrainer):
             instructions: List[str],
             outputs: List[str],
             target_logits: torch.Tensor,
-            alpha: float = 1.0,
+            kl_coef: float = 1.0,
+            ce_coef: float = 1.0,
             temperature: float = 1.0
     ):
         self.model.train()
         example = self.prepare_for_training(instructions=instructions, outputs=outputs)
         logits = self.model.forward(example.tokens).logits
 
-        loss_ce = self.criterion_ce.forward(
-            input=logits.view(-1, logits.size(-1)),
-            target=example.labels.view(-1).to(logits.device)
-        )
-        loss_kl = alpha * self.criterion_kl.forward(
-            logits=logits,
-            targets=target_logits,
-            masks=example.masks,
-            temperature=temperature
-        )
+        loss_ce = 0.
+        if ce_coef != 0:
+            loss_ce = ce_coef * self.criterion_ce.forward(
+                input=logits.view(-1, logits.size(-1)),
+                target=example.labels.view(-1).to(logits.device)
+            )
+        loss_kl = 0.
+        if kl_coef != 0:
+            loss_kl = kl_coef * self.criterion_kl.forward(
+                logits=logits,
+                targets=target_logits,
+                masks=example.masks,
+                temperature=temperature
+            )
         loss = loss_ce + loss_kl
         self._back_propagation(loss)
         Output = collections.namedtuple('Output', ['loss', 'logits', 'loss_kl', 'loss_ce'])
-        return Output(logits=logits, loss=loss.item(), loss_kl=loss_kl.item(), loss_ce=loss_ce.item())
+        return Output(
+            logits=logits,
+            loss=loss.item(),
+            loss_kl=loss_kl.item() if isinstance(loss_kl, torch.Tensor) else loss_kl,
+            loss_ce=loss_ce.item() if isinstance(loss_ce, torch.Tensor) else loss_ce
+        )
 
 
 class ParallelSolverTripleDistillTrainer(ParallelSolverTrainer):
@@ -423,8 +433,8 @@ class ParallelSolverReferenceDistillTrainer(ParallelSolverTrainer):
             target_logps: torch.Tensor,
             ref_logps: float,
             ref_logps_scale: float,
-            alpha: float = 1.0,
-            beta: float = 1.0,
+            kl_coef: float = 1.0,
+            ce_coef: float = 1.0,
             temperature: float = 1.0
     ):
         """
@@ -435,8 +445,8 @@ class ParallelSolverReferenceDistillTrainer(ParallelSolverTrainer):
         :param target_logits: [b, s, v]
         :param target_logps: [b, s], log probs of label tokens
         :param ref_logps: average of target_logps over a mini-batch
-        :param alpha: kl weight
-        :param beta: ce weight
+        :param kl_coef: kl weight
+        :param ce_coef: ce weight
         :param temperature:
         :return:
         """
@@ -444,10 +454,12 @@ class ParallelSolverReferenceDistillTrainer(ParallelSolverTrainer):
         example = self.prepare_for_training(instructions=instructions, outputs=outputs)
         logits = self.model.forward(example.tokens).logits
 
-        loss_ce = beta * self.criterion_ce.forward(
-            input=logits.view(-1, logits.size(-1)),
-            target=example.labels.view(-1).to(logits.device)
-        )
+        loss_ce = 0.
+        if ce_coef != 0:
+            loss_ce = ce_coef * self.criterion_ce.forward(
+                input=logits.view(-1, logits.size(-1)),
+                target=example.labels.view(-1).to(logits.device)
+            )
         kl_loss_outputs = self.reference_kl_loss(
             logits=logits,
             target_logits=target_logits,
@@ -457,7 +469,7 @@ class ParallelSolverReferenceDistillTrainer(ParallelSolverTrainer):
             masks=example.masks,
             temperature=temperature
         )
-        loss_kl = alpha * kl_loss_outputs.loss
+        loss_kl = kl_coef * kl_loss_outputs.loss
         loss = loss_ce + loss_kl
         self._back_propagation(loss)
         Output = collections.namedtuple('Output', ['loss', 'logits', 'loss_kl', 'loss_ce', 'refs'])

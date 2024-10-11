@@ -188,8 +188,8 @@ def main(
                     target_logps=data.output_tokens_logps,
                     ref_logps=ref_logps,
                     ref_logps_scale=ref_logps_scale,
-                    alpha=alpha,
-                    beta=beta,
+                    kl_coef=alpha,
+                    ce_coef=beta,
                     temperature=T
                 )
                 if trainer.step % 100 == 0:
@@ -202,8 +202,8 @@ def main(
                     instructions=data.instructions,
                     outputs=data.outputs,
                     target_logits=data.logits,
-                    alpha=alpha,
-                    beta=beta,
+                    kl_coef=alpha,
+                    ce_coef=beta,
                     temperature=T
                 )
                 if trainer.step % 100 == 0:

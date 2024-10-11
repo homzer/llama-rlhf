@@ -104,7 +104,7 @@ def main(
                 instructions=data.instructions,
                 outputs=data.outputs,
                 target_logits=data.logits,
-                alpha=alpha,
+                kl_coef=alpha,
                 beta=beta,
                 temperature=T
             )
