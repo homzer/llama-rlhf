@@ -262,6 +262,7 @@ class LlamaVerifier(ParallelVerifier):
         self.freqs_cis = precompute_freqs_cis(
             self.args.dim // self.args.n_heads, self.args.max_seq_len * 2
         )
+        self.checkpoint = CheckpointForLlama()
 
     def forward(self, tokens: torch.Tensor) -> VerifierOutputs:
         tokens = tokens.to(next(self.parameters()).device)
@@ -291,6 +292,11 @@ class LlamaVerifier(ParallelVerifier):
         self.v_head = nn.Linear(self.args.dim, 1, bias=False).type(self.args.dtype)
 
     def load(self, ckpt_dir: str, verbose: bool = True, **kwargs):
+        ckpt_dir = self.checkpoint.auto_split_or_merge_checkpoints(
+            ckpt_dir=ckpt_dir,
+            model_parallel_world_size=self.model_parallel_world_size,
+            global_rank=self.global_rank
+        )
         merge_lora = kwargs.get("merge_lora", True)
         super().load(ckpt_dir, verbose=verbose, merge_lora=merge_lora)
 
