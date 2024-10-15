@@ -285,10 +285,32 @@ class ValueAugmentedSamplingGeneratorForCausalLM(GeneratorForCausalLM):
         self.policy.cuda(self.policy_device)
 
     def simulate(self, logits: torch.Tensor) -> torch.Tensor:
+        """
+        :param logits: [batch_size * beam_size * tree_size, seq_len, vocab_size]
+        :return:
+        """
         logits = logits[:, -1, :]
         probs = torch.softmax(logits / self.temperature, dim=-1)
-        next_tokens = sample_top_p(probs, num_samples=1)  # [batch_size, beam_size, tree_size, 1]
-        return next_tokens.reshape(-1)
+        # [batch_size * beam_size * tree_size, tree_size]
+        sampled_tokens = sample_top_p(probs, num_samples=self.tree_size)
+
+        # shuffle the tokens in the last dimension of each sample
+        shuffled_indices = [torch.randperm(sampled_tokens.shape[1]) for _ in range(sampled_tokens.shape[0])]
+        candidate_tokens = torch.stack(
+            [sampled_tokens[i][shuffled_indices[i]] for i in range(sampled_tokens.shape[0])], dim=0
+        ).to(sampled_tokens)
+        candidate_tokens = torch.reshape(candidate_tokens[:, 0], shape=[-1, self.beam_size * self.tree_size])
+
+        # check for duplication of the top-1 tokens
+        next_tokens = []
+        for i, top_tokens in enumerate(sampled_tokens[:, 0].reshape(-1, self.beam_size * self.tree_size)):
+            unique_elements, counts = torch.unique(top_tokens, return_counts=True)
+            duplicates = unique_elements[counts > 1]
+            duplicate_masks = (top_tokens.unsqueeze(-1) == duplicates.unsqueeze(0).expand(
+                top_tokens.shape[0], duplicates.shape[0]
+            )).any(dim=-1)
+            next_tokens.append(torch.where(duplicate_masks, candidate_tokens[i], top_tokens))
+        return torch.stack(next_tokens, dim=0).to(sampled_tokens).reshape(-1)
 
     def expand(self, logits: torch.Tensor, tree_size: int = None) -> torch.Tensor:
         tree_size = tree_size or self.tree_size
