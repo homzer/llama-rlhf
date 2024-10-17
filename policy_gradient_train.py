@@ -4,14 +4,13 @@ import os
 import fire
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
 
-from src.dataset import JsonDataset, ChatTemplateDataset
+from ppo_train import collect_actor_buffer, collect_verifier_buffer
+from src.dataset import JsonDataset
 from src.entities import Timer
-from src.modeling import get_parallel_model, get_parallel_verifier
+from src.modeling import get_parallel_model
 from src.parallel.utils import setup_model_parallel, set_barrier
-from src.ppo.buffer import CriticRolloutBuffer, RolloutBuffer, ActorRolloutBuffer
-from src.ppo.collector import CriticBufferCollector, ActorBufferCollector
+from src.ppo.buffer import RolloutBuffer
 from src.ppo.trainer import ParallelPolicyGradientTrainerForCausalLM
 from src.utils import masked_mean, json_load
 
@@ -22,6 +21,57 @@ def re_scoring_eos_rewards(buffer: RolloutBuffer) -> RolloutBuffer:
         buffer.rewards[i][np.nonzero(action_mask)[0][-1]] = np.mean(buffer.rewards[i][action_mask])
 
     return buffer
+
+
+def train_policy_gradient(
+        rollout_buffer: RolloutBuffer,
+        policy_ckpt_dir: str,
+        policy_model_type: str,
+        policy_config_file: str,
+        policy_tokenizer_file: str,
+        max_seq_len: int,
+        lora_rank: int,
+        dtype: str,
+        lora_dtype: str,
+        lr: float,
+        epoch: int,
+        inner_epochs: int,
+        save_dir: str,
+        max_batch_size: int,
+):
+    policy, policy_tokenizer = get_parallel_model(
+        model_type=policy_model_type,
+        config_file=policy_config_file,
+        max_seq_len=max_seq_len,
+        tokenizer_file=policy_tokenizer_file,
+        lora_rank=lora_rank,
+        dtype=dtype,
+        lora_dtype=lora_dtype
+    )
+    optimizer = torch.optim.Adam(policy.parameters(), lr=lr)
+    trainer = ParallelPolicyGradientTrainerForCausalLM(policy, optimizer)
+    trainer.load_model(policy_ckpt_dir) if (
+            epoch == 0
+    ) else trainer.load(os.path.join(save_dir, f"epoch-{epoch}"))
+    print('Policy training ...')
+    timer = Timer(total=(len(rollout_buffer) // max_batch_size) * inner_epochs, episode=100)
+    for inner_epoch in range(inner_epochs):
+        for data in rollout_buffer.get(max_batch_size):
+            timer.step()
+            trainer_outputs = trainer.forward(data)
+            if trainer.step % 100 == 0:
+                print(f'--------- STEP {trainer.step} OF {timer.total} ---------')
+                print('Loss: ', trainer_outputs.loss)
+                print('Rewards: ', trainer_outputs.rewards)
+    trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))
+
+    policy.cpu()
+    del policy
+    del optimizer
+    del trainer
+    torch.cuda.empty_cache()
+    gc.collect()
+    set_barrier()
 
 
 def run(
@@ -64,62 +114,30 @@ def run(
         print(f"Epoch - {epoch} of {epochs}")
         dataset = JsonDataset(f=datalist[epoch * chunk_size: (epoch + 1) * chunk_size])
         # Collecting policy buffer
-        policy, policy_tokenizer = get_parallel_model(
-            model_type=policy_model_type,
-            config_file=policy_config_file,
+        policy_rollout_buffer = collect_actor_buffer(
+            actor_model_type=policy_model_type,
+            actor_config_file=policy_config_file,
             max_seq_len=max_seq_len,
-            tokenizer_file=policy_tokenizer_file,
-            lora_rank=-1,
-            dtype=dtype
+            actor_tokenizer_file=policy_tokenizer_file,
+            dtype=dtype,
+            actor_ckpt_dir=policy_ckpt_dir,
+            epoch=epoch,
+            actor_save_dir=save_dir,
+            use_chat_template=use_chat_template,
+            dataset=dataset,
+            max_generate_batch_size=max_generate_batch_size
         )
-        policy.load(policy_ckpt_dir if epoch == 0 else os.path.join(save_dir, f"epoch-{epoch}"))
-        policy_buffer_collector = ActorBufferCollector(policy, policy_tokenizer, max_seq_len, temperature=1.2)
-        policy_rollout_buffer = ActorRolloutBuffer()
-        print('Policy buffer collecting ...')
-        if use_chat_template:
-            dataset = ChatTemplateDataset(dataset, policy_tokenizer)
-        dataloader = DataLoader(dataset, batch_size=max_generate_batch_size)
-        timer = Timer(len(dataloader))
-        for data in dataloader:
-            timer.step()
-            policy_rollout_buffer.extend(policy_buffer_collector.forward(data['instruction']))
-            print(data['instruction'][-1])
-            print(policy_rollout_buffer.responses[-1])
 
-        policy.cpu()
-        del policy
-        del policy_buffer_collector
-        torch.cuda.empty_cache()
-        gc.collect()
-        set_barrier()
-
-        verifier, verifier_tokenizer = get_parallel_verifier(
-            model_type=verifier_model_type,
-            config_file=verifier_config_file,
+        verifier_rollout_buffer = collect_verifier_buffer(
+            verifier_model_type=verifier_model_type,
+            verifier_config_file=verifier_config_file,
             max_seq_len=max_seq_len,
-            tokenizer_file=verifier_tokenizer_file,
-            lora_rank=-1,
-            dtype=dtype
+            verifier_tokenizer_file=verifier_tokenizer_file,
+            dtype=dtype,
+            verifier_ckpt_dir=verifier_ckpt_dir,
+            actor_rollout_buffer=policy_rollout_buffer,
+            max_forward_batch_size=max_forward_batch_size
         )
-        verifier.load(verifier_ckpt_dir)
-        verifier_buffer_collector = CriticBufferCollector(verifier, verifier_tokenizer, max_seq_len)
-        verifier_rollout_buffer = CriticRolloutBuffer()
-        print('Reward buffer collecting ...')
-        timer = Timer(total=len(policy_rollout_buffer) // max_forward_batch_size, episode=10)
-        for data in policy_rollout_buffer.get(max_forward_batch_size):
-            timer.step()
-            verifier_rollout_buffer.extend(
-                verifier_buffer_collector.forward(
-                    data.instructions, data.actions, data.action_masks
-                )
-            )
-
-        verifier.cpu()
-        del verifier
-        del verifier_buffer_collector
-        torch.cuda.empty_cache()
-        gc.collect()
-        set_barrier()
 
         print("Average Rewards: ", masked_mean(verifier_rollout_buffer.scores, policy_rollout_buffer.action_masks))
 
@@ -134,31 +152,22 @@ def run(
         )
         rollout_buffer = re_scoring_eos_rewards(rollout_buffer)
 
-        policy, policy_tokenizer = get_parallel_model(
-            model_type=policy_model_type,
-            config_file=policy_config_file,
+        train_policy_gradient(
+            rollout_buffer=rollout_buffer,
+            policy_ckpt_dir=policy_ckpt_dir,
+            policy_model_type=policy_model_type,
+            policy_config_file=policy_config_file,
+            policy_tokenizer_file=policy_tokenizer_file,
             max_seq_len=max_seq_len,
-            tokenizer_file=policy_tokenizer_file,
             lora_rank=lora_rank,
             dtype=dtype,
-            lora_dtype=lora_dtype
+            lora_dtype=lora_dtype,
+            lr=lr,
+            epoch=epoch,
+            inner_epochs=inner_epochs,
+            save_dir=save_dir,
+            max_batch_size=max_batch_size
         )
-        optimizer = torch.optim.Adam(policy.parameters(), lr=lr)
-        trainer = ParallelPolicyGradientTrainerForCausalLM(policy, optimizer)
-        trainer.load_model(policy_ckpt_dir) if (
-                epoch == 0
-        ) else trainer.load(os.path.join(save_dir, f"epoch-{epoch}"))
-        print('Policy training ...')
-        timer = Timer(total=(len(rollout_buffer) // max_batch_size) * inner_epochs, episode=100)
-        for inner_epoch in range(inner_epochs):
-            for data in rollout_buffer.get(max_batch_size):
-                timer.step()
-                trainer_outputs = trainer.forward(data)
-                if trainer.step % 100 == 0:
-                    print(f'--------- STEP {trainer.step} OF {timer.total} ---------')
-                    print('Loss: ', trainer_outputs.loss)
-                    print('Rewards: ', trainer_outputs.rewards)
-        trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))
 
         torch.save({
             'obs': rollout_buffer.obs,
@@ -169,14 +178,6 @@ def run(
             'advantages': rollout_buffer.advantages,
             'returns': rollout_buffer.returns
         }, os.path.join(save_dir, f"epoch-{epoch + 1}", f"buffer.bin"))
-
-        policy.cpu()
-        del policy
-        del optimizer
-        del trainer
-        torch.cuda.empty_cache()
-        gc.collect()
-        set_barrier()
 
 
 if __name__ == '__main__':
