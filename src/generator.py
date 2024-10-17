@@ -137,10 +137,10 @@ class DiversityGeneratorForCausalLM(GeneratorForCausalLM):
             model: Union[ModelForCausalLM, ParallelModelForCausalLM],
             tokenizer: Tokenizer,
             max_seq_len: int,
-            num_samples: int = 1,
+            num_samples_per_prompt: int = 1,
             temperature: float = 0.0,
             top_p: float = 1.0,
-            epsilon: float = 0.25
+            diverse_prob: float = 0.25
     ):
         super().__init__(
             model=model,
@@ -149,8 +149,8 @@ class DiversityGeneratorForCausalLM(GeneratorForCausalLM):
             temperature=temperature,
             top_p=top_p
         )
-        self.num_samples = num_samples
-        self.epsilon = epsilon
+        self.num_samples_per_prompt = num_samples_per_prompt
+        self.diverse_prob = diverse_prob
         self.recorded_tokens = None
 
     def sampling(self, logits: torch.Tensor, **kwargs) -> torch.Tensor:
@@ -160,7 +160,7 @@ class DiversityGeneratorForCausalLM(GeneratorForCausalLM):
         logits_masks = torch.full_like(logits, fill_value=False, dtype=torch.bool)  # [b, v]
         for i in range(tokens.shape[0]):
             for recorded_token in self.recorded_tokens[i]:
-                if random.random() < self.epsilon and (recorded_token[: cur_pos] == tokens[i][: cur_pos]).all():
+                if random.random() < self.diverse_prob and (recorded_token[: cur_pos] == tokens[i][: cur_pos]).all():
                     logits_masks[i][recorded_token[cur_pos]] = True
         logits = logits - logits_masks * 10000.
         next_tokens = sampling_strategy(logits, self.temperature, self.top_p)
@@ -171,7 +171,7 @@ class DiversityGeneratorForCausalLM(GeneratorForCausalLM):
         prep_outputs = self.prepare_for_generation(instructions)
         responses = [[] for _ in range(len(instructions))]
         self.recorded_tokens = [[] for _ in range(len(instructions))]
-        for _ in range(self.num_samples):
+        for _ in range(self.num_samples_per_prompt):
             forward_outputs = self.model_forward(
                 prep_outputs.tokens, prep_outputs.input_masks, prep_outputs.start_pos
             )

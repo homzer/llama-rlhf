@@ -1,4 +1,5 @@
 import collections
+import random
 from typing import List, Union
 
 import numpy as np
@@ -96,6 +97,91 @@ class ActorGeneratorForCausalLM(GeneratorForCausalLM):
             action_logits=forward_outputs.tokens_logits,
             action_masks=output_masks,
             action_logprobs=forward_outputs.tokens_logprobs
+        )
+
+
+class DiversityActorGeneratorForCausalLM(ActorGeneratorForCausalLM):
+    def __init__(
+            self,
+            model: Union[ModelForCausalLM, ParallelModelForCausalLM],
+            tokenizer: Tokenizer,
+            max_seq_len: int,
+            temperature: float = 1.0,
+            top_p: float = 1.0,
+            num_samples_per_prompt: int = 1,
+            diverse_prob: float = 0.1
+    ):
+        super().__init__(
+            model=model,
+            tokenizer=tokenizer,
+            max_seq_len=max_seq_len,
+            temperature=temperature,
+            top_p=top_p
+        )
+        self.num_samples_per_prompt = num_samples_per_prompt
+        self.diverse_prob = diverse_prob
+        self.recorded_tokens = None
+
+    # TODO: Copied from scr.generator.DiversityGeneratorForCausalLM().sampling()
+    def sampling(self, logits: torch.Tensor, **kwargs) -> torch.Tensor:
+        # check for recorded_tokens
+        tokens, cur_pos = kwargs.get("tokens"), kwargs.get("cur_pos")
+        logits = logits[:, -1, :]  # [b, v]
+        logits_masks = torch.full_like(logits, fill_value=False, dtype=torch.bool)  # [b, v]
+        for i in range(tokens.shape[0]):
+            for recorded_token in self.recorded_tokens[i]:
+                if random.random() < self.diverse_prob and (recorded_token[: cur_pos] == tokens[i][: cur_pos]).all():
+                    logits_masks[i][recorded_token[cur_pos]] = True
+        logits = logits - logits_masks * 10000.
+        next_tokens = sampling_strategy(logits, self.temperature, self.top_p)
+        return next_tokens
+
+    @staticmethod
+    def stack_and_flatten(x: Union[List[List[torch.Tensor]], List[List[str]]]):
+        if isinstance(x[0][0], torch.Tensor):
+            return torch.stack([torch.stack(a, dim=0) for a in x], dim=0)
+        elif isinstance(x[0][0], str):
+            return [item for sublist in x for item in sublist]
+        else:
+            raise TypeError(type(x[0][0]))
+
+    def forward(self, instructions: Union[List[str], List[List[int]]]) -> ActionGeneratorOutputs:
+        self.model.eval()
+        prep_outputs = self.prepare_for_generation(instructions)
+        responses = [[] for _ in range(len(instructions))]
+        obs = [[] for _ in range(len(instructions))]
+        actions = [[] for _ in range(len(instructions))]
+        action_logits = [[] for _ in range(len(instructions))]
+        action_masks = [[] for _ in range(len(instructions))]
+        action_logprobs = [[] for _ in range(len(instructions))]
+
+        self.recorded_tokens = [[] for _ in range(len(instructions))]
+        for _ in range(self.num_samples_per_prompt):
+            forward_outputs = self.model_forward(
+                prep_outputs.tokens, prep_outputs.input_masks, prep_outputs.start_pos
+            )
+            for i, recorded_token in enumerate(self.recorded_tokens):
+                recorded_token.append(forward_outputs.tokens[i])
+            output_masks = self.get_output_masks(forward_outputs.tokens, prep_outputs.input_masks)
+            output_tokens = torch.zeros_like(forward_outputs.tokens)
+            output_tokens[:, :-1] = forward_outputs.tokens[:, 1:]
+            for i in range(len(instructions)):
+                obs[i].append(forward_outputs.tokens[i])
+                actions[i].append(output_tokens[i])
+                action_logits[i].append(forward_outputs.tokens_logits[i])
+                action_masks[i].append(output_masks[i])
+                action_logprobs[i].append(forward_outputs.tokens_logprobs[i])
+            for i, response in enumerate(self.decode_response(forward_outputs.tokens, output_masks)):
+                responses[i].append(response)
+        self.recorded_tokens = None
+
+        return ActionGeneratorOutputs(
+            responses=self.stack_and_flatten(responses),
+            obs=self.stack_and_flatten(obs),
+            actions=self.stack_and_flatten(actions),
+            action_logits=self.stack_and_flatten(action_logits),
+            action_masks=self.stack_and_flatten(action_masks),
+            action_logprobs=self.stack_and_flatten(action_logprobs)
         )
 
 

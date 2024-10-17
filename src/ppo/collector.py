@@ -13,7 +13,9 @@ from src.ppo.buffer import (
 from src.ppo.generator import (
     CriticGeneratorForCausalLM,
     ActorGeneratorForCausalLM,
-    LogitsGeneratorForCausalLM)
+    LogitsGeneratorForCausalLM,
+    DiversityActorGeneratorForCausalLM
+)
 from src.tokenizers.tokenizer import Tokenizer
 
 
@@ -41,8 +43,8 @@ class ActorBufferCollector:
             actor: Union[ModelForCausalLM, ParallelModelForCausalLM],
             tokenizer: Tokenizer,
             max_seq_len: int,
-            temperature: float = 0.0,
-            top_p: float = 0.95
+            temperature: float = 1.0,
+            top_p: float = 1.0
 
     ):
         self.generator = ActorGeneratorForCausalLM(
@@ -57,7 +59,57 @@ class ActorBufferCollector:
         action_masks = generator_outputs.action_masks.float().cpu().numpy()
         action_logprobs = generator_outputs.action_logprobs.float().cpu().numpy()
         responses = generator_outputs.responses
-        return ActorRolloutBuffer(instructions, obs, actions, action_logits, action_masks, action_logprobs, responses)
+        return ActorRolloutBuffer(
+            instructions=instructions,
+            obs=obs,
+            actions=actions,
+            action_logits=action_logits,
+            action_masks=action_masks,
+            action_logprobs=action_logprobs,
+            responses=responses
+        )
+
+
+class DiversityActorBufferCollector:
+    def __init__(
+            self,
+            actor: Union[ModelForCausalLM, ParallelModelForCausalLM],
+            tokenizer: Tokenizer,
+            max_seq_len: int,
+            temperature: float = 1.0,
+            top_p: float = 1.0,
+            num_samples_per_prompt: int = 1,
+            diverse_prob: float = 0.1
+    ):
+        self.generator = DiversityActorGeneratorForCausalLM(
+            model=actor,
+            tokenizer=tokenizer,
+            max_seq_len=max_seq_len,
+            temperature=temperature,
+            top_p=top_p,
+            num_samples_per_prompt=num_samples_per_prompt,
+            diverse_prob=diverse_prob
+        )
+        self.num_samples_per_prompt = num_samples_per_prompt
+
+    def forward(self, instructions: List[str]):
+        generator_outputs = self.generator.forward(instructions)
+        obs = generator_outputs.obs.float().cpu().numpy()
+        actions = generator_outputs.actions.float().cpu().numpy()
+        action_logits = generator_outputs.action_logits.float().cpu().numpy()
+        action_masks = generator_outputs.action_masks.float().cpu().numpy()
+        action_logprobs = generator_outputs.action_logprobs.float().cpu().numpy()
+        responses = generator_outputs.responses
+        instructions = [instruction for instruction in instructions for _ in range(self.num_samples_per_prompt)]
+        return ActorRolloutBuffer(
+            instructions=instructions,
+            obs=obs,
+            actions=actions,
+            action_logits=action_logits,
+            action_masks=action_masks,
+            action_logprobs=action_logprobs,
+            responses=responses
+        )
 
 
 class CriticBufferCollector:
