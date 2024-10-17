@@ -17,7 +17,9 @@ from src.models import (
     Baichuan,
     BaichuanVerifier,
     LoraBaichuanVerifier,
-    LoraBaichuan
+    LoraBaichuan,
+    Llama3Verifier,
+    LoraLlama3Verifier
 )
 from src.models.modeling_args import (
     LlamaArgs,
@@ -81,6 +83,8 @@ MODELS = {
 VERIFIERS = {
     "llama": LlamaVerifier,
     "lora-llama": LoraLlamaVerifier,
+    "llama3": Llama3Verifier,
+    "lora-llama3": LoraLlama3Verifier,
     "qwen": QwenVerifier,
     "lora-qwen": LoraQwenVerifier,
     "baichuan": BaichuanVerifier,

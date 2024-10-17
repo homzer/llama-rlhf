@@ -9,15 +9,14 @@ from fairscale.nn.model_parallel.layers import (
     ColumnParallelLinear,
     ParallelEmbedding
 )
-from torch.nn.modules.module import T
 
 from src.checkpoint import CheckpointForLlama
 from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs, AttentionForCausalLM, \
     ParallelVerifier, VerifierOutputs
 from src.models.modeling_acts import RMSNorm, Clamp, LogitsNormalize
 from src.models.modeling_args import LlamaArgs, LoraLlamaArgs
-from src.utils import apply_rotary_emb, precompute_freqs_cis, apply_lora
 from src.parallel.utils import set_model_parallel_barrier
+from src.utils import apply_rotary_emb, precompute_freqs_cis, apply_lora
 
 
 class LlamaAttention(AttentionForCausalLM):
