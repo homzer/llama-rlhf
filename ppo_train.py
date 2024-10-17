@@ -329,8 +329,8 @@ def run(
         max_forward_batch_size: int = 24,
         max_seq_len: int = 1024,
         chunk_size: int = None,
-        inner_epochs: int = 3,
-        lr: float = 1e-5,
+        inner_epochs: int = 1,
+        lr: float = 1e-6,
         dtype: str = "bfloat16",
         begin_epoch: int = 0,
         kl_coef: float = 0.1,
@@ -338,8 +338,6 @@ def run(
         use_last_token_reward: bool = False
 ):
     setup_model_parallel()
-    os.makedirs(actor_save_dir, exist_ok=True)
-    os.makedirs(critic_save_dir, exist_ok=True)
     actor_config_file = actor_config_file or actor_ckpt_dir
     actor_tokenizer_file = actor_tokenizer_file or actor_ckpt_dir
     critic_config_file = critic_config_file or critic_ckpt_dir

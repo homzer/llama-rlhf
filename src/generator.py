@@ -131,7 +131,7 @@ class GeneratorForCausalLM:
         return responses
 
 
-class ForcedDiversityGeneratorForCausalLM(GeneratorForCausalLM):
+class DiversityGeneratorForCausalLM(GeneratorForCausalLM):
     def __init__(
             self,
             model: Union[ModelForCausalLM, ParallelModelForCausalLM],

@@ -1,105 +1,20 @@
 from typing import List, Union
 
 import numpy as np
-import torch
 
 from src.dataset import JsonDataset
 from src.evaluator import GSM8KEvaluator
 from src.models.modeling import ModelForCausalLM, ParallelModelForCausalLM, Verifier, ParallelVerifier
 from src.ppo.buffer import (
-    PolicyRolloutBuffer,
     CriticRolloutBuffer,
     ActorRolloutBuffer,
-    SolverRolloutBuffer,
     LogitsRolloutBuffer,
     OutputRolloutBuffer)
 from src.ppo.generator import (
     CriticGeneratorForCausalLM,
     ActorGeneratorForCausalLM,
-    SolverGeneratorForCausalLM,
     LogitsGeneratorForCausalLM)
-from src.ppo.policy import AbstractPolicyForCausalLM, AbstractParallelPolicyForCausalLM
 from src.tokenizers.tokenizer import Tokenizer
-
-
-# class BufferCollector:
-#     def __init__(
-#             self,
-#             generator: CriticGeneratorForCausalLM,
-#             policy: Union[AbstractPolicyForCausalLM, AbstractParallelPolicyForCausalLM],
-#             buffer_size: int,
-#             max_seq_len: int,
-#     ):
-#         self.generator = generator
-#         self.policy = policy
-#         self.max_seq_len = max_seq_len
-#         self.buffer_size = buffer_size
-#
-#     def forward(self, instructions: List[str]) -> RolloutBuffer:
-#         bzs = len(instructions)
-#         with torch.no_grad():
-#             policy_outputs = self.policy.forward(instructions)
-#         obs = policy_outputs.obs.float().cpu().numpy()
-#         actions = policy_outputs.actions.float().cpu().numpy()
-#         values = policy_outputs.values.float().cpu().numpy()
-#         action_logits = policy_outputs.action_logits.float().cpu().numpy()
-#         action_masks = policy_outputs.action_masks.float().cpu().numpy()
-#         action_logprobs = policy_outputs.action_logprobs.float().cpu().numpy()
-#
-#         rewards = np.zeros((bzs, self.max_seq_len), dtype=np.float32)
-#         action_rewards = self.generator.forward(instructions, actions, action_masks)
-#         for i in range(bzs):
-#             rewards[i, :][action_masks[i]] = action_rewards[i]
-#
-#         rollout_buffer = RolloutBuffer(
-#             obs=obs,
-#             actions=actions,
-#             rewards=rewards,
-#             values=values,
-#             action_logits=action_logits,
-#             action_masks=action_masks,
-#             action_logprobs=action_logprobs
-#         )
-#
-#         rollout_buffer.compute_returns_and_advantage()
-#
-#         return rollout_buffer
-
-
-class PolicyBufferCollector:
-    def __init__(self, policy: Union[AbstractPolicyForCausalLM, AbstractParallelPolicyForCausalLM]):
-        self.policy = policy
-
-    def forward(self, instructions: List[str]) -> PolicyRolloutBuffer:
-        with torch.no_grad():
-            policy_outputs = self.policy.forward(instructions)
-        obs = policy_outputs.obs.float().cpu().numpy()
-        actions = policy_outputs.actions.float().cpu().numpy()
-        values = policy_outputs.values.float().cpu().numpy()
-        action_logits = policy_outputs.action_logits.float().cpu().numpy()
-        action_masks = policy_outputs.action_masks.float().cpu().numpy()
-
-        return PolicyRolloutBuffer(instructions, obs, actions, values, action_logits, action_masks)
-
-
-class SolverBufferCollector:
-    def __init__(
-            self,
-            solver: Union[ModelForCausalLM, ParallelModelForCausalLM],
-            tokenizer: Tokenizer,
-            max_seq_len: int,
-            temperature: float = 0.0,
-            top_p: float = 0.95
-    ):
-        self.generator = SolverGeneratorForCausalLM(
-            model=solver, tokenizer=tokenizer, max_seq_len=max_seq_len, temperature=temperature, top_p=top_p
-        )
-
-    def forward(self, instructions: List[str]) -> SolverRolloutBuffer:
-        outputs = self.generator.forward(instructions)
-        actions = outputs.actions.float().cpu().numpy()
-        action_masks = outputs.action_masks.float().cpu().numpy()
-        return SolverRolloutBuffer(instructions, actions, action_masks)
 
 
 class OutputBufferCollector:
@@ -111,13 +26,13 @@ class OutputBufferCollector:
             temperature: float = 0.0,
             top_p: float = 0.95
     ):
-        self.generator = SolverGeneratorForCausalLM(
+        self.generator = ActorGeneratorForCausalLM(
             model=solver, tokenizer=tokenizer, max_seq_len=max_seq_len, temperature=temperature, top_p=top_p
         )
 
     def forward(self, instructions: List[str]) -> OutputRolloutBuffer:
         outputs = self.generator.forward(instructions)
-        return OutputRolloutBuffer(instructions, outputs.outputs)
+        return OutputRolloutBuffer(instructions, outputs.responses)
 
 
 class ActorBufferCollector:
@@ -141,7 +56,7 @@ class ActorBufferCollector:
         action_logits = generator_outputs.action_logits.float().cpu().numpy()
         action_masks = generator_outputs.action_masks.float().cpu().numpy()
         action_logprobs = generator_outputs.action_logprobs.float().cpu().numpy()
-        responses = generator_outputs.outputs
+        responses = generator_outputs.responses
         return ActorRolloutBuffer(instructions, obs, actions, action_logits, action_masks, action_logprobs, responses)
 
 
