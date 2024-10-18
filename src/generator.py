@@ -140,7 +140,7 @@ class DiversityGeneratorForCausalLM(GeneratorForCausalLM):
             num_samples_per_prompt: int = 1,
             temperature: float = 0.0,
             top_p: float = 1.0,
-            diverse_prob: float = 0.25
+            diverse_prob: float = None
     ):
         super().__init__(
             model=model,
@@ -157,12 +157,16 @@ class DiversityGeneratorForCausalLM(GeneratorForCausalLM):
         # check for recorded_tokens
         tokens, cur_pos = kwargs.get("tokens"), kwargs.get("cur_pos")
         logits = logits[:, -1, :]  # [b, v]
-        logits_masks = torch.full_like(logits, fill_value=False, dtype=torch.bool)  # [b, v]
-        for i in range(tokens.shape[0]):
-            for recorded_token in self.recorded_tokens[i]:
-                if random.random() < self.diverse_prob and (recorded_token[: cur_pos] == tokens[i][: cur_pos]).all():
-                    logits_masks[i][recorded_token[cur_pos]] = True
-        logits = logits - logits_masks * 10000.
+        if self.diverse_prob is not None:
+            logits_masks = torch.full_like(logits, fill_value=False, dtype=torch.bool)  # [b, v]
+            for i in range(tokens.shape[0]):
+                for recorded_token in self.recorded_tokens[i]:
+                    if (
+                            random.random() < self.diverse_prob and
+                            (recorded_token[: cur_pos] == tokens[i][: cur_pos]).all()
+                    ):
+                        logits_masks[i][recorded_token[cur_pos]] = True
+            logits = logits - logits_masks * 10000.
         next_tokens = sampling_strategy(logits, self.temperature, self.top_p)
         return next_tokens
 
@@ -259,13 +263,16 @@ class ValueAugmentedSamplingGeneratorForCausalLM(GeneratorForCausalLM):
             beam_size: int = 1,
             span_size: int = 1,
             tree_size: int = 1,
-            temperature: float = 1.0
+            temperature: float = 1.0,
+            top_p: float = 1.0,
+            force_diversity: bool = False
     ):
         super().__init__(
             model=policy,
             tokenizer=tokenizer,
             max_seq_len=max_seq_len,
-            temperature=temperature
+            temperature=temperature,
+            top_p=top_p
         )
         self.policy = policy
         self.policy_device = policy.device()
@@ -276,6 +283,7 @@ class ValueAugmentedSamplingGeneratorForCausalLM(GeneratorForCausalLM):
         self.beam_size = beam_size
         self.span_size = span_size
         self.tree_size = tree_size
+        self.force_diversity = force_diversity
 
     def move_policy_to_cpu(self):
         self.policy.cpu()
@@ -284,15 +292,9 @@ class ValueAugmentedSamplingGeneratorForCausalLM(GeneratorForCausalLM):
     def move_policy_to_gpu(self):
         self.policy.cuda(self.policy_device)
 
-    def simulate(self, logits: torch.Tensor) -> torch.Tensor:
-        """
-        :param logits: [batch_size * beam_size * tree_size, seq_len, vocab_size]
-        :return:
-        """
-        logits = logits[:, -1, :]
-        probs = torch.softmax(logits / self.temperature, dim=-1)
+    def force_diversity_sampling(self, probs: torch.Tensor) -> torch.Tensor:
         # [batch_size * beam_size * tree_size, tree_size]
-        sampled_tokens = sample_top_p(probs, num_samples=self.tree_size)
+        sampled_tokens = sample_top_p(probs, p=self.top_p, num_samples=self.tree_size)
 
         # shuffle the tokens in the last dimension of each sample
         shuffled_indices = [torch.randperm(sampled_tokens.shape[1]) for _ in range(sampled_tokens.shape[0])]
@@ -311,6 +313,20 @@ class ValueAugmentedSamplingGeneratorForCausalLM(GeneratorForCausalLM):
             )).any(dim=-1)
             next_tokens.append(torch.where(duplicate_masks, candidate_tokens[i], top_tokens))
         return torch.stack(next_tokens, dim=0).to(sampled_tokens).reshape(-1)
+
+    def simulate(self, logits: torch.Tensor) -> torch.Tensor:
+        """
+        :param logits: [batch_size * beam_size * tree_size, seq_len, vocab_size]
+        :return:
+        """
+        logits = logits[:, -1, :]
+        probs = torch.softmax(logits / self.temperature, dim=-1)
+        # [batch_size * beam_size * tree_size, 1]
+        if not self.force_diversity:
+            next_tokens = sample_top_p(probs, p=self.top_p)
+            return torch.reshape(next_tokens, shape=(-1,))
+        else:
+            return self.force_diversity_sampling(probs)
 
     def expand(self, logits: torch.Tensor, tree_size: int = None) -> torch.Tensor:
         tree_size = tree_size or self.tree_size

@@ -49,7 +49,6 @@ def main(
         max_forward_batch_size: int = 1,
         temperature: float = 1.0,
         top_p: float = 1.0,
-        diverse_prob: float = 0.1,
         dtype: str = "bfloat16",
         use_chat_template: bool = False,
         use_last_token_reward: bool = True,
@@ -77,7 +76,6 @@ def main(
         num_samples_per_prompt=num_samples_per_prompt,
         temperature=temperature,
         top_p=top_p,
-        diverse_prob=diverse_prob
     )
     dataset = JsonDataset(label_file)
     if use_chat_template:
