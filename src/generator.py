@@ -431,12 +431,17 @@ class ValueAugmentedSamplingGeneratorForCausalLM(GeneratorForCausalLM):
         select_output_masks = torch.stack(select_output_masks).to(output_masks)
         return Outputs(tokens=select_tokens, output_masks=select_output_masks)
 
-    def forward(self, instructions: Union[List[str], List[List[int]]]) -> List[str]:
+    def forward(self, instructions: Union[List[str], List[List[int]]]) -> (List[List[str]], List[List[float]]):
         prepare_outputs = self.prepare_for_generation(instructions)
         tokens = self.expand_tensor(prepare_outputs.tokens)
         input_masks = self.expand_tensor(prepare_outputs.input_masks)
         forward_outputs = self.model_forward(tokens, input_masks, prepare_outputs.start_pos)
         output_masks = self.get_output_masks(forward_outputs.tokens, input_masks)
-        select_outputs = self.select_best_tokens(forward_outputs.tokens, forward_outputs.scores, output_masks)
-        responses = self.decode_response(select_outputs.tokens, select_outputs.output_masks)
-        return responses
+        # select_outputs = self.select_best_tokens(forward_outputs.tokens, forward_outputs.scores, output_masks)
+        # responses = self.decode_response(select_outputs.tokens, select_outputs.output_masks)
+        responses = self.decode_response(forward_outputs.tokens, output_masks)
+        responses = [responses[i: i + self.beam_size * self.tree_size]
+                     for i in range(0, len(responses), self.beam_size * self.tree_size)]
+        scores = masked_mean(forward_outputs.scores, output_masks, dim=-1)
+        scores = torch.reshape(scores, shape=[-1, self.beam_size * self.tree_size]).tolist()
+        return responses, scores

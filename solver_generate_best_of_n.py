@@ -86,6 +86,7 @@ def main(
     for data in dataloader:
         timer.step()
         responses = generator.forward(data["instruction"])
+        print(data['instruction'][-1] + "\n" + responses[-1][0])
         for i, result in enumerate(convert_dataloader_data_to_list(data)):
             result["instruction"] = result.pop("origin_instruction")
             result["output"] = responses[i]
