@@ -54,22 +54,36 @@ class ChatTemplateDataset(Dataset):
             data["instruction"] = [{"role": "user", "content": data["instruction"]}]
         assert isinstance(data["instruction"], list)
         assert isinstance(data["instruction"][0], dict)
+        data["origin_instruction"] = data["instruction"]
         data["instruction"] = self.tokenizer.apply_chat_template(data["instruction"])
         return data
 
 
 class MultiOutputsDataset(JsonDataset):
-    def __init__(self, f, randomize: bool = True):
+    def __init__(self, f, randomize: bool = False, exhaustive: bool = True):
         super().__init__(f)
+        self.exhaustive = exhaustive
         self.randomize = randomize
+        self.num_responses_per_data = None
         if self.datalist:
             assert "output" in self.datalist[0].keys()
             assert type(self.datalist[0]['output']) is list
+            if self.exhaustive:
+                self.num_responses_per_data = len(self.datalist[0]["output"])
+                assert all(
+                    len(data["output"]) == self.num_responses_per_data for data in self.datalist
+                ), "all the number of responses in each data is expected to be equal."
+
+    def __len__(self):
+        return (len(self.datalist) * self.num_responses_per_data) if self.exhaustive else super().__len__()
 
     def __getitem__(self, i):
-        data = self.datalist[i].copy()
-        # TODO: remove random sampling
-        data['output'] = random.sample(data['output'], 1)[0] if self.randomize else data['output'][0]
+        if self.exhaustive:
+            data = self.datalist[i % len(self.datalist)].copy()
+            data["output"] = data["output"][i // len(self.datalist)]
+        else:
+            data = self.datalist[i].copy()
+            data['output'] = data['output'][0]
         return data
 
 
@@ -156,45 +170,6 @@ class PairwiseDataset(JsonDataset):
     def __getitem__(self, i):
         data = self.datalist[i].copy()
         return data
-
-
-# class PairwiseDataset(JsonDataset):
-#     def __init__(self, f, randomize: bool = False):
-#         super().__init__(f)
-#         assert "chosen" in self.datalist[0].keys()
-#         assert type(self.datalist[0]['chosen']) is list
-#         assert "rejected" in self.datalist[0].keys()
-#         assert type(self.datalist[0]['rejected']) is list
-#         self.randomize = randomize
-#
-#     def __getitem__(self, i):
-#         data = self.datalist[i].copy()
-#         # at least one ground truth answer
-#         assert len(data['chosen']) != 0
-#         data['chosen'] = random.sample(data['chosen'], 1)[0]
-#
-#         if len(data['rejected']) == 0:  # if no rejected sample, randomly sample one.
-#             rejection = random.sample(self.datalist, 1)[0]
-#             while len(rejection['rejected']) == 0:
-#                 rejection = random.sample(self.datalist, 1)[0]
-#             data['rejected'].extend(rejection['rejected'])
-#
-#         # 10% the time using random sampled rejection or chosen response
-#         if self.randomize and random.randint(1, 10) == 1:
-#             if random.randint(1, 2) == 1:
-#                 rejection = random.sample(self.datalist, 1)[0]
-#                 while len(rejection['rejected']) == 0:
-#                     rejection = random.sample(self.datalist, 1)[0]
-#                 data['rejected'] = random.sample(rejection['rejected'], 1)[0]
-#             else:
-#                 j = random.randint(0, len(self.datalist) - 1)
-#                 while j == i:
-#                     j = random.randint(0, len(self.datalist) - 1)
-#                 data['rejected'] = random.sample(self.datalist[j]['chosen'], 1)[0]
-#         else:  # 90% the time using origin rejection
-#             data['rejected'] = random.sample(data['rejected'], 1)[0]
-#
-#         return data
 
 
 class ReviseDataset(JsonDataset):

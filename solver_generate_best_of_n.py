@@ -1,19 +1,34 @@
 import gc
-import json
 import os
 
 import fire
 import torch.cuda
 from torch.utils.data import DataLoader
 
-from src.parallel.dataloader import ParallelDataLoader
-from src.parallel.utils import setup_model_parallel, set_barrier
-from src.parallel.datawriter import ParallelDataWriter
-from src.dataset import JsonDataset, ChatTemplateDataset
+from src.dataset import JsonDataset, ChatTemplateDataset, MultiOutputsDataset
 from src.entities import Timer
 from src.generator import DiversityGeneratorForCausalLM, GeneratorForVerifier
 from src.modeling import get_parallel_model, get_parallel_verifier
-from src.utils import convert_dataloader_data_to_list
+from src.parallel.utils import setup_model_parallel, set_barrier
+from src.utils import convert_dataloader_data_to_list, json_dump
+
+
+def format_multi_outputs_datalist_with_scores(datalist: list, num_samples_per_prompt: int) -> list:
+    results = []
+    assert len(datalist) % num_samples_per_prompt == 0
+    origin_size = len(datalist) // num_samples_per_prompt
+    for i in range(origin_size):
+        results.append(datalist[i].copy())
+        results[i]["output"] = []
+        results[i]["score"] = []
+
+    for i, data in enumerate(datalist):
+        i = i % origin_size
+        assert results[i]["instruction"] == data["instruction"]
+        results[i]["output"].append(data["output"])
+        results[i]["score"].append(data["score"])
+
+    return results
 
 
 def main(
@@ -74,6 +89,7 @@ def main(
         timer.step()
         responses = generator.forward(data["instruction"])
         for i, result in enumerate(convert_dataloader_data_to_list(data)):
+            result["instruction"] = result.pop("origin_instruction")
             result["output"] = responses[i]
             results.append(result)
 
@@ -99,5 +115,22 @@ def main(
         max_seq_len=max_seq_len,
         reduce="last" if use_last_token_reward else "mean"
     )
+    dataset = MultiOutputsDataset(results)
+    if use_chat_template:
+        dataset = ChatTemplateDataset(dataset, tokenizer=verifier_tokenizer)
+    dataloader = DataLoader(dataset, batch_size=max_forward_batch_size)
+    results = []
+    timer = Timer(len(dataloader), episode=10)
+    for data in dataloader:
+        timer.step()
+        scores = generator.forward(data["instruction"], data["output"]).scores
+        for i, result in enumerate(convert_dataloader_data_to_list(data)):
+            result["score"] = scores[i]
+            results.append(result)
+
+    results = format_multi_outputs_datalist_with_scores(results, num_samples_per_prompt)
+    json_dump(results, os.path.join(log_dir, "results.jsonl"))
 
 
+if __name__ == '__main__':
+    fire.Fire(main)
