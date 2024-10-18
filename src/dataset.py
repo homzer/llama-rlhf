@@ -51,10 +51,10 @@ class ChatTemplateDataset(Dataset):
         data = self.dataset.__getitem__(i)
         assert "instruction" in data
         if isinstance(data["instruction"], str):
+            data["origin_instruction"] = data["instruction"]
             data["instruction"] = [{"role": "user", "content": data["instruction"]}]
         assert isinstance(data["instruction"], list)
         assert isinstance(data["instruction"][0], dict)
-        data["origin_instruction"] = data["instruction"]
         data["instruction"] = self.tokenizer.apply_chat_template(data["instruction"])
         return data
 
