@@ -333,6 +333,7 @@ class ValueAugmentedSamplingGeneratorForCausalLM(GeneratorForCausalLM):
             scores = self.critic.forward(tokens).scores  # [batch_size * beam_size * tree_size, seq_len]
         self.move_policy_to_gpu()
         set_model_parallel_barrier()
+        select_scores = scores
         scores = scores[:, -self.span_size:]
         scores = torch.mean(scores, dim=-1)  # [b]
         scores = torch.where(unfinished_sequences, scores, float("-inf"))  # ignore finished sequences
@@ -349,7 +350,9 @@ class ValueAugmentedSamplingGeneratorForCausalLM(GeneratorForCausalLM):
         # pruning
         self.policy.rearrange_kv_cache(scores_indices)
         select_tokens = tokens[scores_indices]  # [batch_size * beam_size * tree_size, seq_len]
-        return select_tokens
+        select_scores = select_scores[scores_indices]
+        select_scores[:, :-1] = select_scores[:, 1:]  # shift left
+        return select_tokens, select_scores
 
     def expand_tensor(self, x: torch.Tensor) -> torch.Tensor:
         """ expand the dimension of `batch_size` into `batch_size * beam_size * tree_size` """
@@ -364,6 +367,7 @@ class ValueAugmentedSamplingGeneratorForCausalLM(GeneratorForCausalLM):
         unfinished_sequences = torch.ones(
             size=[tokens.shape[0]], dtype=torch.long, device=self.model.device()
         )
+        scores = None
         prev_pos = 0
         span_step = 0
         for cur_pos in range(start_pos, self.max_seq_len):
@@ -386,14 +390,29 @@ class ValueAugmentedSamplingGeneratorForCausalLM(GeneratorForCausalLM):
                 break
 
             if span_step == self.span_size - 1:  # verification
-                tokens = self.verify(tokens, unfinished_sequences)
+                tokens, scores = self.verify(tokens, unfinished_sequences)
 
             span_step = (span_step + 1) % self.span_size
             prev_pos = cur_pos
 
         self.policy.flush()
-        Outputs = collections.namedtuple("Outputs", ['tokens'])
-        return Outputs(tokens=tokens)
+        Outputs = collections.namedtuple("Outputs", ['tokens', 'scores'])
+        return Outputs(tokens=tokens, scores=scores)
+
+    def select_best_tokens(self, tokens: torch.Tensor, scores: torch.Tensor, output_masks: torch.Tensor):
+        scores = masked_mean(scores, output_masks, dim=-1)  # [batch_size * beam_size * tree_size]
+        scores = torch.reshape(scores, [-1, self.beam_size * self.tree_size])
+        tokens = torch.reshape(tokens, [-1, self.beam_size * self.tree_size, self.max_seq_len])
+        scores_values, scores_indices = torch.topk(scores, k=1)
+        select_tokens = []
+        select_output_masks = []
+        for i, t, m in zip(scores_indices, tokens, output_masks):
+            select_tokens.append(t[i.item()])
+            select_output_masks.append(m[i.item()])
+        Outputs = collections.namedtuple("Output", ["tokens", "output_masks"])
+        select_tokens = torch.stack(select_tokens).to(tokens)
+        select_output_masks = torch.stack(select_output_masks).to(output_masks)
+        return Outputs(tokens=select_tokens, output_masks=select_output_masks)
 
     def forward(self, instructions: Union[List[str], List[List[int]]]) -> List[str]:
         prepare_outputs = self.prepare_for_generation(instructions)
@@ -401,5 +420,6 @@ class ValueAugmentedSamplingGeneratorForCausalLM(GeneratorForCausalLM):
         input_masks = self.expand_tensor(prepare_outputs.input_masks)
         forward_outputs = self.model_forward(tokens, input_masks, prepare_outputs.start_pos)
         output_masks = self.get_output_masks(forward_outputs.tokens, input_masks)
-        responses = self.decode_response(forward_outputs.tokens, output_masks)
+        select_outputs = self.select_best_tokens(forward_outputs.tokens, forward_outputs.scores, output_masks)
+        responses = self.decode_response(select_outputs.tokens, select_outputs.output_masks)
         return responses
