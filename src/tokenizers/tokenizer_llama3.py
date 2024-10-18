@@ -146,6 +146,9 @@ class Llama3Tokenizer(Tokenizer):
         t = [x for x in t if x not in self.skip_tokens_ids]
         return self.model.decode(t)
 
+    def tokenize(self, s: str) -> List[str]:
+        return [self.model.decode([token]) for token in self.encode(s)]
+
     def save(self, save_dir: str):
         os.makedirs(save_dir, exist_ok=True)
         os.system(f"cp {self.model_file} {os.path.join(save_dir, 'tokenizer.model')}")

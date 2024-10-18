@@ -72,8 +72,8 @@ class LlamaTokenizer(Tokenizer):
     def decode(self, t: List[int]) -> str:
         return self.model.Decode(t)
 
-    def tokenize(self, s: str, bos: bool = False, eos: bool = False):
-        return self.model.Encode(s, out_type=str, add_bos=bos, add_eos=eos)
+    def tokenize(self, s: str) -> List[str]:
+        return self.model.Encode(s, out_type=str)
 
     def save(self, save_dir: str):
         os.makedirs(save_dir, exist_ok=True)
