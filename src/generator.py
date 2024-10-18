@@ -403,6 +403,7 @@ class ValueAugmentedSamplingGeneratorForCausalLM(GeneratorForCausalLM):
         scores = masked_mean(scores, output_masks, dim=-1)  # [batch_size * beam_size * tree_size]
         scores = torch.reshape(scores, [-1, self.beam_size * self.tree_size])
         tokens = torch.reshape(tokens, [-1, self.beam_size * self.tree_size, self.max_seq_len])
+        output_masks = torch.reshape(output_masks, [-1, self.beam_size * self.tree_size, self.max_seq_len])
         scores_values, scores_indices = torch.topk(scores, k=1)
         select_tokens = []
         select_output_masks = []
