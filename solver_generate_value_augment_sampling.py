@@ -62,7 +62,7 @@ def run(
     )
     verifier.load(verifier_ckpt_dir)
 
-    dataset = JsonDataset(label_file)[:256]
+    dataset = JsonDataset(label_file)
     if use_chat_template:
         dataset = ChatTemplateDataset(dataset, tokenizer=policy_tokenizer)
     dataloader = DataLoader(dataset, batch_size=max_batch_size)
