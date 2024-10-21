@@ -184,6 +184,7 @@ class DiversityGeneratorForCausalLM(GeneratorForCausalLM):
             output_masks = self.get_output_masks(forward_outputs.tokens, prep_outputs.input_masks)
             for i, response in enumerate(self.decode_response(forward_outputs.tokens, output_masks)):
                 responses[i].append(response)
+            print(instructions[-1] + "\n" + responses[-1][-1])
         self.recorded_tokens = None
         return responses
 
