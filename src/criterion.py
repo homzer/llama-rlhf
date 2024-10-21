@@ -254,7 +254,7 @@ class DpoLoss(Loss):
             logits.float() if logits.dtype == torch.float16 else logits, dim=-1
         ).type_as(logits)
         labels = labels.to(logits.device).long()
-        labels[labels == -100] = 0
+        labels[labels < 0] = 0
         # [b, s]
         log_probs = torch.gather(log_probs, dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
         if masks is None:
@@ -307,7 +307,7 @@ class DpoLoss(Loss):
         :param ref_rejected_logits: [batch_size, seq_len, vocab_size] from reference model.
         :param ref_chosen_log_probs: [batch_size, seq_len] from reference model. If not provided, computed from ref_chosen_logits.
         :param ref_rejected_log_probs: [batch_size, seq_len] from reference model. If not provided, computed from ref_rejected_logits.
-        :return: Scalar loss tensor.
+        :return: scalar loss tensor.
         """
         assert not ((ref_chosen_logits is None) ^ (ref_rejected_logits is None))
 
@@ -334,6 +334,58 @@ class DpoLoss(Loss):
                 - F.logsigmoid(- self.beta * log_probs) * self.label_smoothing
         )
         return loss.mean()
+
+
+class ORPOLoss(Loss):
+    def __init__(self, eps: float = 1e-5):
+        super().__init__()
+        self.eps = eps
+
+    def prepare_for_loss(self, logits, labels, masks):
+        log_probs = torch.log_softmax(
+            logits.float() if logits.dtype == torch.float16 else logits, dim=-1
+        ).type_as(logits)
+        labels = labels.to(logits.device).long()
+        labels[labels < 0] = 0
+        # [b, s]
+        log_probs = torch.gather(log_probs, dim=-1, index=labels.unsqueeze(-1)).squeeze(-1)
+        if masks is None:
+            masks = torch.ones_like(log_probs)
+        masks = masks.to(logits.device)
+        log_probs = (log_probs * masks).sum(-1) / (masks.sum(-1) + self.eps)
+        odds = torch.exp(log_probs) / (1 - torch.exp(log_probs))
+        return odds
+
+    def forward(
+            self,
+            chosen_logits: torch.Tensor,
+            rejected_logits: torch.Tensor,
+            chosen_labels: torch.Tensor,
+            rejected_labels: torch.Tensor,
+            chosen_masks: torch.Tensor = None,
+            rejected_masks: torch.Tensor = None,
+    ):
+        """
+        Compute Dpo loss.
+        :param chosen_logits: [batch_size, seq_len, vocab_size] from policy model.
+        :param rejected_logits: [batch_size, seq_len, vocab_size] from policy model.
+        :param chosen_labels: [batch_size, seq_len], chosen token ids.
+        :param rejected_labels: [batch_size, seq_len], rejected token ids.
+        :param chosen_masks: [batch_size, seq_len] with values of `True` or `False`.
+        :param rejected_masks: [batch_size, seq_len] with values of `True` or `False`.
+        :return: scalar loss tensor.
+        """
+        chosen_odds = self.prepare_for_loss(
+            logits=chosen_logits,
+            labels=chosen_labels,
+            masks=chosen_masks
+        )
+        rejected_odds = self.prepare_for_loss(
+            logits=rejected_logits,
+            labels=rejected_labels,
+            masks=rejected_masks
+        )
+        return - F.logsigmoid(torch.log(chosen_odds) - torch.log(rejected_odds))
 
 
 class DiscriminativeDPOLoss(Loss):
