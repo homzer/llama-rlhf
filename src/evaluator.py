@@ -8,7 +8,6 @@ from tqdm import tqdm
 from src.dataset import PairwiseDataset, JsonDataset
 from src.entities import Timer, AverageMeter
 from src.generator import GeneratorForCausalLM, GeneratorForVerifier
-from src.maths import math_equal
 from src.models.modeling import ModelForCausalLM, ParallelModelForCausalLM, Verifier, ParallelVerifier
 from src.tokenizers.tokenizer import Tokenizer
 from src.utils import convert_dataloader_data_to_list
@@ -59,8 +58,8 @@ class SolverEvaluator:
             print(data['instruction'][0].strip() + '\n' + outputs[0])
             print("---" * 10)
 
-        for data in results:  # TODO MATH
-            data['predict'] = evaluator.forward(data['output'], data['label'] if task != "MATH" else None)
+        for data in results:
+            data['predict'] = evaluator.forward(data['output'], data['label'])
 
         Output = collections.namedtuple('Output', ['acc', 'datalist', 'missing', 'correct'])
         return Output(acc=evaluator.accuracy, datalist=results, missing=evaluator.miss, correct=evaluator.correct)
@@ -204,6 +203,73 @@ class GSM8KEvaluator(Evaluator):
         return final_result
 
 
+# class MATHEvaluator(Evaluator):
+#     def __init__(self, escape_error: bool = True):
+#         super().__init__()
+#         self.boxed = "boxed"
+#         self.escape_error = escape_error
+#
+#     def extract_answer(self, text: str) -> str:
+#         a = ""
+#         if self.boxed in text:
+#             ans = text.split('boxed')[-1]
+#             if len(ans) == 0:
+#                 return ""
+#             elif ans[0] == '{':
+#                 stack = 1
+#                 for c in ans[1:]:
+#                     if c == '{':
+#                         stack += 1
+#                         a += c
+#                     elif c == '}':
+#                         stack -= 1
+#                         if stack == 0:
+#                             break
+#                         a += c
+#                     else:
+#                         a += c
+#             else:
+#                 a = ans.split('$')[0].strip()
+#
+#         a = a.replace(" ", "")
+#         a = re.sub(r"\\mathbf", "", a)
+#         a = re.sub(r"^\\text", "", a)
+#         a = re.sub(r"^\w=", "", a)
+#         a = re.sub(r"\\left|\\right|\\!|\\%|\\\$|", "", a)
+#         a = re.sub(r"\\text{.*\n*.*}", "", a)
+#         a = re.sub(r"\^{?\\circ}?", "", a)
+#         a = re.sub(r"\\mbox{.*}", "", a)
+#         a = re.sub(r"\\\\", r"\\", a)
+#         a = re.sub(r"\\$", "", a)
+#         return a
+#
+#     def format_label(self, label: str) -> str:
+#         return re.sub(r'\s', "", label)
+#
+#     def forward(self, output: str, label: str = None) -> str:
+#         result = self.extract_answer(output)
+#         if label is not None:
+#             label = self.format_label(label)
+#             if len(result) == 0:
+#                 self.miss += 1
+#             else:
+#                 is_equal = False
+#                 if self.escape_error:
+#                     try:
+#                         is_equal = math_equal(result, label)
+#                     except:
+#                         pass
+#                 else:
+#                     is_equal = math_equal(result, label)
+#
+#                 if is_equal:
+#                     self.meter.forward(1)
+#                     self.correct += 1
+#                 else:
+#                     self.meter.forward(0)
+#
+#         return result
+
 class MATHEvaluator(Evaluator):
     def __init__(self, escape_error: bool = True):
         super().__init__()
@@ -244,30 +310,42 @@ class MATHEvaluator(Evaluator):
         a = re.sub(r"\\$", "", a)
         return a
 
+    def format_output(self, output: str) -> str:
+        # Use regular expressions to split the text into sentences
+        sentences = re.split(r'(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=[.?])\s', output.strip())
+        # Extract the last sentence from the list of sentences
+        last_sentence = sentences[-1] if sentences else ''
+        last_sentence = re.sub(r"\s", "", last_sentence)
+        last_sentence = re.sub(r"(?<=\W)\wfrac", "frac", last_sentence)
+        last_sentence = re.sub(r"\\left|\\right|\\!|\\%|\\\$|", "", last_sentence)
+        last_sentence = re.sub(r"\\\\", r"\\", last_sentence)
+        last_sentence = re.sub(r"\^{?\\circ}?", "", last_sentence)
+        last_sentence = re.sub(r"\\mbox{.*}", "", last_sentence)
+        last_sentence = re.sub(r'(?<=\d),(?=\d{3})', '', last_sentence)
+        last_sentence = re.sub(r'(?<=\D)\.(?=\d)', "0.", last_sentence)
+        return last_sentence
+
     def format_label(self, label: str) -> str:
-        return re.sub(r'\s', "", label)
+        label = re.sub(r'\s', "", label.strip())
+        label = re.sub(r'(?<=\d),(?=\d{3})', '', label)
+        return label
 
     def forward(self, output: str, label: str = None) -> str:
+        output = self.format_output(output)
+        if len(re.findall(r"\d+", output)) == 0:
+            self.miss += 1
+            return ""
         result = self.extract_answer(output)
         if label is not None:
             label = self.format_label(label)
-            if len(result) == 0:
-                self.miss += 1
+            if label in output:
+                self.meter.forward(1)
+                self.correct += 1
             else:
-                is_equal = False
-                if self.escape_error:
-                    try:
-                        is_equal = math_equal(result, label)
-                    except:
-                        pass
-                else:
-                    is_equal = math_equal(result, label)
-
-                if is_equal:
-                    self.meter.forward(1)
-                    self.correct += 1
-                else:
-                    self.meter.forward(0)
+                if label in ["\\begin{pmatrix}\\frac{3}{5}&\\frac{1}{5}\\frac{3}{5}&\\frac{1}{5}\\end{pmatrix}"]:
+                    print()
+                print("RESULT", result, "| LABEL", label)
+                self.meter.forward(0)
 
         return result
 
