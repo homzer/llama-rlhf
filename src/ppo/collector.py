@@ -119,12 +119,12 @@ class CriticBufferCollector:
         )
 
     def forward(self, instructions: np.ndarray, actions: np.ndarray, action_masks: np.ndarray) -> CriticRolloutBuffer:
-        action_scores = self.generator.forward(
+        generator_outputs = self.generator.forward(
             obs=instructions.tolist(),
             actions=actions,
             action_masks=action_masks
         )
-        return CriticRolloutBuffer(action_scores, action_masks)
+        return CriticRolloutBuffer(generator_outputs.token_scores, action_masks)
 
 
 class LabelBufferCollector:
