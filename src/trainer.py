@@ -6,7 +6,7 @@ from typing import List
 import torch
 import torch.nn as nn
 
-from src.criterion import PairwiseScoreLoss, KLDivLoss, DpoLoss, ReverseKLDivLoss, JSDivLoss, LastTokenScoreLoss
+from src.criterion import PairwiseScoreLoss, KLDivLoss, DPOLoss, ReverseKLDivLoss, JSDivLoss, LastTokenScoreLoss
 from src.models.modeling import Module, ParallelModule, ParallelModelForCausalLM, ParallelVerifier
 from src.tokenizers import Tokenizer
 from src.utils import truncate
@@ -495,7 +495,7 @@ class ParallelSolverDpoTrainer(ParallelSolverTrainer):
         )
         self.ce_coef = ce_coef
         self.criterion_ce = nn.CrossEntropyLoss(ignore_index=-100)
-        self.criterion_dpo = DpoLoss()
+        self.criterion_dpo = DPOLoss()
 
     def dpo_forward(
             self,

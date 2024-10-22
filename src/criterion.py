@@ -194,7 +194,7 @@ class LastTokenScoreLoss(Loss):
         return loss / bzs
 
 
-class SimPoLoss(Loss):
+class SimPOLoss(Loss):
     def __init__(self, beta: float = 2.0, gamma: float = 1.0, eps: float = 1e-5):
         super().__init__()
         self.beta = beta
@@ -240,7 +240,7 @@ class SimPoLoss(Loss):
         return loss.mean()
 
 
-class DpoLoss(Loss):
+class DPOLoss(Loss):
     def __init__(self, beta=0.1, logits_norm: bool = False, label_smoothing: float = 0.0, eps=1e-5):
         super().__init__()
         self.beta = beta
@@ -435,7 +435,7 @@ def norm(x: torch.Tensor, dim: int = -1, eps: float = 1e-5):
 
 if __name__ == '__main__':
     torch.manual_seed(0)
-    criterion = DpoLoss(logits_norm=False)
+    criterion = DPOLoss(logits_norm=False)
     _chosen_logits = torch.Tensor([
         [[1, 0, 100, -100], [1, 100, 0, -100], [0, 1, 100, -100]],
         [[-100, 1, 0, 100], [0, 1, 100, -100], [100, 1, 0, -100]]
