@@ -100,7 +100,8 @@ class ParallelActorTrainerForCausalLM(ParallelTrainer):
         actor_loss = advantages * ratio
         if self.clip_range > 0:
             clipped_actor_loss = advantages * torch.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range)
-            actor_loss = - torch.min(actor_loss, clipped_actor_loss).mean()
+            actor_loss = torch.min(actor_loss, clipped_actor_loss)
+        actor_loss = - torch.mean(actor_loss)
 
         # sft loss
         sft_loss = 0.0
