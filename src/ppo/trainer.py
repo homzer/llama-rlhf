@@ -97,9 +97,10 @@ class ParallelActorTrainerForCausalLM(ParallelTrainer):
         ratio = torch.exp(action_logprobs - old_action_logprobs)
         ratio = torch.masked_select(ratio.view(-1), action_masks.view(-1))
         # clipped surrogate loss
-        actor_loss_1 = advantages * ratio
-        actor_loss_2 = advantages * torch.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range)
-        actor_loss = - torch.min(actor_loss_1, actor_loss_2).mean()
+        actor_loss = advantages * ratio
+        if self.clip_range > 0:
+            clipped_actor_loss = advantages * torch.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range)
+            actor_loss = - torch.min(actor_loss, clipped_actor_loss).mean()
 
         # sft loss
         sft_loss = 0.0

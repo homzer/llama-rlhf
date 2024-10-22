@@ -213,6 +213,7 @@ def train_actor(
         rollout_buffer: RolloutBuffer,
         actor_max_batch_size: int,
         inner_epochs: int,
+        clip_range: float = 0.2
 ):
     actor, actor_tokenizer = get_parallel_model(
         model_type=actor_model_type,
@@ -224,7 +225,7 @@ def train_actor(
         lora_dtype=actor_lora_dtype
     )
     actor_optimizer = torch.optim.Adam(actor.parameters(), lr=0.075 * lr if epoch <= 1 else lr)
-    actor_trainer = ParallelActorTrainerForCausalLM(actor, actor_optimizer)
+    actor_trainer = ParallelActorTrainerForCausalLM(actor, actor_optimizer, clip_range=clip_range)
     actor_trainer.load_model(actor_ckpt_dir) if (
             epoch == 0
     ) else actor_trainer.load(os.path.join(actor_save_dir, f"epoch-{epoch}"))
@@ -334,6 +335,7 @@ def run(
         dtype: str = "bfloat16",
         begin_epoch: int = 0,
         kl_coef: float = 0.1,
+        clip_range: float = 0.2,
         use_chat_template: bool = False,
         use_last_token_reward: bool = False
 ):
@@ -446,7 +448,8 @@ def run(
             actor_save_dir=actor_save_dir,
             rollout_buffer=rollout_buffer,
             actor_max_batch_size=actor_max_batch_size,
-            inner_epochs=inner_epochs
+            inner_epochs=inner_epochs,
+            clip_range=clip_range
         )
 
         torch.save({
