@@ -143,7 +143,7 @@ class DiversityActorGeneratorForCausalLM(ActorGeneratorForCausalLM):
     @staticmethod
     def stack_and_flatten(x: Union[List[List[torch.Tensor]], List[List[str]]]):
         if isinstance(x[0][0], torch.Tensor):
-            return torch.stack([torch.stack(a, dim=0) for a in x], dim=0)
+            return torch.stack([torch.stack(a, dim=0) for a in x], dim=0).flatten(end_dim=-2)
         elif isinstance(x[0][0], str):
             return [item for sublist in x for item in sublist]
         else:
