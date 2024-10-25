@@ -30,7 +30,6 @@ def collect_actor_buffer(
         dataset: JsonDataset,
         max_generate_batch_size: int,
         num_samples_per_prompt: int,
-        diverse_prob: float
 ) -> ActorRolloutBuffer:
     actor, actor_tokenizer = get_parallel_model(
         model_type=actor_model_type,
@@ -47,7 +46,6 @@ def collect_actor_buffer(
         max_seq_len=max_seq_len,
         temperature=1.0,
         num_samples_per_prompt=num_samples_per_prompt,
-        diverse_prob=diverse_prob,
     )
     actor_rollout_buffer = ActorRolloutBuffer()
     print('Actor buffer collecting ...')
@@ -157,7 +155,6 @@ def run(
             dataset=dataset,
             max_generate_batch_size=max_generate_batch_size,
             num_samples_per_prompt=num_samples_per_prompt,
-            diverse_prob=0.1
         )
 
         # Collecting verifier buffer

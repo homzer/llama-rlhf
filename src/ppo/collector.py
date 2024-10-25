@@ -79,7 +79,7 @@ class DiversityActorBufferCollector:
             temperature: float = 1.0,
             top_p: float = 1.0,
             num_samples_per_prompt: int = 1,
-            diverse_prob: float = 0.1
+            diverse_prob: float = None
     ):
         self.generator = DiversityActorGeneratorForCausalLM(
             model=actor,

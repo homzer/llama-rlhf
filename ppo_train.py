@@ -303,7 +303,6 @@ def train_critic(
 
 def run(
         train_file: str,
-
         actor_ckpt_dir: str,
         actor_model_type: str,
         actor_save_dir: str,
@@ -312,7 +311,6 @@ def run(
         critic_save_dir: str,
         verifier_ckpt_dir: str,
         verifier_model_type: str,
-
         actor_config_file: str = None,
         actor_tokenizer_file: str = None,
         critic_config_file: str = None,
