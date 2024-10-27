@@ -11,6 +11,11 @@ from torch.distributed import init_process_group
 from src.utils import set_seed
 
 
+def ensure_divisibility(numerator: int, denominator: int) -> None:
+    """Ensure that numerator is divisible by the denominator."""
+    assert numerator % denominator == 0, "{} is not divisible by {}".format(numerator, denominator)
+
+
 def get_rank() -> int:
     """Return my global rank."""
     return int(os.environ.get("RANK"))
