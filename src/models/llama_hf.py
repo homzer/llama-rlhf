@@ -13,17 +13,20 @@ from fairscale.nn.model_parallel.layers import (
 from src.checkpoint import CheckpointForLlama
 from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs, AttentionForCausalLM
 from src.models.modeling_acts import RMSNorm, Clamp, RotaryEmbedding, LogitsNormalize
-from src.models.modeling_args import LlamaArgs, LoraLlamaArgs
-from src.utils import apply_lora, compute_position_ids, apply_rotary_pos_emb
+from src.models.modeling_args import LlamaArgsHf, LoraLlamaArgsHf
 from src.parallel.utils import set_model_parallel_barrier
+from src.utils import apply_lora, compute_position_ids, apply_rotary_pos_emb
 
 
 class LlamaAttentionHf(AttentionForCausalLM):
-    def __init__(self, args: LlamaArgs):
+    def __init__(self, args: LlamaArgsHf):
         super().__init__(args.max_seq_len)
         self.args = args
-        self.n_local_heads = args.n_heads // args.model_parallel_world_size
-        self.head_dim = args.dim // args.n_heads
+        self.head_dim = args.hidden_size // args.num_attention_heads
+        self.num_local_heads = args.num_attention_heads // args.model_parallel_world_size
+        self.num_key_value_heads = args.num_key_value_heads
+        self.num_local_key_value_heads = self.num_key_value_heads // args.model_parallel_world_size
+        self.n_rep = args.num_attention_heads // args.num_key_value_heads
 
         self.q_proj = None
         self.k_proj = None
@@ -34,29 +37,29 @@ class LlamaAttentionHf(AttentionForCausalLM):
 
     def init_weights(self):
         self.q_proj = ColumnParallelLinear(
-            self.args.dim,
-            self.args.n_heads * self.head_dim,
+            self.args.hidden_size,
+            self.args.num_attention_heads * self.head_dim,
             bias=False,
             gather_output=False,
             init_method=lambda x: x,
         ).type(self.args.dtype)
         self.k_proj = ColumnParallelLinear(
-            self.args.dim,
-            self.args.n_heads * self.head_dim,
+            self.args.hidden_size,
+            self.args.num_key_value_heads * self.head_dim,
             bias=False,
             gather_output=False,
             init_method=lambda x: x,
         ).type(self.args.dtype)
         self.v_proj = ColumnParallelLinear(
-            self.args.dim,
-            self.args.n_heads * self.head_dim,
+            self.args.hidden_size,
+            self.args.num_key_value_heads * self.head_dim,
             bias=False,
             gather_output=False,
             init_method=lambda x: x,
         ).type(self.args.dtype)
         self.o_proj = RowParallelLinear(
-            self.args.n_heads * self.head_dim,
-            self.args.dim,
+            self.args.num_attention_heads * self.head_dim,
+            self.args.hidden_size,
             bias=False,
             input_is_parallel=True,
             init_method=lambda x: x,
@@ -73,9 +76,9 @@ class LlamaAttentionHf(AttentionForCausalLM):
         bsz, seq_len, _ = x.shape
         xq, xk, xv = self.q_proj(x), self.k_proj(x), self.v_proj(x)
 
-        xq = xq.view(bsz, seq_len, self.n_local_heads, self.head_dim)
-        xk = xk.view(bsz, seq_len, self.n_local_heads, self.head_dim)
-        xv = xv.view(bsz, seq_len, self.n_local_heads, self.head_dim)
+        xq = xq.view(bsz, seq_len, self.num_local_heads, self.head_dim)
+        xk = xk.view(bsz, seq_len, self.num_local_key_value_heads, self.head_dim)
+        xv = xv.view(bsz, seq_len, self.num_local_key_value_heads, self.head_dim)
 
         cos, sin = self.rotary_emb.forward(xv.transpose(1, 2), seq_len=seq_len + start_pos)
         position_ids = compute_position_ids(start_pos, seq_len).to(x.device)
@@ -92,43 +95,46 @@ class LlamaAttentionHf(AttentionForCausalLM):
 
 
 class LlamaFeedForwardHf(nn.Module):
-    def __init__(self, args: LlamaArgs):
+    def __init__(self, args: LlamaArgsHf):
         super().__init__()
         self.args = args
-        hidden_dim = int(2 * (4 * args.dim) / 3)
-        hidden_dim = args.multiple_of * ((hidden_dim + args.multiple_of - 1) // args.multiple_of)
-        self.hidden_dim = hidden_dim
-        self.dim = args.dim
+        # hidden_dim = int(2 * (4 * args.dim) / 3)
+        # hidden_dim = args.multiple_of * ((hidden_dim + args.multiple_of - 1) // args.multiple_of)
+        # self.hidden_dim = hidden_dim
+        # self.dim = args.dim
         self.gate_proj = None
         self.down_proj = None
         self.up_proj = None
 
     def init_weights(self):
         self.gate_proj = ColumnParallelLinear(
-            self.dim, self.hidden_dim,
+            self.args.hidden_size,
+            self.args.intermediate_size,
             bias=False,
             gather_output=False,
             init_method=lambda x: x
         ).type(self.args.dtype)
         self.down_proj = RowParallelLinear(
-            self.hidden_dim, self.dim,
+            self.args.intermediate_size,
+            self.args.hidden_size,
             bias=False,
             input_is_parallel=True,
             init_method=lambda x: x
         ).type(self.args.dtype)
         self.up_proj = ColumnParallelLinear(
-            self.dim, self.hidden_dim,
+            self.args.hidden_size,
+            self.args.intermediate_size,
             bias=False,
             gather_output=False,
             init_method=lambda x: x
         ).type(self.args.dtype)
 
-    def forward(self, x):
+    def forward(self, x) -> torch.Tensor:
         return self.down_proj(F.silu(self.gate_proj(x)) * self.up_proj(x))
 
 
 class LlamaTransformerBlockHf(nn.Module):
-    def __init__(self, layer_id: int, args: LlamaArgs):
+    def __init__(self, layer_id: int, args: LlamaArgsHf):
         super().__init__()
         self.args = args
         self.self_attn = LlamaAttentionHf(args)
@@ -142,8 +148,8 @@ class LlamaTransformerBlockHf(nn.Module):
     def init_weights(self):
         self.self_attn.init_weights()
         self.mlp.init_weights()
-        self.input_layernorm = RMSNorm(self.args.dim, eps=self.args.norm_eps).type(self.args.dtype)
-        self.post_attention_layernorm = RMSNorm(self.args.dim, eps=self.args.norm_eps).type(self.args.dtype)
+        self.input_layernorm = RMSNorm(self.args.hidden_size, eps=self.args.rms_norm_eps).type(self.args.dtype)
+        self.post_attention_layernorm = RMSNorm(self.args.hidden_size, eps=self.args.rms_norm_eps).type(self.args.dtype)
 
     def forward(
             self,
@@ -160,23 +166,23 @@ class LlamaTransformerBlockHf(nn.Module):
 
 
 class LlamaModelHf(nn.Module):
-    def __init__(self, args: LlamaArgs):
+    def __init__(self, args: LlamaArgsHf):
         super().__init__()
         self.args = args
 
         self.embed_tokens = None
         self.layers = torch.nn.ModuleList()
-        for layer_id in range(args.n_layers):
+        for layer_id in range(args.num_hidden_layers):
             self.layers.append(LlamaTransformerBlockHf(layer_id, args))
         self.norm = None
 
     def init_weights(self):
         self.embed_tokens = ParallelEmbedding(
-            self.args.vocab_size, self.args.dim, init_method=lambda x: x
+            self.args.vocab_size, self.args.hidden_size, init_method=lambda x: x
         ).type(self.args.dtype)
         for layer in self.layers:
             layer.init_weights()
-        self.norm = RMSNorm(self.args.dim, eps=self.args.norm_eps).type(self.args.dtype)
+        self.norm = RMSNorm(self.args.hidden_size, eps=self.args.rms_norm_eps).type(self.args.dtype)
 
     def forward(self, tokens: torch.Tensor, start_pos=0, use_cache=False):
         tokens = tokens.to(next(self.parameters()).device)
@@ -194,7 +200,7 @@ class LlamaModelHf(nn.Module):
 
 
 class LlamaHf(ParallelModelForCausalLM):
-    def __init__(self, args: LlamaArgs):
+    def __init__(self, args: LlamaArgsHf):
         super().__init__()
         self.args = args
         self.model = LlamaModelHf(args)
@@ -205,7 +211,7 @@ class LlamaHf(ParallelModelForCausalLM):
     def init_weights(self):
         self.model.init_weights()
         self.lm_head = ColumnParallelLinear(
-            self.args.dim, self.args.vocab_size, bias=False, init_method=lambda x: x
+            self.args.hidden_size, self.args.vocab_size, bias=False, init_method=lambda x: x
         ).type(self.args.dtype)
 
     def forward(
@@ -229,13 +235,13 @@ class LlamaHf(ParallelModelForCausalLM):
 
     def flush(self):
         """ Clean cache in `LlamaAttention` module """
-        for i in range(self.args.n_layers):
+        for i in range(self.args.num_hidden_layers):
             self.model.layers[i].self_attn.flush()
         set_model_parallel_barrier()
 
 
 class LoraLlamaAttentionHf(LlamaAttentionHf):
-    def __init__(self, args: LoraLlamaArgs):
+    def __init__(self, args: LoraLlamaArgsHf):
         super().__init__(args)
         self.args = args
 
@@ -252,43 +258,43 @@ class LoraLlamaAttentionHf(LlamaAttentionHf):
         super().init_weights()
 
         self.lora_a_q_proj = nn.Linear(
-            self.args.dim,
+            self.args.hidden_size,
             self.args.r,
             bias=False
         ).type(self.args.lora_dtype)
         self.lora_b_q_proj = ColumnParallelLinear(
             self.args.r,
-            self.args.n_heads * self.head_dim,
+            self.args.num_attention_heads * self.head_dim,
             bias=False,
             gather_output=False,
             init_method=init.zeros_,
         ).type(self.args.lora_dtype)
         self.lora_a_k_proj = nn.Linear(
-            self.args.dim,
+            self.args.hidden_size,
             self.args.r,
             bias=False
         ).type(self.args.lora_dtype)
         self.lora_b_k_proj = ColumnParallelLinear(
             self.args.r,
-            self.args.n_heads * self.head_dim,
+            self.args.num_key_value_heads * self.head_dim,
             bias=False,
             gather_output=False,
             init_method=init.zeros_,
         ).type(self.args.lora_dtype)
         self.lora_a_v_proj = nn.Linear(
-            self.args.dim,
+            self.args.hidden_size,
             self.args.r,
             bias=False
         ).type(self.args.lora_dtype)
         self.lora_b_v_proj = ColumnParallelLinear(
             self.args.r,
-            self.args.n_heads * self.head_dim,
+            self.args.num_key_value_heads * self.head_dim,
             bias=False,
             gather_output=False,
             init_method=init.zeros_,
         ).type(self.args.lora_dtype)
         self.lora_a_o_proj = RowParallelLinear(
-            self.args.n_heads * self.head_dim,
+            self.args.num_attention_heads * self.head_dim,
             self.args.r,
             bias=False,
             input_is_parallel=True,
@@ -296,7 +302,7 @@ class LoraLlamaAttentionHf(LlamaAttentionHf):
         ).type(self.args.lora_dtype)
         self.lora_b_o_proj = nn.Linear(
             self.args.r,
-            self.args.dim,
+            self.args.hidden_size,
             bias=False
         ).type(self.args.lora_dtype)
         init.zeros_(self.lora_b_wo.weight)
@@ -313,9 +319,9 @@ class LoraLlamaAttentionHf(LlamaAttentionHf):
         xk = self.k_proj(x) + apply_lora(x, self.lora_a_k_proj, self.lora_b_k_proj)
         xv = self.v_proj(x) + apply_lora(x, self.lora_a_v_proj, self.lora_b_v_proj)
 
-        xq = xq.view(bsz, seq_len, self.n_local_heads, self.head_dim)
-        xk = xk.view(bsz, seq_len, self.n_local_heads, self.head_dim)
-        xv = xv.view(bsz, seq_len, self.n_local_heads, self.head_dim)
+        xq = xq.view(bsz, seq_len, self.num_local_heads, self.head_dim)
+        xk = xk.view(bsz, seq_len, self.num_local_key_value_heads, self.head_dim)
+        xv = xv.view(bsz, seq_len, self.num_local_key_value_heads, self.head_dim)
 
         cos, sin = self.rotary_emb.forward(xv.transpose(1, 2), seq_len=seq_len + start_pos)
         position_ids = compute_position_ids(start_pos, seq_len).to(x.device)
@@ -332,10 +338,9 @@ class LoraLlamaAttentionHf(LlamaAttentionHf):
 
 
 class LoraLlamaFeedForwardHf(LlamaFeedForwardHf):
-    def __init__(self, args: LoraLlamaArgs):
+    def __init__(self, args: LoraLlamaArgsHf):
         super().__init__(args)
         self.args = args
-        self.r = args.r
 
         self.lora_a_gate_proj = None
         self.lora_b_gate_proj = None
@@ -348,38 +353,38 @@ class LoraLlamaFeedForwardHf(LlamaFeedForwardHf):
         super().init_weights()
 
         self.lora_a_gate_proj = nn.Linear(
-            self.dim,
-            self.r,
+            self.args.hidden_size,
+            self.args.r,
             bias=False
         ).type(self.args.lora_dtype)
         self.lora_b_gate_proj = ColumnParallelLinear(
-            self.r,
-            self.hidden_dim,
+            self.args.r,
+            self.args.intermediate_size,
             bias=False,
             gather_output=False,
             init_method=init.zeros_,
         ).type(self.args.lora_dtype)
         self.lora_a_down_proj = RowParallelLinear(
-            self.hidden_dim,
-            self.r,
+            self.args.intermediate_size,
+            self.args.r,
             bias=False,
             input_is_parallel=True,
             init_method=init.xavier_normal_,
         ).type(self.args.lora_dtype)
         self.lora_b_down_proj = nn.Linear(
-            self.r,
-            self.dim,
+            self.args.r,
+            self.args.hidden_size,
             bias=False
         ).type(self.args.lora_dtype)
         init.zeros_(self.lora_b_w2.weight)
         self.lora_a_up_proj = nn.Linear(
-            self.dim,
-            self.r,
+            self.args.hidden_size,
+            self.args.r,
             bias=False
         ).type(self.args.lora_dtype)
         self.lora_b_up_proj = ColumnParallelLinear(
-            self.r,
-            self.hidden_dim,
+            self.args.r,
+            self.args.intermediate_size,
             bias=False,
             gather_output=False,
             init_method=init.zeros_,
@@ -393,22 +398,22 @@ class LoraLlamaFeedForwardHf(LlamaFeedForwardHf):
 
 
 class LoraLlamaTransformerBlockHf(LlamaTransformerBlockHf):
-    def __init__(self, layer_id: int, args: LoraLlamaArgs):
+    def __init__(self, layer_id: int, args: LoraLlamaArgsHf):
         super().__init__(layer_id, args)
         self.self_attn = LoraLlamaAttentionHf(args)
         self.mlp = LoraLlamaFeedForwardHf(args)
 
 
 class LoraLlamaModelHf(LlamaModelHf):
-    def __init__(self, args: LlamaArgs):
+    def __init__(self, args: LlamaArgsHf):
         super().__init__(args)
         self.layers = torch.nn.ModuleList()
-        for layer_id in range(args.n_layers):
+        for layer_id in range(args.num_hidden_layers):
             self.layers.append(LlamaTransformerBlockHf(layer_id, args))
 
 
 class LoraLlamaHf(LlamaHf):
-    def __init__(self, args: LoraLlamaArgs):
+    def __init__(self, args: LoraLlamaArgsHf):
         super().__init__(args)
         self.args = args
         self.model = LoraLlamaModelHf(args)
@@ -419,7 +424,7 @@ class LoraLlamaHf(LlamaHf):
         super().init_weights()
 
         self.lora_a_lm_head = nn.Linear(
-            self.args.dim,
+            self.args.hidden_size,
             self.args.r,
             bias=False
         ).type(self.args.lora_dtype)
