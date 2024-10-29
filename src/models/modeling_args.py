@@ -188,12 +188,13 @@ class MistralArgsHf(BaseParallelArgs):
 
 
 @dataclass
-class OpenChatArgs(MistralArgs):
-    pass
+class LoraMistralArgs(MistralArgs):
+    r: int = None
+    lora_dtype: str = "float32"
 
 
 @dataclass
-class LoraMistralArgs(MistralArgs):
+class LoraMistralArgsHf(MistralArgsHf):
     r: int = None
     lora_dtype: str = "float32"
 

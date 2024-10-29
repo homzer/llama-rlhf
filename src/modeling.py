@@ -5,7 +5,6 @@ from src.models import (
     LoraLlamaVerifier,
     Mistral,
     MistralHf,
-    MistralMoeHf,
     Llama,
     LlamaVerifier,
     Qwen,
@@ -28,7 +27,7 @@ from src.models.modeling_args import (
     LoraMistralArgs,
     QwenArgs,
     MistralArgsHf,
-    MistralMoeArgsHf,
+    LoraMistralArgsHf,
     LoraQwenArgs,
     BaichuanArgs,
     LoraBaichuanArgs
@@ -46,13 +45,14 @@ from src.tokenizers import (
 ARGS = {
     "llama": LlamaArgs,
     "lora-llama": LoraLlamaArgs,
+    "llama-hf": LlamaArgs,
+    "lora-llama-hf": LoraLlamaArgs,
     "llama3": LlamaArgs,
     "lora-llama3": LoraLlamaArgs,
     "mistral": MistralArgs,
     "lora-mistral": LoraMistralArgs,
     "mistral-hf": MistralArgsHf,
-    "mistral-7b-instruct-v0.2": MistralArgsHf,
-    "mixtral-8x7b-instruct-v0.1": MistralMoeArgsHf,
+    "lora-mistral-hf": LoraMistralArgsHf,
     "qwen": QwenArgs,
     "lora-qwen": LoraQwenArgs,
     "baichuan": BaichuanArgs,
@@ -63,19 +63,13 @@ ARGS = {
 MODELS = {
     "llama": Llama,
     "llama3": Llama3,
-
     "lora-llama": LoraLlama,
     "lora-llama3": LoraLlama3,
-
     "mistral": Mistral,
     "lora-mistral": LoraMistral,
     "mistral-hf": MistralHf,
-    "mistral-7b-instruct-v0.2": MistralHf,
-    "mixtral-8x7b-instruct-v0.1": MistralMoeHf,
-
     "qwen": Qwen,
     "lora-qwen": LoraQwen,
-
     "baichuan": Baichuan,
     "lora-baichuan": LoraBaichuan
 }
@@ -94,12 +88,8 @@ VERIFIERS = {
 TOKENIZERS = {
     "llama": LlamaTokenizer,
     "llama3": Llama3Tokenizer,
-
     "mistral": MistralTokenizer,
     "mistral-hf": MistralTokenizer,
-    "mistral-7b-instruct-v0.2": MistralTokenizer,
-    "mixtral-8x7b-instruct-v0.1": MistralTokenizer,
-
     "qwen": QwenTokenizer,
     "baichuan": BaichuanTokenizer
 }
