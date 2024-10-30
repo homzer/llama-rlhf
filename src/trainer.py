@@ -476,14 +476,14 @@ class ParallelSolverReferenceDistillTrainer(ParallelSolverTrainer):
         return Output(logits=logits, loss=loss, loss_kl=loss_kl, loss_ce=loss_ce, refs=kl_loss_outputs.refs)
 
 
-class ParallelSolverDpoTrainer(ParallelSolverTrainer):
+class ParallelSolverDPOTrainer(ParallelSolverTrainer):
     def __init__(
             self,
             model: ParallelModelForCausalLM,
             tokenizer: Tokenizer,
             optimizer: torch.optim.Optimizer,
             max_seq_len: int,
-            ce_coef: float = 1.0,
+            ce_coef: float = 0.0,
             accumulation_steps: int = 1
     ):
         super().__init__(
@@ -527,19 +527,23 @@ class ParallelSolverDpoTrainer(ParallelSolverTrainer):
         )
         loss = dpo_loss
 
+        ce_loss = 0.
         if self.ce_coef != 0:
             ce_loss = self.ce_coef * self.criterion_ce.forward(
                 input=chosen_logits.view(-1, chosen_logits.size(-1)),
                 target=chosen_examples.labels.view(-1).to(chosen_logits.device)
             )
             loss += ce_loss
-        else:
-            ce_loss = torch.tensor(0)
 
         self._back_propagation(loss)
 
         Output = collections.namedtuple('Output', ['logits', 'loss', 'loss_dpo', 'loss_ce'])
-        return Output(logits=chosen_logits, loss=loss, loss_dpo=dpo_loss, loss_ce=ce_loss)
+        return Output(
+            logits=chosen_logits,
+            loss=loss.item(),
+            loss_dpo=dpo_loss.item(),
+            loss_ce=ce_loss.item() if isinstance(ce_loss, torch.Tensor) else ce_loss
+        )
 
 
 class ParallelVerifierTrainer(ParallelTrainer):

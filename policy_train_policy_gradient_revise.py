@@ -6,8 +6,8 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from policy_gradient_train import re_scoring_eos_rewards
-from ppo_train import collect_actor_buffer, collect_verifier_buffer
+from policy_train_policy_gradient import re_scoring_eos_rewards
+from policy_train_ppo import collect_actor_buffer, collect_verifier_buffer
 from src.dataset import JsonDataset, ChatTemplateDataset
 from src.entities import Timer
 from src.modeling import get_parallel_model
@@ -189,7 +189,6 @@ def run(
         use_chat_template: bool = False
 ):
     setup_model_parallel()
-    os.makedirs(save_dir, exist_ok=True)
     policy_config_file = policy_config_file or policy_ckpt_dir
     policy_tokenizer_file = policy_tokenizer_file or policy_ckpt_dir
     reviser_config_file = reviser_config_file or reviser_ckpt_dir

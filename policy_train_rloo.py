@@ -6,8 +6,8 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from policy_gradient_train import train_policy_gradient
-from ppo_train import collect_verifier_buffer
+from policy_train_policy_gradient import train_policy_gradient
+from policy_train_ppo import collect_verifier_buffer
 from src.dataset import JsonDataset, ChatTemplateDataset
 from src.entities import Timer
 from src.modeling import get_parallel_model

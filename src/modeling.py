@@ -109,7 +109,7 @@ def get_parallel_model(
         config_file: str,
         max_seq_len: int,
         tokenizer_file: str,
-        lora_rank: int,
+        lora_rank: int = -1,
         dtype: str = 'bfloat16',  # float16 might be NaN
         lora_dtype: str = 'float32',
         use_clamp: bool = False,

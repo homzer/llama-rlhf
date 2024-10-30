@@ -6,7 +6,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from ppo_train import (
+from policy_train_ppo import (
     train_critic,
     train_actor,
     collect_verifier_buffer,

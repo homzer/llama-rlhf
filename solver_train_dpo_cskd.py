@@ -11,7 +11,7 @@ from src.evaluator import SolverEvaluator
 from src.modeling import get_parallel_model
 from src.ppo.buffer import LogitsRolloutBuffer, OutputRolloutBuffer
 from src.ppo.collector import LogitsBufferCollector, OutputBufferCollector
-from src.trainer import ParallelSolverDpoTrainer
+from src.trainer import ParallelSolverDPOTrainer
 from src.utils import json_dump, json_load
 from src.parallel.utils import setup_model_parallel, set_barrier
 
@@ -34,23 +34,15 @@ def main(
 
         policy_max_seq_len: int = 1024,
         reference_max_seq_len: int = 1024,
-        task: str = None,
-        label_file: str = None,
         eval_batch_size: int = 256,
         max_batch_size: int = 1,
         lr: float = 1e-5,
         dtype: str = "float16",
         lora_dtype: str = "float32",
-        log_dir: str = None,
         seed: int = None,
         chunk_size: int = 10000,
         begin_epoch: int = 0
 ):
-    if task is not None:
-        assert label_file is not None
-        assert eval_batch_size is not None
-        assert log_dir is not None
-        os.makedirs(log_dir, exist_ok=True)
     setup_model_parallel(seed=seed)
     datalist = json_load(train_file)
     epochs = len(datalist) // chunk_size
@@ -101,10 +93,8 @@ def main(
             dtype=dtype,
             lora_dtype=lora_dtype
         )
-        reference.load(reference_ckpt_dir, merge_lora=True)
-        reference_buffer_collector = LogitsBufferCollector(
-            reference, reference_tokenizer, reference_max_seq_len, logits_topk=5
-        )
+        reference.load(reference_ckpt_dir)
+        reference_buffer_collector = LogitsBufferCollector(reference, reference_tokenizer, reference_max_seq_len)
         reference_rejected_rollout_buffer = LogitsRolloutBuffer()
         reference_chosen_rollout_buffer = LogitsRolloutBuffer()
         timer = Timer(len(chosen_rollout_buffer) // reference_forward_batch_size, episode=10)
@@ -142,7 +132,7 @@ def main(
             lora_dtype=lora_dtype
         )
         optimizer = torch.optim.Adam(policy.parameters(), lr=lr)
-        trainer = ParallelSolverDpoTrainer(
+        trainer = ParallelSolverDPOTrainer(
             model=policy,
             tokenizer=policy_tokenizer,
             optimizer=optimizer,
@@ -164,24 +154,16 @@ def main(
                 instructions=chosen_data.instructions,
                 chosen=chosen_data.outputs,
                 rejected=rejected_data.outputs,
-                reference_chosen_logits=reference_chosen_data.logits,
-                reference_rejected_logits=reference_rejected_data.logits
+                reference_chosen_log_probs=reference_chosen_data.output_tokens_logps,
+                reference_rejected_log_probs=reference_rejected_data.output_tokens_logps
             )
             if trainer.step % 100 == 0:
                 print(f'step {trainer.step} of {len(chosen_rollout_buffer) // max_batch_size} ---------------')
-                print(f'CE LOSS: ', trainer_outputs.loss_ce.item(), 'DPO LOSS: ', trainer_outputs.loss_dpo.item())
+                print('DPO LOSS: ', trainer_outputs.loss_dpo, f'CE LOSS: ', trainer_outputs.loss_ce)
                 trainer.predict(trainer_outputs.logits, chosen_data.instructions, chosen_data.outputs)
             if trainer.step % 7200 == 0:
                 trainer.save(os.path.join(policy_save_dir, f"epoch-{epoch + 1}"))
         trainer.save(os.path.join(policy_save_dir, f"epoch-{epoch + 1}"))
-
-        if task is not None:
-            evaluator = SolverEvaluator(policy, policy_tokenizer, eval_batch_size, policy_max_seq_len)
-            eval_outputs = evaluator.forward(task, JsonDataset(label_file))
-            print("Evaluate Accuracy: ", eval_outputs.acc, "Missing: ", eval_outputs.missing)
-            json_dump(eval_outputs.datalist, os.path.join(
-                log_dir, f'results-epoch-{epoch + 1}-{round(eval_outputs.acc, 4)}.json'), indent=4
-            )
 
         policy.cpu()
         del policy

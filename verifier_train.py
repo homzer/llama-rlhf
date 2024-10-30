@@ -29,7 +29,6 @@ def main(
         use_chat_template: bool = False,
         seed: int = None
 ):
-    os.makedirs(save_dir, exist_ok=True)
     tokenizer_file = ckpt_dir if tokenizer_file is None else tokenizer_file
     config_file = ckpt_dir if config_file is None else config_file
     setup_model_parallel(seed=seed)
