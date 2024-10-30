@@ -202,7 +202,41 @@ class ParallelPolicyGradientTrainerForCausalLM(ParallelTrainer):
         return Outputs(loss=loss.item(), rewards=torch.mean(rewards).item())
 
 
-class ParallelPolicyGradientKLDivTrainerForCausalLM(ParallelTrainer):
+class ParallelPolicyGradientTrainerWithCrossEntropyForCausalLM(ParallelTrainer):
+    def __init__(self, policy: ParallelModelForCausalLM, optimizer: torch.optim.Optimizer):
+        super().__init__(policy, optimizer)
+        self.policy = policy
+        self.step = 0
+
+    def forward(self, rollout_data: RolloutBufferSample):
+        self.policy.train()
+        self.step += 1
+
+        obs = rollout_data.observations.to(self.policy.device())
+        actions = rollout_data.actions.to(self.policy.device())
+        action_masks = rollout_data.action_masks.to(self.policy.device())
+        rewards = rollout_data.rewards.to(self.policy.device())
+
+        outputs = self.policy.forward(obs)
+
+        action_logprobs = torch.gather(
+            torch.log_softmax(outputs.logits, dim=-1), dim=-1, index=actions.unsqueeze(-1)
+        ).squeeze(-1)
+
+        action_logprobs = torch.masked_select(action_logprobs.view(-1), action_masks.view(-1))
+        rewards = torch.masked_select(rewards.view(-1), action_masks.view(-1))
+        # weighted cross-entropy loss
+        loss = - torch.mean(rewards * action_logprobs)
+
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+
+        Outputs = collections.namedtuple('Outputs', ['loss', 'rewards'])
+        return Outputs(loss=loss.item(), rewards=torch.mean(rewards).item())
+
+
+class ParallelPolicyGradientTrainerWithKLDivForCausalLM(ParallelTrainer):
     def __init__(self, policy: ParallelModelForCausalLM, optimizer: torch.optim.Optimizer):
         super().__init__(policy, optimizer)
         self.policy = policy

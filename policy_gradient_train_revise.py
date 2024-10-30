@@ -14,7 +14,7 @@ from src.modeling import get_parallel_model
 from src.parallel.utils import setup_model_parallel, set_barrier
 from src.ppo.buffer import RolloutBuffer, ActorRolloutBuffer
 from src.ppo.collector import ActorBufferCollector
-from src.ppo.trainer import ParallelPolicyGradientKLDivTrainerForCausalLM
+from src.ppo.trainer import ParallelPolicyGradientTrainerWithKLDivForCausalLM
 from src.utils import masked_mean, json_load
 
 REVISER_PROMPT = """###[QUESTION]\n{question}\n\n###[ANSWER]\n{rejected}\n\n###[REVISED ANSWER]\n"""
@@ -131,7 +131,7 @@ def train_policy_gradient_revise(
         lora_dtype=lora_dtype
     )
     optimizer = torch.optim.Adam(policy.parameters(), lr=lr)
-    trainer = ParallelPolicyGradientKLDivTrainerForCausalLM(policy, optimizer)
+    trainer = ParallelPolicyGradientTrainerWithKLDivForCausalLM(policy, optimizer)
     trainer.load_model(policy_ckpt_dir) if (
             epoch == 0
     ) else trainer.load(os.path.join(save_dir, f"epoch-{epoch}"))
