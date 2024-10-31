@@ -209,7 +209,7 @@ class LlamaHf(ParallelModelForCausalLM):
 
     def init_weights(self):
         self.model.init_weights()
-        self.lm_head = ColumnParallelLinear(
+        self.lm_head = RowParallelLinear(
             self.args.hidden_size, self.args.vocab_size, bias=False, init_method=lambda x: x
         ).type(self.args.dtype)
 
