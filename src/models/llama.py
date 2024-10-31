@@ -84,21 +84,23 @@ class LlamaAttention(AttentionForCausalLM):
         if use_cache:
             xk, xv = self.apply_cache(xk, xv, start_pos)
 
-        xk = self.repeat_kv(xk)
-        xv = self.repeat_kv(xv)
+        # TEST
+        # xk = self.repeat_kv(xk)
+        # xv = self.repeat_kv(xv)
+        xk, xv = self.repeat_kv(xk, xv, self.n_rep)
 
         output = self.apply_attention(xq, xk, xv, mask)
         return self.wo(output)
 
-    def repeat_kv(self, x: torch.Tensor) -> torch.Tensor:
-        bs, seqlen, n_kv_heads, head_dim = x.shape
-        if self.n_rep == 1:
-            return x
-        return (
-            x[:, :, :, None, :]
-            .expand(bs, seqlen, n_kv_heads, self.n_rep, head_dim)
-            .reshape(bs, seqlen, n_kv_heads * self.n_rep, head_dim)
-        )
+    # def repeat_kv(self, x: torch.Tensor) -> torch.Tensor:
+    #     bs, seqlen, n_kv_heads, head_dim = x.shape
+    #     if self.n_rep == 1:
+    #         return x
+    #     return (
+    #         x[:, :, :, None, :]
+    #         .expand(bs, seqlen, n_kv_heads, self.n_rep, head_dim)
+    #         .reshape(bs, seqlen, n_kv_heads * self.n_rep, head_dim)
+    #     )
 
 
 class LlamaFeedForward(nn.Module):
@@ -335,8 +337,9 @@ class LoraLlamaAttention(LlamaAttention):
         if use_cache:
             xk, xv = self.apply_cache(xk, xv, start_pos)
 
-        xk = self.repeat_kv(xk)
-        xv = self.repeat_kv(xv)
+        # xk = self.repeat_kv(xk)
+        # xv = self.repeat_kv(xv)
+        xk, xv = self.repeat_kv(xk, xv, self.n_rep)
 
         output = self.apply_attention(xq, xk, xv, mask)
 

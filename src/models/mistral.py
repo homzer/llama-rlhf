@@ -19,12 +19,6 @@ from src.utils import apply_rotary_emb, precompute_freqs_cis, apply_lora
 from src.parallel.utils import set_model_parallel_barrier
 
 
-def repeat_kv(keys: torch.Tensor, values: torch.Tensor, repeats: int):
-    keys = torch.repeat_interleave(keys, repeats=repeats, dim=2)
-    values = torch.repeat_interleave(values, repeats=repeats, dim=2)
-    return keys, values
-
-
 class MistralAttention(AttentionForCausalLM):
     def __init__(self, args: MistralArgs):
         super().__init__(args.max_seq_len)
@@ -105,10 +99,10 @@ class MistralAttention(AttentionForCausalLM):
 
         if positions.shape[0] > 1:
             # prefill
-            xk, xv = repeat_kv(xk, xv, self.repeats)
+            xk, xv = self.repeat_kv(xk, xv, self.repeats)
         else:
             cur_pos = positions[-1].item() + 1
-            xk, xv = repeat_kv(
+            xk, xv = self.repeat_kv(
                 self.cache_k[:bsz, :cur_pos, ...],
                 self.cache_v[:bsz, :cur_pos, ...],
                 self.repeats
@@ -134,7 +128,7 @@ class MistralAttention(AttentionForCausalLM):
         if use_cache:
             xk, xv = self.apply_cache(xk, xv, start_pos)
         else:
-            xk, xv = repeat_kv(xk, xv, self.repeats)
+            xk, xv = self.repeat_kv(xk, xv, self.repeats)
 
         output = self.apply_attention(xq, xk, xv, mask[None, None, ...] if mask is not None else None)
 
@@ -428,7 +422,7 @@ class LoraMistralAttention(MistralAttention):
         if use_cache:
             xk, xv = self.apply_cache(xk, xv, start_pos)
         else:
-            xk, xv = repeat_kv(xk, xv, self.repeats)
+            xk, xv = self.repeat_kv(xk, xv, self.repeats)
 
         output = self.apply_attention(xq, xk, xv, mask[None, None, ...] if mask is not None else None)
         return self.wo(output) + apply_lora(output, self.lora_a_wo, self.lora_b_wo)

@@ -89,6 +89,9 @@ class LlamaAttentionHf(AttentionForCausalLM):
         if use_cache:
             xk, xv = self.apply_cache(xk, xv, start_pos)
 
+        # TODO
+        xk, xv = self.repeat_kv(xk, xv, self.n_rep)
+
         output = self.apply_attention(xq, xk, xv, mask)
 
         return self.o_proj(output)
@@ -98,10 +101,6 @@ class LlamaFeedForwardHf(nn.Module):
     def __init__(self, args: LlamaArgsHf):
         super().__init__()
         self.args = args
-        # hidden_dim = int(2 * (4 * args.dim) / 3)
-        # hidden_dim = args.multiple_of * ((hidden_dim + args.multiple_of - 1) // args.multiple_of)
-        # self.hidden_dim = hidden_dim
-        # self.dim = args.dim
         self.gate_proj = None
         self.down_proj = None
         self.up_proj = None
@@ -331,6 +330,9 @@ class LoraLlamaAttentionHf(LlamaAttentionHf):
 
         if use_cache:
             xk, xv = self.apply_cache(xk, xv, start_pos)
+
+        # TODO
+        xk, xv = self.repeat_kv(xk, xv, self.n_rep)
 
         output = self.apply_attention(xq, xk, xv, mask)
 

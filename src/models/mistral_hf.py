@@ -11,7 +11,6 @@ from fairscale.nn.model_parallel.layers import (
 )
 
 from src.checkpoint import CheckpointForLlama
-from src.models.mistral import repeat_kv
 from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs, AttentionForCausalLM
 from src.models.modeling_acts import RMSNorm, Clamp, RotaryEmbedding
 from src.models.modeling_args import MistralArgsHf, LoraMistralArgsHf
@@ -93,8 +92,9 @@ class MistralAttentionHf(AttentionForCausalLM):
 
         if use_cache:
             xk, xv = self.apply_cache(xk, xv, start_pos)
-        else:
-            xk, xv = repeat_kv(xk, xv, self.n_rep)
+
+        # TODO
+        xk, xv = self.repeat_kv(xk, xv, self.n_rep)
 
         output = self.apply_attention(xq, xk, xv, mask[None, None, ...] if mask is not None else None)
 
@@ -281,8 +281,9 @@ class LoraMistralAttentionHf(MistralAttentionHf):
 
         if use_cache:
             xk, xv = self.apply_cache(xk, xv, start_pos)
-        else:
-            xk, xv = repeat_kv(xk, xv, self.n_rep)
+
+        # TODO
+        xk, xv = self.repeat_kv(xk, xv, self.n_rep)
 
         output = self.apply_attention(xq, xk, xv, mask[None, None, ...] if mask is not None else None)
 

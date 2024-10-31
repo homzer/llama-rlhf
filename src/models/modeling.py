@@ -295,6 +295,12 @@ class AttentionForCausalLM(nn.Module):
         output = output.transpose(1, 2).contiguous().view(bsz, seqlen, -1)
         return output
 
+    @staticmethod
+    def repeat_kv(keys: torch.Tensor, values: torch.Tensor, repeats: int):
+        keys = torch.repeat_interleave(keys, repeats=repeats, dim=2)
+        values = torch.repeat_interleave(values, repeats=repeats, dim=2)
+        return keys, values
+
     def flush(self):
         """ Clean cache for next inference. """
         self.cache_v = None
@@ -311,3 +317,6 @@ class AttentionForCausalLM(nn.Module):
         assert len(indices.shape) == 1
         self.cache_k = self.cache_k[indices]
         self.cache_v = self.cache_v[indices]
+
+
+
