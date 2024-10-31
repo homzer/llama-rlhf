@@ -5,7 +5,7 @@ import sys
 import torch
 from fairscale.nn.model_parallel.initialize import get_data_parallel_world_size, initialize_model_parallel, \
     get_model_parallel_world_size, get_model_parallel_rank, get_model_parallel_src_rank, get_data_parallel_rank, \
-    get_model_parallel_group, get_data_parallel_group, get_pipeline_parallel_group
+    get_model_parallel_group, get_data_parallel_group, get_pipeline_parallel_group, get_pipeline_parallel_ranks
 from torch.distributed import init_process_group
 
 from src.utils import set_seed
@@ -55,6 +55,20 @@ def get_pipeline_parallel_src_rank() -> int:
     global_rank = torch.distributed.get_rank()
     local_work_size = get_pipeline_parallel_world_size()
     return (global_rank // local_work_size) * local_work_size
+
+
+def get_pipeline_parallel_next_rank() -> int:
+    """ Return the global rank that follows the caller in the pipeline. """
+    rank = get_pipeline_parallel_rank()
+    world_size = get_pipeline_parallel_world_size()
+    return get_pipeline_parallel_ranks()[(rank + 1) % world_size]
+
+
+def get_pipeline_parallel_prev_rank() -> int:
+    """ Return the global rank that precedes the caller in the pipeline. """
+    rank = get_pipeline_parallel_rank()
+    world_size = get_pipeline_parallel_world_size()
+    return get_pipeline_parallel_ranks()[(rank - 1) % world_size]
 
 
 ParallelInfos = collections.namedtuple("ParallelInfos", [
