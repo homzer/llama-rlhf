@@ -5,7 +5,7 @@ import fire
 import torch
 from torch.utils.data import DataLoader
 
-from src.dataset import PairwiseDataset, ChatTemplateDataset
+from src.dataset import PairwiseDataset, ChatTemplateDataset, JsonDataset
 from src.entities import Timer
 from src.modeling import get_parallel_model
 from src.parallel.utils import setup_model_parallel, set_barrier
@@ -13,6 +13,56 @@ from src.ppo.buffer import LogitsRolloutBuffer
 from src.ppo.collector import LogitsBufferCollector
 from src.trainer import ParallelSolverDPOTrainer
 from src.utils import json_load
+
+
+def collect_reference_buffer(
+        dataset: JsonDataset,
+        reference_ckpt_dir: str,
+        reference_model_type: str,
+        reference_config_file: str,
+        reference_tokenizer_file: str,
+        forward_batch_size: int,
+        max_seq_len: int,
+        dtype: str,
+        use_chat_template: bool
+) -> (LogitsRolloutBuffer, LogitsBufferCollector):
+    reference, reference_tokenizer = get_parallel_model(
+        model_type=reference_model_type,
+        config_file=reference_config_file,
+        tokenizer_file=reference_tokenizer_file,
+        max_seq_len=max_seq_len,
+        dtype=dtype
+    )
+    if use_chat_template:
+        dataset = ChatTemplateDataset(dataset, reference_tokenizer)
+    dataloader = DataLoader(dataset, batch_size=forward_batch_size)
+    reference.load(reference_ckpt_dir)
+    reference_buffer_collector = LogitsBufferCollector(
+        model=reference,
+        tokenizer=reference_tokenizer,
+        max_seq_len=max_seq_len
+    )
+    ref_chosen_rollout_buffer = LogitsRolloutBuffer()
+    ref_rejected_rollout_buffer = LogitsRolloutBuffer()
+    timer = Timer(len(dataloader), episode=10)
+    for data in dataloader:
+        timer.step()
+        ref_chosen_rollout_buffer.extend(
+            reference_buffer_collector.forward(data["instruction"], data["chosen"])
+        )
+        ref_rejected_rollout_buffer.extend(
+            reference_buffer_collector.forward(data["instruction"], data["rejected"])
+        )
+    assert len(ref_chosen_rollout_buffer) == len(ref_rejected_rollout_buffer)
+
+    reference.cpu()
+    del reference
+    del reference_buffer_collector
+    torch.cuda.empty_cache()
+    gc.collect()
+    set_barrier()
+
+    return ref_chosen_rollout_buffer, ref_rejected_rollout_buffer
 
 
 def run(
@@ -43,7 +93,7 @@ def run(
     datalist = json_load(train_file)
     chunk_size = chunk_size or len(datalist)
     local_epochs = len(datalist) // chunk_size
-    begin_global_epoch = begin_epoch // epochs
+    begin_global_epoch = begin_epoch // local_epochs
     begin_local_epoch = begin_epoch % local_epochs
     for global_epoch in range(begin_global_epoch, epochs):
         for local_epoch in range(begin_local_epoch, local_epochs):
@@ -63,44 +113,20 @@ def run(
                 ref_chosen_rollout_buffer.load(os.path.join(ref_chosen_buffer_save_dir, "buffer.jsonl"))
                 ref_rejected_rollout_buffer.load(os.path.join(ref_rejected_buffer_save_dir, "buffer.jsonl"))
             else:
-                reference, reference_tokenizer = get_parallel_model(
-                    model_type=policy_model_type,
-                    config_file=policy_config_file,
-                    tokenizer_file=policy_tokenizer_file,
+                ref_chosen_rollout_buffer, ref_rejected_rollout_buffer = collect_reference_buffer(
+                    dataset=dataset,
+                    reference_ckpt_dir=reference_ckpt_dir,
+                    reference_model_type=policy_model_type,
+                    reference_config_file=policy_config_file,
+                    reference_tokenizer_file=policy_tokenizer_file,
+                    forward_batch_size=forward_batch_size,
                     max_seq_len=max_seq_len,
-                    dtype=dtype
+                    dtype=dtype,
+                    use_chat_template=use_chat_template
                 )
-                if use_chat_template:
-                    dataset = ChatTemplateDataset(dataset, reference_tokenizer)
-                dataloader = DataLoader(dataset, batch_size=forward_batch_size)
-                reference.load(reference_ckpt_dir)
-                reference_buffer_collector = LogitsBufferCollector(
-                    model=reference,
-                    tokenizer=reference_tokenizer,
-                    max_seq_len=max_seq_len
-                )
-                ref_chosen_rollout_buffer = LogitsRolloutBuffer()
-                ref_rejected_rollout_buffer = LogitsRolloutBuffer()
-                timer = Timer(len(dataloader), episode=10)
-                for data in dataloader:
-                    timer.step()
-                    ref_chosen_rollout_buffer.extend(
-                        reference_buffer_collector.forward(data["instruction"], data["chosen"])
-                    )
-                    ref_rejected_rollout_buffer.extend(
-                        reference_buffer_collector.forward(data["instruction"], data["rejected"])
-                    )
-                assert len(ref_chosen_rollout_buffer) == len(ref_rejected_rollout_buffer)
-
                 if parallel_infos.local_rank == 0:
                     ref_chosen_rollout_buffer.save(ref_chosen_buffer_save_dir)
                     ref_rejected_rollout_buffer.save(ref_rejected_buffer_save_dir)
-
-                reference.cpu()
-                del reference
-                del reference_buffer_collector
-                torch.cuda.empty_cache()
-                gc.collect()
                 set_barrier()
 
             # policy DPO training ...

@@ -6,7 +6,8 @@ from typing import List
 import torch
 import torch.nn as nn
 
-from src.criterion import PairwiseScoreLoss, KLDivLoss, DPOLoss, ReverseKLDivLoss, JSDivLoss, LastTokenScoreLoss
+from src.criterion import PairwiseScoreLoss, KLDivLoss, DPOLoss, ReverseKLDivLoss, JSDivLoss, LastTokenScoreLoss, \
+    SimPOLoss
 from src.models.modeling import Module, ParallelModule, ParallelModelForCausalLM, ParallelVerifier
 from src.tokenizers import Tokenizer
 from src.utils import truncate
@@ -542,6 +543,65 @@ class ParallelSolverDPOTrainer(ParallelSolverTrainer):
             logits=chosen_logits,
             loss=loss.item(),
             loss_dpo=dpo_loss.item(),
+            loss_ce=ce_loss.item() if isinstance(ce_loss, torch.Tensor) else ce_loss
+        )
+
+
+class ParallelSolverSimPOTrainer(ParallelSolverTrainer):
+    def __init__(
+            self,
+            model: ParallelModelForCausalLM,
+            tokenizer: Tokenizer,
+            optimizer: torch.optim.Optimizer,
+            max_seq_len: int,
+            beta: float = 2.0,
+            gamma: float = 1.0,
+            ce_coef: float = 0.0,
+            accumulation_steps: int = 1
+    ):
+        super().__init__(
+            model=model,
+            tokenizer=tokenizer,
+            optimizer=optimizer,
+            max_seq_len=max_seq_len,
+            accumulation_steps=accumulation_steps
+        )
+        self.ce_coef = ce_coef
+        self.criterion_ce = nn.CrossEntropyLoss(ignore_index=-100)
+        self.criterion_simpo = SimPOLoss(beta=beta, gamma=gamma)
+
+    def simpo_forward(self, instructions: List[str], chosen: List[str], rejected: List[str]):
+        chosen_examples = self.prepare_for_training(instructions, chosen)
+        rejected_examples = self.prepare_for_training(instructions, rejected)
+
+        chosen_logits = self.model.forward(chosen_examples.tokens).logits
+        rejected_logits = self.model.forward(rejected_examples.tokens).logits
+
+        simpo_loss = self.criterion_simpo.forward(
+            chosen_logits=chosen_logits,
+            rejected_logits=rejected_logits,
+            chosen_labels=chosen_examples.labels,
+            rejected_labels=rejected_examples.labels,
+            chosen_masks=chosen_examples.masks,
+            rejected_masks=rejected_examples.masks,
+        )
+        loss = simpo_loss
+
+        ce_loss = 0.
+        if self.ce_coef != 0:
+            ce_loss = self.ce_coef * self.criterion_ce.forward(
+                input=chosen_logits.view(-1, chosen_logits.size(-1)),
+                target=chosen_examples.labels.view(-1).to(chosen_logits.device)
+            )
+            loss += ce_loss
+
+        self._back_propagation(loss)
+
+        Output = collections.namedtuple('Output', ['logits', 'loss', 'loss_simpo', 'loss_ce'])
+        return Output(
+            logits=chosen_logits,
+            loss=loss.item(),
+            loss_simpo=simpo_loss.item(),
             loss_ce=ce_loss.item() if isinstance(ce_loss, torch.Tensor) else ce_loss
         )
 
