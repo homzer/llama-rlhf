@@ -48,9 +48,10 @@ def run(
         temperature: float = 1.0,
         top_p: float = 1.0,
         use_chat_template: bool = False,
+        model_parallel_size: int = None,
         seed: int = None
 ):
-    setup_model_parallel(seed=seed)
+    setup_model_parallel(model_parallel_size=model_parallel_size, seed=seed)
     policy_config_file = policy_config_file or policy_ckpt_dir
     policy_tokenizer_file = policy_tokenizer_file or policy_ckpt_dir
     reviser_config_file = reviser_config_file or reviser_ckpt_dir
