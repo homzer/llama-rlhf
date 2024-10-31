@@ -204,6 +204,21 @@ class CheckpointForLlama(Checkpoint):
         super().__init__(col_parallel_names, row_parallel_names)
 
 
+class CheckpointForLlamaHf(Checkpoint):
+    def __init__(self):
+        col_parallel_names = [
+            "wq.weight", "wk.weight", "wv.weight", "w1.weight", "w3.weight", "output.weight",
+            "wq.bias", "wk.bias", "wv.bias", "w1.bias", "w3.bias", "output.bias",
+            "q_proj.weight", "k_proj.weight", "v_proj.weight", "gate_proj.weight", "up_proj.weight",
+            "q_proj.bias", "k_proj.bias", "v_proj.bias", "gate_proj.bias", "up_proj.bias",
+        ]
+        row_parallel_names = [
+            "wo.weight", "w2.weight", "tok_embeddings.weight",
+            "o_proj.weight", "down_proj.weight", "embed_tokens.weight", "lm_head.weight", "lm_head.bias"
+        ]
+        super().__init__(col_parallel_names, row_parallel_names)
+
+
 class CheckpointForLlama3(Checkpoint):
     def __init__(self):
         col_parallel_names = [

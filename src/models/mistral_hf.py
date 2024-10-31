@@ -10,7 +10,7 @@ from fairscale.nn.model_parallel.layers import (
     ParallelEmbedding
 )
 
-from src.checkpoint import CheckpointForLlama
+from src.checkpoint import CheckpointForLlamaHf
 from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs, AttentionForCausalLM
 from src.models.modeling_acts import RMSNorm, Clamp, RotaryEmbedding
 from src.models.modeling_args import MistralArgsHf, LoraMistralArgsHf
@@ -213,7 +213,7 @@ class MistralHf(ParallelModelForCausalLM):
         self.args = args
         self.model = MistralModelHf(args)
         self.lm_head = None
-        self.checkpoint = CheckpointForLlama()
+        self.checkpoint = CheckpointForLlamaHf()
 
     def init_weights(self):
         self.model.init_weights()

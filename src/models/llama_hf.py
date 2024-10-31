@@ -10,7 +10,7 @@ from fairscale.nn.model_parallel.layers import (
     ParallelEmbedding
 )
 
-from src.checkpoint import CheckpointForLlama
+from src.checkpoint import CheckpointForLlamaHf
 from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs, AttentionForCausalLM
 from src.models.modeling_acts import RMSNorm, Clamp, RotaryEmbedding, LogitsNormalize
 from src.models.modeling_args import LlamaArgsHf, LoraLlamaArgsHf
@@ -205,7 +205,7 @@ class LlamaHf(ParallelModelForCausalLM):
         self.model = LlamaModelHf(args)
         self.lm_head = None
         self.logits_norm = LogitsNormalize(enable=self.args.use_logits_normalize)
-        self.checkpoint = CheckpointForLlama()
+        self.checkpoint = CheckpointForLlamaHf()
 
     def init_weights(self):
         self.model.init_weights()
