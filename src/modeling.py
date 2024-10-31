@@ -43,7 +43,8 @@ from src.tokenizers import (
     Llama3Tokenizer,
     MistralTokenizer,
     QwenTokenizer,
-    BaichuanTokenizer
+    BaichuanTokenizer,
+    LlamaTokenizerHf
 )
 
 
@@ -95,7 +96,7 @@ VERIFIERS = {
 
 TOKENIZERS = {
     "llama": LlamaTokenizer,
-    "llama-hf": LlamaTokenizer,
+    "llama-hf": LlamaTokenizerHf,
     "llama3": Llama3Tokenizer,
     "mistral": MistralTokenizer,
     "mistral-hf": MistralTokenizer,
