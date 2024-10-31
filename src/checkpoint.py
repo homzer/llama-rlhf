@@ -127,7 +127,7 @@ class Checkpoint:
             if os.path.exists(os.path.join(ckpt_dir, "pytorch_model.bin")):
                 split_files = [os.path.join(ckpt_dir, "pytorch_model.bin")]
             else:
-                split_files = sorted(Path(ckpt_dir).glob("*.safetensors"))
+                split_files = sorted(Path(ckpt_dir).glob("model*.safetensors"))
                 if len(split_files) == 0:
                     split_files = sorted(Path(ckpt_dir).glob("pytorch_model*.bin"))
                     if len(split_files) == 0:

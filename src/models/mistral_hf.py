@@ -429,18 +429,31 @@ class LoraMistralHf(MistralHf):
     def init_weights(self):
         super().init_weights()
 
-        self.lora_a_lm_head = nn.Linear(
+        self.lora_a_lm_head = RowParallelLinear(
             self.args.hidden_size,
             self.args.r,
-            bias=False
+            bias=False,
+            init_method=init.xavier_normal_,
         ).type(self.args.lora_dtype)
-        self.lora_b_lm_head = ColumnParallelLinear(
+        self.lora_b_lm_head = nn.Linear(
             self.args.r,
             self.args.vocab_size,
-            bias=False,
-            gather_output=True,
-            init_method=init.zeros_
+            bias=False
         ).type(self.args.lora_dtype)
+        init.zeros_(self.lora_b_lm_head.weight)
+
+        # self.lora_a_lm_head = nn.Linear(
+        #     self.args.hidden_size,
+        #     self.args.r,
+        #     bias=False
+        # ).type(self.args.lora_dtype)
+        # self.lora_b_lm_head = ColumnParallelLinear(
+        #     self.args.r,
+        #     self.args.vocab_size,
+        #     bias=False,
+        #     gather_output=True,
+        #     init_method=init.zeros_
+        # ).type(self.args.lora_dtype)
 
         # Freeze parameters
         self._freeze()
