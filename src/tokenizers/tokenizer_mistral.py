@@ -1,13 +1,13 @@
 from typing import List
 
-from transformers import LlamaTokenizer
+from transformers import AutoTokenizer
 
 from src.tokenizers import Tokenizer
 
 
 class MistralTokenizer(Tokenizer):
     def __init__(self, model_dir: str):
-        self.model = LlamaTokenizer.from_pretrained(model_dir)
+        self.model = AutoTokenizer.from_pretrained(model_dir)
         super().__init__(
             vocab_size=len(self.model.get_vocab()),
             bos_id=self.model.bos_token_id,
