@@ -97,22 +97,21 @@ class QwenAttention(AttentionForCausalLM):
         if use_cache:
             xk, xv = self.apply_cache(xk, xv, start_pos)
 
-        xk = self.repeat_kv(xk)
-        xv = self.repeat_kv(xv)
+        xk, xv = self.repeat_kv(xk, xv, self.n_rep)
 
         output = self.apply_attention(xq, xk, xv, mask)
         return self.o_proj(output)
 
     # Copied from src.models.llama_70B.LlamaAttention70B.repeat_kv
-    def repeat_kv(self, x: torch.Tensor) -> torch.Tensor:
-        bs, seqlen, n_kv_heads, head_dim = x.shape
-        if self.n_rep == 1:
-            return x
-        return (
-            x[:, :, :, None, :]
-            .expand(bs, seqlen, n_kv_heads, self.n_rep, head_dim)
-            .reshape(bs, seqlen, n_kv_heads * self.n_rep, head_dim)
-        )
+    # def repeat_kv(self, x: torch.Tensor) -> torch.Tensor:
+    #     bs, seqlen, n_kv_heads, head_dim = x.shape
+    #     if self.n_rep == 1:
+    #         return x
+    #     return (
+    #         x[:, :, :, None, :]
+    #         .expand(bs, seqlen, n_kv_heads, self.n_rep, head_dim)
+    #         .reshape(bs, seqlen, n_kv_heads * self.n_rep, head_dim)
+    #     )
 
 
 class QwenFeedForward(nn.Module):
@@ -293,8 +292,9 @@ class LoraQwenAttention(QwenAttention):
         if use_cache:
             xk, xv = self.apply_cache(xk, xv, start_pos)
 
-        xk = self.repeat_kv(xk)
-        xv = self.repeat_kv(xv)
+        # xk = self.repeat_kv(xk)
+        # xv = self.repeat_kv(xv)
+        xk, xv = self.repeat_kv(xk, xv, self.n_rep)
 
         output = self.apply_attention(xq, xk, xv, mask)
         return self.o_proj(output) + apply_lora(output, self.lora_a_o_proj, self.lora_b_o_proj)
