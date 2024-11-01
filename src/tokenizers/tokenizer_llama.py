@@ -3,7 +3,7 @@ import re
 from typing import List
 
 from sentencepiece import SentencePieceProcessor
-from transformers import LlamaTokenizer as _LlamaTokenizer
+from transformers import AutoTokenizer
 
 from src.tokenizers.tokenizer import Tokenizer
 
@@ -83,7 +83,7 @@ class LlamaTokenizer(Tokenizer):
 
 class LlamaTokenizerHf(Tokenizer):
     def __init__(self, model_dir: str):
-        self.model = _LlamaTokenizer.from_pretrained(model_dir)
+        self.model = AutoTokenizer.from_pretrained(model_dir)
         super().__init__(
             vocab_size=len(self.model.get_vocab()),
             bos_id=self.model.bos_token_id,
