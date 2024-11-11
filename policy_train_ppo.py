@@ -451,13 +451,13 @@ def run(
         )
 
         torch.save({
-            'obs': rollout_buffer.obs[: max_forward_batch_size],
-            'actions': rollout_buffer.actions[: max_forward_batch_size],
-            'values': rollout_buffer.values[: max_forward_batch_size],
-            'rewards': rollout_buffer.rewards[: max_forward_batch_size],
-            'action_masks': rollout_buffer.action_masks[: max_forward_batch_size],
-            'advantages': rollout_buffer.advantages[: max_forward_batch_size],
-            'returns': rollout_buffer.returns[: max_forward_batch_size]
+            'obs': rollout_buffer.obs,
+            'actions': rollout_buffer.actions,
+            'values': rollout_buffer.values,
+            'rewards': rollout_buffer.rewards,
+            'action_masks': rollout_buffer.action_masks,
+            'advantages': rollout_buffer.advantages,
+            'returns': rollout_buffer.returns
         }, os.path.join(actor_save_dir, f"epoch-{epoch + 1}", "buffer.bin"))
 
         train_critic(
