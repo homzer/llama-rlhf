@@ -163,10 +163,10 @@ class RolloutBuffer:
                     self.rewards[self.action_masks])) / (np.std(self.rewards[self.action_masks]))
                 self.rewards[~ reward_masks] = 0.0
             else:
-                # self.rewards = self.mu + (self.rewards - np.mean(
-                #     self.rewards[self.action_masks]
-                # )) / (np.std(self.rewards[self.action_masks]))
-                self.rewards = self.rewards / np.std(self.rewards[self.action_masks])
+                self.rewards = self.mu + (self.rewards - np.mean(
+                    self.rewards[self.action_masks]
+                )) / (np.std(self.rewards[self.action_masks]))
+
         # Adding KL penalty
         self.rewards += - self.kl_coef * self.compute_kl_penalty()
 
