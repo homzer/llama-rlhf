@@ -293,8 +293,8 @@ def masked_std(x, mask=None, dim: int = -1, keepdim: bool = False, eps: float = 
 
 
 def logits_normalize(x: torch.Tensor, dim=-1):
-    """ Avoid overflowing """
-    return x - torch.max(x, dim=dim, keepdim=True)[0]
+    """ Avoid overflow and underflow """
+    return x - torch.max(x, dim=dim, keepdim=True)[0].detach()
 
 
 def load_safetensors(f: str) -> dict:
