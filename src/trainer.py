@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 
 from src.criterion import PairwiseScoreLoss, KLDivLoss, DPOLoss, ReverseKLDivLoss, JSDivLoss, LastTokenScoreLoss, \
-    SimPOLoss
+    SimPOLoss, ORPOLoss
 from src.models.modeling import Module, ParallelModule, ParallelModelForCausalLM, ParallelVerifier
 from src.tokenizers import Tokenizer
 from src.utils import truncate
@@ -605,6 +605,44 @@ class ParallelSolverSimPOTrainer(ParallelSolverTrainer):
             loss_simpo=simpo_loss.item(),
             loss_ce=ce_loss.item() if isinstance(ce_loss, torch.Tensor) else ce_loss
         )
+
+
+class ParallelSolverORPOTrainer(ParallelSolverTrainer):
+    def __init__(
+            self,
+            model: ParallelModelForCausalLM,
+            tokenizer: Tokenizer,
+            optimizer: torch.optim.Optimizer,
+            max_seq_len: int,
+    ):
+        super().__init__(
+            model=model,
+            tokenizer=tokenizer,
+            optimizer=optimizer,
+            max_seq_len=max_seq_len
+        )
+        self.criterion_orpo = ORPOLoss()
+
+    def orpo_forward(self, instructions: List[str], chosen: List[str], rejected: List[str]):
+        chosen_examples = self.prepare_for_training(instructions, chosen)
+        rejected_examples = self.prepare_for_training(instructions, rejected)
+
+        chosen_logits = self.model.forward(chosen_examples.tokens).logits
+        rejected_logits = self.model.forward(rejected_examples.tokens).logits
+
+        loss = self.criterion_orpo.forward(
+            chosen_logits=chosen_logits,
+            rejected_logits=rejected_logits,
+            chosen_labels=chosen_examples.labels,
+            rejected_labels=rejected_examples.labels,
+            chosen_masks=chosen_examples.masks,
+            rejected_masks=rejected_examples.masks,
+        )
+
+        self._back_propagation(loss)
+
+        Output = collections.namedtuple('Output', ['logits', 'loss'])
+        return Output(logits=chosen_logits, loss=loss.item())
 
 
 class ParallelVerifierTrainer(ParallelTrainer):

@@ -385,7 +385,8 @@ class ORPOLoss(Loss):
             labels=rejected_labels,
             masks=rejected_masks
         )
-        return - F.logsigmoid(torch.log(chosen_odds) - torch.log(rejected_odds))
+        loss = - F.logsigmoid(torch.log(chosen_odds) - torch.log(rejected_odds))
+        return loss.mean()
 
 
 class DiscriminativeDPOLoss(Loss):
