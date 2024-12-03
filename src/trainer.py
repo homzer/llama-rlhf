@@ -484,6 +484,7 @@ class ParallelSolverDPOTrainer(ParallelSolverTrainer):
             tokenizer: Tokenizer,
             optimizer: torch.optim.Optimizer,
             max_seq_len: int,
+            beta: float = 0.1,
             ce_coef: float = 0.0,
             accumulation_steps: int = 1
     ):
@@ -496,7 +497,7 @@ class ParallelSolverDPOTrainer(ParallelSolverTrainer):
         )
         self.ce_coef = ce_coef
         self.criterion_ce = nn.CrossEntropyLoss(ignore_index=-100)
-        self.criterion_dpo = DPOLoss()
+        self.criterion_dpo = DPOLoss(beta=beta)
 
     def dpo_forward(
             self,

@@ -81,6 +81,7 @@ def run(
         lora_rank: int = -1,
         lora_dtype: str = "bfloat16",
         chunk_size: int = None,
+        beta: float = 0.1,
         epochs: int = 1,
         begin_epoch: int = 0,
         use_chat_template: bool = False,
@@ -145,6 +146,7 @@ def run(
                 tokenizer=policy_tokenizer,
                 optimizer=optimizer,
                 max_seq_len=max_seq_len,
+                beta=beta
             )
             policy.load(policy_ckpt_dir, merge_lora=True) if (
                     epoch == 0

@@ -29,6 +29,7 @@ def run(
         lora_dtype: str = "bfloat16",
         chunk_size: int = None,
         epochs: int = 1,
+        ce_coef: float = 0.0,
         begin_epoch: int = 0,
         use_chat_template: bool = False,
         seed: int = None,
@@ -53,7 +54,8 @@ def run(
         optimizer=optimizer,
         max_seq_len=max_seq_len,
         beta=beta,
-        gamma=gamma
+        gamma=gamma,
+        ce_coef=ce_coef
     )
     policy.load(policy_ckpt_dir, merge_lora=True) if (
             begin_epoch == 0
@@ -82,10 +84,10 @@ def run(
                     chosen=data["chosen"],
                     rejected=data["rejected"]
                 )
-                if trainer.step % 100:
+                if trainer.step % 100 == 0:
                     print(f'step {trainer.step} of {len(dataloader)} ---------------')
                     print('SimPO LOSS: ', trainer_outputs.loss_simpo, f'CE LOSS: ', trainer_outputs.loss_ce)
-                    trainer.predict(trainer_outputs.logits, data["instructions"], data["chosen"])
+                    trainer.predict(trainer_outputs.logits, data["instruction"], data["chosen"])
             trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))
 
 
