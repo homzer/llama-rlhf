@@ -23,7 +23,7 @@ def run(
         policy_tokenizer_file: str = None,
         verifier_config_file: str = None,
         verifier_tokenizer_file: str = None,
-        num_samples_generate_per_prompt: int = 1,
+        num_samples_per_prompt: int = 1,
         num_samples_keep_per_prompt: int = 1,
         lora_rank: int = -1,
         lora_dtype: str = "bfloat16",
@@ -68,7 +68,7 @@ def run(
             max_generate_batch_size=max_generate_batch_size,
             temperature=temperature,
             top_p=top_p,
-            num_samples_per_prompt=num_samples_generate_per_prompt
+            num_samples_per_prompt=num_samples_per_prompt
         )
 
         # Collecting verifier buffer
@@ -86,7 +86,7 @@ def run(
         policy_rollout_buffer, verifier_rollout_buffer = select_best_of_n_buffer(
             actor_rollout_buffer=policy_rollout_buffer,
             verifier_rollout_buffer=verifier_rollout_buffer,
-            num_samples_generate_per_prompt=num_samples_generate_per_prompt,
+            num_samples_per_prompt=num_samples_per_prompt,
             num_samples_keep_per_prompt=num_samples_keep_per_prompt,
             use_last_token_reward=False
         )

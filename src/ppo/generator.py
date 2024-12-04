@@ -100,7 +100,7 @@ class ActorGeneratorForCausalLM(GeneratorForCausalLM):
         )
 
 
-class DiversityActorGeneratorForCausalLM(ActorGeneratorForCausalLM):
+class ActorGroupGeneratorForCausalLM(ActorGeneratorForCausalLM):
     def __init__(
             self,
             model: Union[ModelForCausalLM, ParallelModelForCausalLM],
@@ -122,7 +122,7 @@ class DiversityActorGeneratorForCausalLM(ActorGeneratorForCausalLM):
         self.diverse_prob = diverse_prob
         self.recorded_tokens = None
 
-    # TODO: Copied from scr.generator.DiversityGeneratorForCausalLM().sampling()
+    # TODO: Copied from src.generator.DiversityGeneratorForCausalLM().sampling()
     def sampling(self, logits: torch.Tensor, **kwargs) -> torch.Tensor:
         # check for recorded_tokens
         tokens, cur_pos = kwargs.get("tokens"), kwargs.get("cur_pos")

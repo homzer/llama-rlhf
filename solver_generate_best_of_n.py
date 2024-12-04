@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader
 
 from src.dataset import JsonDataset, ChatTemplateDataset, MultiOutputsDataset
 from src.entities import Timer
-from src.generator import DiversityGeneratorForCausalLM, GeneratorForVerifier
+from src.generator import GroupGeneratorForCausalLM, GeneratorForVerifier
 from src.modeling import get_parallel_model, get_parallel_verifier
 from src.parallel.utils import setup_model_parallel, set_barrier
 from src.utils import convert_dataloader_data_to_list, json_dump
@@ -69,7 +69,7 @@ def main(
         dtype=dtype
     )
     policy.load(policy_ckpt_dir)
-    generator = DiversityGeneratorForCausalLM(
+    generator = GroupGeneratorForCausalLM(
         model=policy,
         tokenizer=policy_tokenizer,
         max_seq_len=max_seq_len,

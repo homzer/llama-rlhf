@@ -14,7 +14,7 @@ from src.ppo.generator import (
     CriticGeneratorForCausalLM,
     ActorGeneratorForCausalLM,
     LogitsGeneratorForCausalLM,
-    DiversityActorGeneratorForCausalLM
+    ActorGroupGeneratorForCausalLM
 )
 from src.tokenizers.tokenizer import Tokenizer
 
@@ -70,7 +70,7 @@ class ActorBufferCollector:
         )
 
 
-class DiversityActorBufferCollector:
+class ActorGroupBufferCollector:
     def __init__(
             self,
             actor: Union[ModelForCausalLM, ParallelModelForCausalLM],
@@ -81,7 +81,7 @@ class DiversityActorBufferCollector:
             num_samples_per_prompt: int = 1,
             diverse_prob: float = None
     ):
-        self.generator = DiversityActorGeneratorForCausalLM(
+        self.generator = ActorGroupGeneratorForCausalLM(
             model=actor,
             tokenizer=tokenizer,
             max_seq_len=max_seq_len,

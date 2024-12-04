@@ -1,89 +1,31 @@
-import gc
 import os
 
 import fire
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
 
 from policy_train_ppo import (
     train_critic,
     train_actor,
+    collect_actor_buffer,
     collect_verifier_buffer,
     collect_critic_buffer,
     collect_reference_buffer,
 )
-from src.dataset import JsonDataset, ChatTemplateDataset
-from src.entities import Timer
-from src.modeling import get_parallel_model
-from src.parallel.utils import setup_model_parallel, set_barrier
+from src.dataset import JsonDataset
+from src.parallel.utils import setup_model_parallel
 from src.ppo.buffer import RolloutBuffer, ActorRolloutBuffer, CriticRolloutBuffer
-from src.ppo.collector import DiversityActorBufferCollector
 from src.utils import masked_mean, json_load
-
-
-def collect_actor_buffer(
-        actor_model_type: str,
-        actor_config_file: str,
-        max_seq_len: int,
-        actor_tokenizer_file: str,
-        dtype: str,
-        actor_ckpt_dir: str,
-        epoch: int,
-        actor_save_dir: str,
-        use_chat_template: bool,
-        dataset: JsonDataset,
-        max_generate_batch_size: int,
-        temperature: float,
-        top_p: float,
-        num_samples_per_prompt: int,
-) -> ActorRolloutBuffer:
-    actor, actor_tokenizer = get_parallel_model(
-        model_type=actor_model_type,
-        config_file=actor_config_file,
-        max_seq_len=max_seq_len,
-        tokenizer_file=actor_tokenizer_file,
-        lora_rank=-1,
-        dtype=dtype
-    )
-    actor.load(actor_ckpt_dir if epoch == 0 else os.path.join(actor_save_dir, f"epoch-{epoch}"))
-    actor_buffer_collector = DiversityActorBufferCollector(
-        actor=actor,
-        tokenizer=actor_tokenizer,
-        max_seq_len=max_seq_len,
-        temperature=temperature,
-        top_p=top_p,
-        num_samples_per_prompt=num_samples_per_prompt
-    )
-    actor_rollout_buffer = ActorRolloutBuffer()
-    print('Actor buffer collecting ...')
-    if use_chat_template:
-        dataset = ChatTemplateDataset(dataset, actor_tokenizer)
-    dataloader = DataLoader(dataset, batch_size=max_generate_batch_size)
-    timer = Timer(len(dataloader))
-    for data in dataloader:
-        timer.step()
-        actor_rollout_buffer.extend(actor_buffer_collector.forward(data['instruction']))
-        print(actor_rollout_buffer.instructions[-1], '\n', actor_rollout_buffer.responses[-1])
-
-    actor.cpu()
-    del actor
-    del actor_buffer_collector
-    torch.cuda.empty_cache()
-    gc.collect()
-    set_barrier()
-
-    return actor_rollout_buffer
 
 
 def select_best_of_n_buffer(
         actor_rollout_buffer: ActorRolloutBuffer,
         verifier_rollout_buffer: CriticRolloutBuffer,
-        num_samples_generate_per_prompt: int,
+        num_samples_per_prompt: int,
         num_samples_keep_per_prompt: int,
         use_last_token_reward: bool
 ) -> (ActorRolloutBuffer, CriticRolloutBuffer):
-    num_samples_keep_per_prompt = min(num_samples_generate_per_prompt, num_samples_keep_per_prompt)
+    num_samples_keep_per_prompt = min(num_samples_per_prompt, num_samples_keep_per_prompt)
     if use_last_token_reward:
         scores = []
         for i in range(len(verifier_rollout_buffer)):
@@ -93,10 +35,10 @@ def select_best_of_n_buffer(
     else:
         scores = masked_mean(verifier_rollout_buffer.scores, actor_rollout_buffer.action_masks, dim=-1)
     scores_values, scores_indices = torch.topk(
-        torch.from_numpy(scores).reshape(-1, num_samples_generate_per_prompt),  # numpy does not support topk()
+        torch.from_numpy(scores).reshape(-1, num_samples_per_prompt),  # numpy does not support topk()
         k=num_samples_keep_per_prompt,
     )
-    scores_indices += (torch.arange(0, len(scores_indices)) * num_samples_generate_per_prompt).unsqueeze(-1)
+    scores_indices += (torch.arange(0, len(scores_indices)) * num_samples_per_prompt).unsqueeze(-1)
     scores_indices = scores_indices.reshape(-1).tolist()
 
     # update actor rollout buffer
@@ -129,7 +71,7 @@ def run(
         verifier_config_file: str = None,
         verifier_tokenizer_file: str = None,
         reference_ckpt_dir: str = None,
-        num_samples_generate_per_prompt: int = 5,
+        num_samples_per_prompt: int = 5,
         num_samples_keep_per_prompt: int = 1,
         actor_lora_rank: int = -1,
         actor_lora_dtype: str = "bfloat16",
@@ -182,7 +124,7 @@ def run(
             max_generate_batch_size=max_generate_batch_size,
             temperature=temperature,
             top_p=top_p,
-            num_samples_per_prompt=num_samples_generate_per_prompt
+            num_samples_per_prompt=num_samples_per_prompt
         )
 
         # Collecting verifier buffer
@@ -200,7 +142,7 @@ def run(
         actor_rollout_buffer, verifier_rollout_buffer = select_best_of_n_buffer(
             actor_rollout_buffer=actor_rollout_buffer,
             verifier_rollout_buffer=verifier_rollout_buffer,
-            num_samples_generate_per_prompt=num_samples_generate_per_prompt,
+            num_samples_per_prompt=num_samples_per_prompt,
             num_samples_keep_per_prompt=num_samples_keep_per_prompt,
             use_last_token_reward=use_last_token_reward
         )

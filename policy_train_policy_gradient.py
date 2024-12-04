@@ -77,12 +77,10 @@ def train_policy_gradient(
 def run(
         train_file: str,
         save_dir: str,
-
         policy_ckpt_dir: str,
         policy_model_type: str,
         verifier_ckpt_dir: str,
         verifier_model_type: str,
-
         policy_config_file: str = None,
         policy_tokenizer_file: str = None,
         verifier_config_file: str = None,
@@ -93,6 +91,9 @@ def run(
         max_generate_batch_size: int = 48,
         max_forward_batch_size: int = 24,
         max_seq_len: int = 1024,
+        temperature: float = 1.0,
+        top_p: float = 1.0,
+        num_samples_per_prompt: int = 1,
         chunk_size: int = None,
         inner_epochs: int = 3,
         lr: float = 1e-5,
@@ -125,7 +126,10 @@ def run(
             actor_save_dir=save_dir,
             use_chat_template=use_chat_template,
             dataset=dataset,
-            max_generate_batch_size=max_generate_batch_size
+            max_generate_batch_size=max_generate_batch_size,
+            temperature=temperature,
+            top_p=top_p,
+            num_samples_per_prompt=num_samples_per_prompt
         )
 
         verifier_rollout_buffer = collect_verifier_buffer(

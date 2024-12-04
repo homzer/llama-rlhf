@@ -1,71 +1,12 @@
-import gc
-import os
-
 import fire
 import numpy as np
-import torch
-from torch.utils.data import DataLoader
 
 from policy_train_policy_gradient import train_policy_gradient
-from policy_train_ppo import collect_verifier_buffer
-from src.dataset import JsonDataset, ChatTemplateDataset
-from src.entities import Timer
-from src.modeling import get_parallel_model
-from src.parallel.utils import setup_model_parallel, set_barrier
+from policy_train_ppo import collect_actor_buffer, collect_verifier_buffer
+from src.dataset import JsonDataset
+from src.parallel.utils import setup_model_parallel
 from src.ppo.buffer import CriticRolloutBuffer, RolloutBuffer, ActorRolloutBuffer
-from src.ppo.collector import DiversityActorBufferCollector
 from src.utils import json_load
-
-
-def collect_actor_buffer(
-        actor_model_type: str,
-        actor_config_file: str,
-        max_seq_len: int,
-        actor_tokenizer_file: str,
-        dtype: str,
-        actor_ckpt_dir: str,
-        epoch: int,
-        actor_save_dir: str,
-        use_chat_template: bool,
-        dataset: JsonDataset,
-        max_generate_batch_size: int,
-        num_samples_per_prompt: int,
-) -> ActorRolloutBuffer:
-    actor, actor_tokenizer = get_parallel_model(
-        model_type=actor_model_type,
-        config_file=actor_config_file,
-        max_seq_len=max_seq_len,
-        tokenizer_file=actor_tokenizer_file,
-        lora_rank=-1,
-        dtype=dtype
-    )
-    actor.load(actor_ckpt_dir if epoch == 0 else os.path.join(actor_save_dir, f"epoch-{epoch}"))
-    actor_buffer_collector = DiversityActorBufferCollector(
-        actor=actor,
-        tokenizer=actor_tokenizer,
-        max_seq_len=max_seq_len,
-        temperature=1.0,
-        num_samples_per_prompt=num_samples_per_prompt,
-    )
-    actor_rollout_buffer = ActorRolloutBuffer()
-    print('Actor buffer collecting ...')
-    if use_chat_template:
-        dataset = ChatTemplateDataset(dataset, actor_tokenizer)
-    dataloader = DataLoader(dataset, batch_size=max_generate_batch_size)
-    timer = Timer(len(dataloader))
-    for data in dataloader:
-        timer.step()
-        actor_rollout_buffer.extend(actor_buffer_collector.forward(data['instruction']))
-        print(actor_rollout_buffer.instructions[-1], '\n', actor_rollout_buffer.responses[-1])
-
-    actor.cpu()
-    del actor
-    del actor_buffer_collector
-    torch.cuda.empty_cache()
-    gc.collect()
-    set_barrier()
-
-    return actor_rollout_buffer
 
 
 def compute_rloo_rewards(
