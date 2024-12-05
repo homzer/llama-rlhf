@@ -18,14 +18,6 @@ class Trainer:
     def __init__(self, model: Module, optimizer: torch.optim.Optimizer):
         self.model = model
         self.optimizer = optimizer
-        # To avoid overflowing, will cause performance degradation !!!
-        # if "eps" in self.optimizer.defaults:
-        #     # get trainable dtype
-        #     dtype = optimizer.param_groups[0]['params'][0].dtype
-        #     if dtype == torch.float16:
-        #         self.optimizer.defaults["eps"] = torch.finfo(dtype).tiny
-        #         for group in self.optimizer.param_groups:
-        #             group["eps"] = torch.finfo(dtype).tiny
 
     def forward(self, *args, **kwargs):
         raise NotImplementedError
@@ -83,12 +75,12 @@ class ParallelTrainer(Trainer):
 
     def save_optimizer(self, save_path: str):
         print(f'Saving optimizer to {save_path} ......')
-        if self.model_parallel_src_rank:
+        if self.model_parallel_src_rank == 0:
             if self.model_parallel_rank == 0:
                 os.makedirs(save_path, exist_ok=True)
             set_barrier()
             torch.save(self.optimizer.state_dict(), os.path.join(
-                save_path, f'optimizer.0{self.model_parallel_rank}.bin'))
+                save_path, 'optimizer.%02d.bin' % self.model_parallel_rank))
         set_barrier()
         print(f'Saving done !')
 

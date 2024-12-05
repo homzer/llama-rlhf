@@ -340,6 +340,7 @@ def run(
         temperature: float = 1.0,
         top_p: float = 1.0,
         num_samples_per_prompt: int = 1,
+        epochs: int = 1,
         chunk_size: int = None,
         inner_epochs: int = 1,
         lr: float = 1e-6,
@@ -360,138 +361,144 @@ def run(
 
     datalist = json_load(train_file)
     chunk_size = chunk_size or len(datalist)
-    epochs = len(datalist) // chunk_size
-    for epoch in range(begin_epoch, epochs):
-        print(f"Epoch - {epoch} of {epochs}")
-        dataset = JsonDataset(f=datalist[epoch * chunk_size: (epoch + 1) * chunk_size])
+    local_epochs = len(datalist) // chunk_size
+    begin_global_epoch = begin_epoch // local_epochs
+    begin_local_epoch = begin_epoch % local_epochs
+    for global_epoch in range(begin_global_epoch, epochs):
+        for local_epoch in range(begin_local_epoch, local_epochs):
+            epoch = local_epoch + global_epoch * local_epochs
+            print(f"Epoch - {epoch} of {local_epochs * epochs}")
+            dataset = JsonDataset(f=datalist[local_epoch * chunk_size: (local_epoch + 1) * chunk_size])
+            if len(dataset) == 0:
+                continue
 
-        # Collecting actor buffer
-        actor_rollout_buffer = collect_actor_buffer(
-            actor_model_type=actor_model_type,
-            actor_config_file=actor_config_file,
-            max_seq_len=max_seq_len,
-            actor_tokenizer_file=actor_tokenizer_file,
-            dtype=dtype,
-            actor_ckpt_dir=actor_ckpt_dir,
-            epoch=epoch,
-            actor_save_dir=actor_save_dir,
-            use_chat_template=use_chat_template,
-            dataset=dataset,
-            max_generate_batch_size=max_generate_batch_size,
-            temperature=temperature,
-            top_p=top_p,
-            num_samples_per_prompt=num_samples_per_prompt
-        )
-
-        reference_rollout_buffer = None
-        if reference_ckpt_dir is not None:
-            # Collecting reference logprobs
-            reference_rollout_buffer = collect_reference_buffer(
+            # Collecting actor buffer
+            actor_rollout_buffer = collect_actor_buffer(
                 actor_model_type=actor_model_type,
                 actor_config_file=actor_config_file,
                 max_seq_len=max_seq_len,
                 actor_tokenizer_file=actor_tokenizer_file,
                 dtype=dtype,
-                reference_ckpt_dir=reference_ckpt_dir,
+                actor_ckpt_dir=actor_ckpt_dir,
+                epoch=epoch,
+                actor_save_dir=actor_save_dir,
+                use_chat_template=use_chat_template,
+                dataset=dataset,
+                max_generate_batch_size=max_generate_batch_size,
+                temperature=temperature,
+                top_p=top_p,
+                num_samples_per_prompt=num_samples_per_prompt
+            )
+
+            reference_rollout_buffer = None
+            if reference_ckpt_dir is not None:
+                # Collecting reference logprobs
+                reference_rollout_buffer = collect_reference_buffer(
+                    actor_model_type=actor_model_type,
+                    actor_config_file=actor_config_file,
+                    max_seq_len=max_seq_len,
+                    actor_tokenizer_file=actor_tokenizer_file,
+                    dtype=dtype,
+                    reference_ckpt_dir=reference_ckpt_dir,
+                    actor_rollout_buffer=actor_rollout_buffer,
+                    max_forward_batch_size=max_forward_batch_size
+                )
+
+            # Collecting critic buffer
+            critic_rollout_buffer = collect_critic_buffer(
+                critic_model_type=critic_model_type,
+                critic_config_file=critic_config_file,
+                max_seq_len=max_seq_len,
+                critic_tokenizer_file=critic_tokenizer_file,
+                dtype=dtype,
+                critic_ckpt_dir=critic_ckpt_dir,
+                epoch=epoch,
+                critic_save_dir=critic_save_dir,
                 actor_rollout_buffer=actor_rollout_buffer,
                 max_forward_batch_size=max_forward_batch_size
             )
 
-        # Collecting critic buffer
-        critic_rollout_buffer = collect_critic_buffer(
-            critic_model_type=critic_model_type,
-            critic_config_file=critic_config_file,
-            max_seq_len=max_seq_len,
-            critic_tokenizer_file=critic_tokenizer_file,
-            dtype=dtype,
-            critic_ckpt_dir=critic_ckpt_dir,
-            epoch=epoch,
-            critic_save_dir=critic_save_dir,
-            actor_rollout_buffer=actor_rollout_buffer,
-            max_forward_batch_size=max_forward_batch_size
-        )
+            # Collecting verifier buffer
+            verifier_rollout_buffer = collect_verifier_buffer(
+                verifier_model_type=verifier_model_type,
+                verifier_config_file=verifier_config_file,
+                max_seq_len=max_seq_len,
+                verifier_tokenizer_file=verifier_tokenizer_file,
+                dtype=dtype,
+                verifier_ckpt_dir=verifier_ckpt_dir,
+                actor_rollout_buffer=actor_rollout_buffer,
+                max_forward_batch_size=max_forward_batch_size
+            )
 
-        # Collecting verifier buffer
-        verifier_rollout_buffer = collect_verifier_buffer(
-            verifier_model_type=verifier_model_type,
-            verifier_config_file=verifier_config_file,
-            max_seq_len=max_seq_len,
-            verifier_tokenizer_file=verifier_tokenizer_file,
-            dtype=dtype,
-            verifier_ckpt_dir=verifier_ckpt_dir,
-            actor_rollout_buffer=actor_rollout_buffer,
-            max_forward_batch_size=max_forward_batch_size
-        )
+            if use_last_token_reward:
+                rewards = []
+                for i in range(len(verifier_rollout_buffer)):
+                    last_idx = np.nonzero(actor_rollout_buffer.action_masks[i])[0][-1].item()
+                    rewards.append(verifier_rollout_buffer.scores[i][last_idx])
+                print("Average Rewards: ", np.mean(rewards))
+            else:
+                print("Average Rewards: ", masked_mean(verifier_rollout_buffer.scores, actor_rollout_buffer.action_masks))
 
-        if use_last_token_reward:
-            rewards = []
-            for i in range(len(verifier_rollout_buffer)):
-                last_idx = np.nonzero(actor_rollout_buffer.action_masks[i])[0][-1].item()
-                rewards.append(verifier_rollout_buffer.scores[i][last_idx])
-            print("Average Rewards: ", np.mean(rewards))
-        else:
-            print("Average Rewards: ", masked_mean(verifier_rollout_buffer.scores, actor_rollout_buffer.action_masks))
+            rollout_buffer = RolloutBuffer(
+                obs=actor_rollout_buffer.obs,
+                actions=actor_rollout_buffer.actions,
+                rewards=verifier_rollout_buffer.scores,
+                values=critic_rollout_buffer.scores,
+                action_logits=actor_rollout_buffer.action_logits,
+                action_masks=actor_rollout_buffer.action_masks,
+                action_logprobs=actor_rollout_buffer.action_logprobs,
+                ref_action_logprobs=reference_rollout_buffer.output_tokens_logps if (
+                        reference_rollout_buffer is not None
+                ) else None,
+                use_last_token_reward=use_last_token_reward,
+                kl_coef=kl_coef
+            )
 
-        rollout_buffer = RolloutBuffer(
-            obs=actor_rollout_buffer.obs,
-            actions=actor_rollout_buffer.actions,
-            rewards=verifier_rollout_buffer.scores,
-            values=critic_rollout_buffer.scores,
-            action_logits=actor_rollout_buffer.action_logits,
-            action_masks=actor_rollout_buffer.action_masks,
-            action_logprobs=actor_rollout_buffer.action_logprobs,
-            ref_action_logprobs=reference_rollout_buffer.output_tokens_logps if (
-                    reference_rollout_buffer is not None
-            ) else None,
-            use_last_token_reward=use_last_token_reward,
-            kl_coef=kl_coef
-        )
+            # Actor training
+            train_actor(
+                actor_model_type=actor_model_type,
+                actor_config_file=actor_config_file,
+                max_seq_len=max_seq_len,
+                actor_tokenizer_file=actor_tokenizer_file,
+                actor_lora_rank=actor_lora_rank,
+                dtype=dtype,
+                actor_lora_dtype=actor_lora_dtype,
+                lr=lr,
+                epoch=epoch,
+                actor_ckpt_dir=actor_ckpt_dir,
+                actor_save_dir=actor_save_dir,
+                rollout_buffer=rollout_buffer,
+                actor_max_batch_size=actor_max_batch_size,
+                inner_epochs=inner_epochs,
+                clip_range=clip_range
+            )
 
-        # Actor training
-        train_actor(
-            actor_model_type=actor_model_type,
-            actor_config_file=actor_config_file,
-            max_seq_len=max_seq_len,
-            actor_tokenizer_file=actor_tokenizer_file,
-            actor_lora_rank=actor_lora_rank,
-            dtype=dtype,
-            actor_lora_dtype=actor_lora_dtype,
-            lr=lr,
-            epoch=epoch,
-            actor_ckpt_dir=actor_ckpt_dir,
-            actor_save_dir=actor_save_dir,
-            rollout_buffer=rollout_buffer,
-            actor_max_batch_size=actor_max_batch_size,
-            inner_epochs=inner_epochs,
-            clip_range=clip_range
-        )
+            torch.save({
+                'obs': rollout_buffer.obs,
+                'actions': rollout_buffer.actions,
+                'values': rollout_buffer.values,
+                'rewards': rollout_buffer.rewards,
+                'action_masks': rollout_buffer.action_masks,
+                'advantages': rollout_buffer.advantages,
+                'returns': rollout_buffer.returns
+            }, os.path.join(actor_save_dir, f"epoch-{epoch + 1}", "buffer.bin"))
 
-        torch.save({
-            'obs': rollout_buffer.obs,
-            'actions': rollout_buffer.actions,
-            'values': rollout_buffer.values,
-            'rewards': rollout_buffer.rewards,
-            'action_masks': rollout_buffer.action_masks,
-            'advantages': rollout_buffer.advantages,
-            'returns': rollout_buffer.returns
-        }, os.path.join(actor_save_dir, f"epoch-{epoch + 1}", "buffer.bin"))
-
-        train_critic(
-            critic_model_type=critic_model_type,
-            critic_config_file=critic_config_file,
-            max_seq_len=max_seq_len,
-            critic_tokenizer_file=critic_tokenizer_file,
-            critic_lora_rank=critic_lora_rank,
-            dtype=dtype,
-            lr=lr,
-            critic_lora_dtype=critic_lora_dtype,
-            critic_ckpt_dir=critic_ckpt_dir,
-            epoch=epoch,
-            critic_save_dir=critic_save_dir,
-            rollout_buffer=rollout_buffer,
-            critic_max_batch_size=critic_max_batch_size,
-            inner_epochs=inner_epochs
-        )
+            train_critic(
+                critic_model_type=critic_model_type,
+                critic_config_file=critic_config_file,
+                max_seq_len=max_seq_len,
+                critic_tokenizer_file=critic_tokenizer_file,
+                critic_lora_rank=critic_lora_rank,
+                dtype=dtype,
+                lr=lr,
+                critic_lora_dtype=critic_lora_dtype,
+                critic_ckpt_dir=critic_ckpt_dir,
+                epoch=epoch,
+                critic_save_dir=critic_save_dir,
+                rollout_buffer=rollout_buffer,
+                critic_max_batch_size=critic_max_batch_size,
+                inner_epochs=inner_epochs
+            )
 
 
 if __name__ == '__main__':

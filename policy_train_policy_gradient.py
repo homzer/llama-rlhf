@@ -94,6 +94,7 @@ def run(
         temperature: float = 1.0,
         top_p: float = 1.0,
         num_samples_per_prompt: int = 1,
+        epochs: int = 1,
         chunk_size: int = None,
         inner_epochs: int = 3,
         lr: float = 1e-5,
@@ -110,78 +111,85 @@ def run(
 
     datalist = json_load(train_file)
     chunk_size = chunk_size or len(datalist)
-    epochs = len(datalist) // chunk_size
-    for epoch in range(begin_epoch, epochs):
-        print(f"Epoch - {epoch} of {epochs}")
-        dataset = JsonDataset(f=datalist[epoch * chunk_size: (epoch + 1) * chunk_size])
-        # Collecting policy buffer
-        policy_rollout_buffer = collect_actor_buffer(
-            actor_model_type=policy_model_type,
-            actor_config_file=policy_config_file,
-            max_seq_len=max_seq_len,
-            actor_tokenizer_file=policy_tokenizer_file,
-            dtype=dtype,
-            actor_ckpt_dir=policy_ckpt_dir,
-            epoch=epoch,
-            actor_save_dir=save_dir,
-            use_chat_template=use_chat_template,
-            dataset=dataset,
-            max_generate_batch_size=max_generate_batch_size,
-            temperature=temperature,
-            top_p=top_p,
-            num_samples_per_prompt=num_samples_per_prompt
-        )
+    local_epochs = len(datalist) // chunk_size
+    begin_global_epoch = begin_epoch // local_epochs
+    begin_local_epoch = begin_epoch % local_epochs
+    for global_epoch in range(begin_global_epoch, epochs):
+        for local_epoch in range(begin_local_epoch, local_epochs):
+            epoch = local_epoch + global_epoch * local_epochs
+            print(f"Epoch - {epoch} of {local_epochs * epochs}")
+            dataset = JsonDataset(f=datalist[local_epoch * chunk_size: (local_epoch + 1) * chunk_size])
+            if len(dataset) == 0:
+                continue
 
-        verifier_rollout_buffer = collect_verifier_buffer(
-            verifier_model_type=verifier_model_type,
-            verifier_config_file=verifier_config_file,
-            max_seq_len=max_seq_len,
-            verifier_tokenizer_file=verifier_tokenizer_file,
-            dtype=dtype,
-            verifier_ckpt_dir=verifier_ckpt_dir,
-            actor_rollout_buffer=policy_rollout_buffer,
-            max_forward_batch_size=max_forward_batch_size
-        )
+            # Collecting policy buffer
+            policy_rollout_buffer = collect_actor_buffer(
+                actor_model_type=policy_model_type,
+                actor_config_file=policy_config_file,
+                max_seq_len=max_seq_len,
+                actor_tokenizer_file=policy_tokenizer_file,
+                dtype=dtype,
+                actor_ckpt_dir=policy_ckpt_dir,
+                epoch=epoch,
+                actor_save_dir=save_dir,
+                use_chat_template=use_chat_template,
+                dataset=dataset,
+                max_generate_batch_size=max_generate_batch_size,
+                temperature=temperature,
+                top_p=top_p,
+                num_samples_per_prompt=num_samples_per_prompt
+            )
 
-        print("Average Rewards: ", masked_mean(verifier_rollout_buffer.scores, policy_rollout_buffer.action_masks))
+            verifier_rollout_buffer = collect_verifier_buffer(
+                verifier_model_type=verifier_model_type,
+                verifier_config_file=verifier_config_file,
+                max_seq_len=max_seq_len,
+                verifier_tokenizer_file=verifier_tokenizer_file,
+                dtype=dtype,
+                verifier_ckpt_dir=verifier_ckpt_dir,
+                actor_rollout_buffer=policy_rollout_buffer,
+                max_forward_batch_size=max_forward_batch_size
+            )
 
-        rollout_buffer = RolloutBuffer(
-            obs=policy_rollout_buffer.obs,
-            actions=policy_rollout_buffer.actions,
-            rewards=verifier_rollout_buffer.scores,
-            values=verifier_rollout_buffer.scores,  # pseudo
-            action_logits=policy_rollout_buffer.action_logits,
-            action_masks=policy_rollout_buffer.action_masks,
-            action_logprobs=policy_rollout_buffer.action_logprobs
-        )
-        rollout_buffer = re_scoring_eos_rewards(rollout_buffer)
+            print("Average Rewards: ", masked_mean(verifier_rollout_buffer.scores, policy_rollout_buffer.action_masks))
 
-        train_policy_gradient(
-            rollout_buffer=rollout_buffer,
-            policy_ckpt_dir=policy_ckpt_dir,
-            policy_model_type=policy_model_type,
-            policy_config_file=policy_config_file,
-            policy_tokenizer_file=policy_tokenizer_file,
-            max_seq_len=max_seq_len,
-            lora_rank=lora_rank,
-            dtype=dtype,
-            lora_dtype=lora_dtype,
-            lr=lr,
-            epoch=epoch,
-            inner_epochs=inner_epochs,
-            save_dir=save_dir,
-            max_batch_size=max_batch_size
-        )
+            rollout_buffer = RolloutBuffer(
+                obs=policy_rollout_buffer.obs,
+                actions=policy_rollout_buffer.actions,
+                rewards=verifier_rollout_buffer.scores,
+                values=verifier_rollout_buffer.scores,  # pseudo
+                action_logits=policy_rollout_buffer.action_logits,
+                action_masks=policy_rollout_buffer.action_masks,
+                action_logprobs=policy_rollout_buffer.action_logprobs
+            )
+            rollout_buffer = re_scoring_eos_rewards(rollout_buffer)
 
-        torch.save({
-            'obs': rollout_buffer.obs,
-            'actions': rollout_buffer.actions,
-            'values': rollout_buffer.values,
-            'rewards': rollout_buffer.rewards,
-            'action_masks': rollout_buffer.action_masks,
-            'advantages': rollout_buffer.advantages,
-            'returns': rollout_buffer.returns
-        }, os.path.join(save_dir, f"epoch-{epoch + 1}", f"buffer.bin"))
+            train_policy_gradient(
+                rollout_buffer=rollout_buffer,
+                policy_ckpt_dir=policy_ckpt_dir,
+                policy_model_type=policy_model_type,
+                policy_config_file=policy_config_file,
+                policy_tokenizer_file=policy_tokenizer_file,
+                max_seq_len=max_seq_len,
+                lora_rank=lora_rank,
+                dtype=dtype,
+                lora_dtype=lora_dtype,
+                lr=lr,
+                epoch=epoch,
+                inner_epochs=inner_epochs,
+                save_dir=save_dir,
+                max_batch_size=max_batch_size
+            )
+
+            torch.save({
+                'obs': rollout_buffer.obs,
+                'actions': rollout_buffer.actions,
+                'values': rollout_buffer.values,
+                'rewards': rollout_buffer.rewards,
+                'action_masks': rollout_buffer.action_masks,
+                'advantages': rollout_buffer.advantages,
+                'returns': rollout_buffer.returns
+            }, os.path.join(save_dir, f"epoch-{epoch + 1}", f"buffer.bin"))
 
 
 if __name__ == '__main__':
