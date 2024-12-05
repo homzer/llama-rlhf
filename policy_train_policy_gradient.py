@@ -18,7 +18,9 @@ from src.utils import masked_mean, json_load
 def re_scoring_eos_rewards(buffer: RolloutBuffer) -> RolloutBuffer:
     # Setting the reward of [EOS] token to average reward of the sequence.
     for i, action_mask in enumerate(buffer.action_masks):
-        buffer.rewards[i][np.nonzero(action_mask)[0][-1]] = np.mean(buffer.rewards[i][action_mask])
+        nonzero_indices = np.nonzero(action_mask)[0]
+        if len(nonzero_indices) > 0:
+            buffer.rewards[i][nonzero_indices[-1]] = np.mean(buffer.rewards[i][action_mask])
 
     return buffer
 

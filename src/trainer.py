@@ -48,14 +48,14 @@ class Trainer:
         if save_path is None or save_path.lower() == "none":
             print("WARNING: Not loading model because `save_path` is None")
             return
-        self.load_optimizer(save_path)
+        # self.load_optimizer(save_path)  # TODO: for saving memory
         self.load_model(save_path)
 
     def save(self, save_path: str):
         if save_path is None or save_path.lower() == "none":
             print("WARNING: Not saving model because `save_path` is None")
             return
-        self.save_optimizer(save_path)
+        # self.save_optimizer(save_path)  # TODO: for saving memory
         self.save_model(save_path)
 
 

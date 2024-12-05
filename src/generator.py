@@ -203,7 +203,6 @@ class GeneratorForVerifier:
         self.reduce = reduce
         assert self.reduce in ["mean", "last"]
 
-    # TODO: Duplicated code with src.trainer.ParallelVerifierTrainer.prepare_for_training()
     def prepare_for_generation(
             self,
             instructions: Union[List[str], List[List[int]]],
@@ -223,7 +222,7 @@ class GeneratorForVerifier:
             if type(output) is str:
                 output_ids = self.tokenizer.encode(output, bos=False, eos=True)
             elif type(output) is list:
-                assert type(output[0]) is int, type(output[0])
+                assert len(output) == 0 or type(output[0]) is int, type(output[0])
                 output_ids = output
             else:
                 raise TypeError(type(output))
