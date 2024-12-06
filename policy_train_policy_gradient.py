@@ -186,11 +186,8 @@ def run(
             torch.save({
                 'obs': rollout_buffer.obs,
                 'actions': rollout_buffer.actions,
-                'values': rollout_buffer.values,
-                'rewards': rollout_buffer.rewards,
-                'action_masks': rollout_buffer.action_masks,
-                'advantages': rollout_buffer.advantages,
-                'returns': rollout_buffer.returns
+                'rewards': rollout_buffer.origin_rewards,
+                'action_masks': rollout_buffer.action_masks
             }, os.path.join(save_dir, f"epoch-{epoch + 1}", f"buffer.bin"))
 
 

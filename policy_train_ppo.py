@@ -477,7 +477,7 @@ def run(
                 'obs': rollout_buffer.obs,
                 'actions': rollout_buffer.actions,
                 'values': rollout_buffer.values,
-                'rewards': rollout_buffer.rewards,
+                'rewards': rollout_buffer.origin_rewards,
                 'action_masks': rollout_buffer.action_masks,
                 'advantages': rollout_buffer.advantages,
                 'returns': rollout_buffer.returns

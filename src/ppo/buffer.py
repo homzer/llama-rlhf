@@ -140,6 +140,7 @@ class RolloutBuffer:
         self.action_logits = action_logits.copy()
         self.action_masks = action_masks.copy()
         self.action_logprobs = action_logprobs.copy()
+        self.origin_rewards = rewards.copy()  # for logging only
         if ref_action_logprobs is not None:
             self.ref_action_logprobs = ref_action_logprobs.copy()
 

@@ -178,44 +178,6 @@ class ParallelPolicyGradientTrainerForCausalLM(ParallelTrainer):
         actions = rollout_data.actions.to(self.policy.device())
         action_masks = rollout_data.action_masks.to(self.policy.device())
         rewards = rollout_data.rewards.to(self.policy.device())
-        old_action_logprobs = rollout_data.old_action_logprobs.to(self.policy.device())
-
-        outputs = self.policy.forward(obs)
-
-        action_logprobs = torch.gather(
-            torch.log_softmax(outputs.logits, dim=-1), dim=-1, index=actions.unsqueeze(-1)
-        ).squeeze(-1)
-
-        ratio = torch.exp(action_logprobs - old_action_logprobs)
-        ratio = torch.masked_select(ratio.view(-1), action_masks.view(-1))
-        # clipped surrogate loss
-        rewards = torch.masked_select(rewards.view(-1), action_masks.view(-1))
-        actor_loss_1 = rewards * ratio
-        actor_loss_2 = rewards * torch.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range)
-        loss = - torch.min(actor_loss_1, actor_loss_2).mean()
-
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
-
-        Outputs = collections.namedtuple('Outputs', ['loss', 'rewards'])
-        return Outputs(loss=loss.item(), rewards=torch.mean(rewards).item())
-
-
-class ParallelPolicyGradientTrainerWithCrossEntropyForCausalLM(ParallelTrainer):
-    def __init__(self, policy: ParallelModelForCausalLM, optimizer: torch.optim.Optimizer):
-        super().__init__(policy, optimizer)
-        self.policy = policy
-        self.step = 0
-
-    def forward(self, rollout_data: RolloutBufferSample):
-        self.policy.train()
-        self.step += 1
-
-        obs = rollout_data.observations.to(self.policy.device())
-        actions = rollout_data.actions.to(self.policy.device())
-        action_masks = rollout_data.action_masks.to(self.policy.device())
-        rewards = rollout_data.rewards.to(self.policy.device())
 
         outputs = self.policy.forward(obs)
 
@@ -225,7 +187,6 @@ class ParallelPolicyGradientTrainerWithCrossEntropyForCausalLM(ParallelTrainer):
 
         action_logprobs = torch.masked_select(action_logprobs.view(-1), action_masks.view(-1))
         rewards = torch.masked_select(rewards.view(-1), action_masks.view(-1))
-        # weighted cross-entropy loss
         loss = - torch.mean(rewards * action_logprobs)
 
         self.optimizer.zero_grad()
