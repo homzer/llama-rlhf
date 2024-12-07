@@ -102,17 +102,6 @@ class QwenAttention(AttentionForCausalLM):
         output = self.apply_attention(xq, xk, xv, mask)
         return self.o_proj(output)
 
-    # Copied from src.models.llama_70B.LlamaAttention70B.repeat_kv
-    # def repeat_kv(self, x: torch.Tensor) -> torch.Tensor:
-    #     bs, seqlen, n_kv_heads, head_dim = x.shape
-    #     if self.n_rep == 1:
-    #         return x
-    #     return (
-    #         x[:, :, :, None, :]
-    #         .expand(bs, seqlen, n_kv_heads, self.n_rep, head_dim)
-    #         .reshape(bs, seqlen, n_kv_heads * self.n_rep, head_dim)
-    #     )
-
 
 class QwenFeedForward(nn.Module):
     def __init__(self, args: QwenArgs):

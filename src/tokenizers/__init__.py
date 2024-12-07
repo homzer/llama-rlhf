@@ -6,3 +6,4 @@ from src.tokenizers.tokenizer_gpt2 import GPT2Tokenizer
 from src.tokenizers.tokenizer_qwen import QwenTokenizer
 from src.tokenizers.tokenizer_openchat import OpenChatTokenizer
 from src.tokenizers.tokenizer_baichuan import BaichuanTokenizer
+from src.tokenizers.tokenizer_internlm import InternLMTokenizer

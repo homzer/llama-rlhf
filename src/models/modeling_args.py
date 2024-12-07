@@ -275,6 +275,28 @@ class LoraBaichuanArgs(BaichuanArgs):
     lora_dtype: str = "float32"
 
 
+@dataclass
+class InternLMArgs(BaseParallelArgs):
+    hidden_size: int = None
+    intermediate_size: int = None
+    max_position_embeddings: int = None
+    max_window_layers: int = None
+    num_attention_heads: int = None
+    num_hidden_layers: int = None
+    num_key_value_heads: int = None
+    rms_norm_eps: float = None
+    rope_theta: int = None
+    sliding_window: int = None
+    tie_word_embeddings: bool = None
+    use_sliding_window: bool = None
+    vocab_size: int = None
+
+    def from_json(self, filename: str):
+        if not filename.endswith(".json"):
+            filename = os.path.join(filename, "config.json")
+        return super().from_json(filename)
+
+
 class MistralMoeArgsHf(MistralArgsHf):
     num_local_experts: int
     num_experts_per_tok: int
