@@ -25,6 +25,16 @@ def re_scoring_eos_rewards(buffer: RolloutBuffer) -> RolloutBuffer:
     return buffer
 
 
+def re_scoring_token_rewards(buffer: RolloutBuffer) -> RolloutBuffer:
+    # Setting the rewards of every token to be the same as the [EOS] token reward.
+    for i, action_mask in enumerate(buffer.action_masks):
+        nonzero_indices = np.nonzero(action_mask)[0]
+        if len(nonzero_indices) > 0:
+            buffer.rewards[i][action_mask] = buffer.rewards[i][nonzero_indices[-1]]
+
+    return buffer
+
+
 def train_policy_gradient(
         rollout_buffer: RolloutBuffer,
         policy_ckpt_dir: str,
@@ -103,7 +113,8 @@ def run(
         dtype: str = "bfloat16",
         begin_epoch: int = 0,
         use_chat_template: bool = False,
-        seed: int = None
+        seed: int = None,
+        use_last_token_reward: bool = False
 ):
     setup_model_parallel(seed=seed)
     policy_config_file = policy_config_file or policy_ckpt_dir
@@ -153,7 +164,14 @@ def run(
                 max_forward_batch_size=max_forward_batch_size
             )
 
-            print("Average Rewards: ", masked_mean(verifier_rollout_buffer.scores, policy_rollout_buffer.action_masks))
+            if use_last_token_reward:
+                rewards = []
+                for i in range(len(verifier_rollout_buffer)):
+                    last_idx = np.nonzero(policy_rollout_buffer.action_masks[i])[0][-1].item()
+                    rewards.append(verifier_rollout_buffer.scores[i][last_idx])
+                print("Average Rewards: ", np.mean(rewards))
+            else:
+                print("Average Rewards: ", masked_mean(verifier_rollout_buffer.scores, policy_rollout_buffer.action_masks))
 
             rollout_buffer = RolloutBuffer(
                 obs=policy_rollout_buffer.obs,
@@ -162,9 +180,13 @@ def run(
                 values=verifier_rollout_buffer.scores,  # pseudo
                 action_logits=policy_rollout_buffer.action_logits,
                 action_masks=policy_rollout_buffer.action_masks,
-                action_logprobs=policy_rollout_buffer.action_logprobs
+                action_logprobs=policy_rollout_buffer.action_logprobs,
+                use_last_token_reward=use_last_token_reward
             )
-            rollout_buffer = re_scoring_eos_rewards(rollout_buffer)
+            if use_last_token_reward:
+                rollout_buffer = re_scoring_token_rewards(rollout_buffer)
+            else:
+                rollout_buffer = re_scoring_eos_rewards(rollout_buffer)
 
             train_policy_gradient(
                 rollout_buffer=rollout_buffer,
