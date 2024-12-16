@@ -73,6 +73,8 @@ def train_policy_gradient(
             trainer_outputs = trainer.forward(data)
             if trainer.step % 100 == 0:
                 print(f'--------- STEP {trainer.step} OF {timer.total} ---------')
+                print('Token Rewards: ', trainer_outputs.token_rewards)
+                print('Log Probs: ', trainer_outputs.log_probs)
                 print('Loss: ', trainer_outputs.loss)
                 print('Rewards: ', trainer_outputs.rewards)
     trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))
@@ -167,8 +169,9 @@ def run(
             if use_last_token_reward:
                 rewards = []
                 for i in range(len(verifier_rollout_buffer)):
-                    last_idx = np.nonzero(policy_rollout_buffer.action_masks[i])[0][-1].item()
-                    rewards.append(verifier_rollout_buffer.scores[i][last_idx])
+                    nonzero_indices = np.nonzero(policy_rollout_buffer.action_masks[i])[0]
+                    if len(nonzero_indices) > 0:
+                        rewards.append(verifier_rollout_buffer.scores[i][nonzero_indices][-1].item())
                 print("Average Rewards: ", np.mean(rewards))
             else:
                 print("Average Rewards: ", masked_mean(verifier_rollout_buffer.scores, policy_rollout_buffer.action_masks))

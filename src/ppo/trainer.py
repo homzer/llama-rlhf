@@ -185,6 +185,9 @@ class ParallelPolicyGradientTrainerForCausalLM(ParallelTrainer):
             torch.log_softmax(outputs.logits, dim=-1), dim=-1, index=actions.unsqueeze(-1)
         ).squeeze(-1)
 
+        logging_log_probs = action_logprobs[0][action_masks[0]]
+        logging_rewards = rewards[0][action_masks[0]]
+
         action_logprobs = torch.masked_select(action_logprobs.view(-1), action_masks.view(-1))
         rewards = torch.masked_select(rewards.view(-1), action_masks.view(-1))
         loss = - torch.mean(rewards * action_logprobs)
@@ -193,8 +196,8 @@ class ParallelPolicyGradientTrainerForCausalLM(ParallelTrainer):
         loss.backward()
         self.optimizer.step()
 
-        Outputs = collections.namedtuple('Outputs', ['loss', 'rewards'])
-        return Outputs(loss=loss.item(), rewards=torch.mean(rewards).item())
+        Outputs = collections.namedtuple('Outputs', ['loss', 'rewards', 'log_probs', 'token_rewards'])
+        return Outputs(loss=loss.item(), rewards=torch.mean(rewards).item(), log_probs=logging_log_probs, token_rewards=logging_rewards)
 
 
 class ParallelPolicyGradientTrainerWithKLDivForCausalLM(ParallelTrainer):

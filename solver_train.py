@@ -26,6 +26,7 @@ def main(
         lora_rank: int = -1,
         lora_dtype: str = "float32",
         save_steps: int = 10000,
+        begin_epoch: int = 0,
         use_chat_template: bool = False,
         seed: int = None,
 ):
@@ -53,8 +54,8 @@ def main(
         optimizer=optimizer,
         max_seq_len=max_seq_len
     )
-    trainer.load(ckpt_dir)
-    for epoch in range(epochs):
+    trainer.load(ckpt_dir if (begin_epoch == 0) else os.path.join(save_dir, f"epoch-{begin_epoch}"))
+    for epoch in range(begin_epoch, epochs):
         timer = Timer(total=len(dataloader), episode=100)
         for data in dataloader:
             outputs = trainer.forward(

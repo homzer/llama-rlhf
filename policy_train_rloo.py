@@ -26,10 +26,10 @@ def compute_rloo_rewards(
         baseline = []
         for j in range(i, i + num_samples_per_prompt):
             action_mask = policy_rollout_buffer.action_masks[j]
-            last_idx = np.nonzero(action_mask)[0]
-            if len(last_idx) == 0:
+            nonzero_indices = np.nonzero(action_mask)[0]
+            if len(nonzero_indices) == 0:
                 continue
-            baseline.append(verifier_rollout_buffer.scores[j][last_idx])
+            baseline.append(verifier_rollout_buffer.scores[j][nonzero_indices[-1]])
         if len(baseline) == 0:
             continue
         assert len(baseline) == num_samples_per_prompt, "please check for the samples bug"
@@ -144,7 +144,7 @@ def run(
                 action_masks=policy_rollout_buffer.action_masks,
                 action_logprobs=policy_rollout_buffer.action_logprobs,
                 ref_action_logprobs=None,
-                use_last_token_reward=True,
+                use_last_token_reward=False,
                 reward_normalize=False,
             )
 
