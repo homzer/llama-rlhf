@@ -73,8 +73,6 @@ def train_policy_gradient(
             trainer_outputs = trainer.forward(data)
             if trainer.step % 100 == 0:
                 print(f'--------- STEP {trainer.step} OF {timer.total} ---------')
-                print('Token Rewards: ', trainer_outputs.token_rewards)
-                print('Log Probs: ', trainer_outputs.log_probs)
                 print('Loss: ', trainer_outputs.loss)
                 print('Rewards: ', trainer_outputs.rewards)
     trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))
@@ -154,16 +152,6 @@ def run(
                 top_p=top_p,
                 num_samples_per_prompt=num_samples_per_prompt
             )
-
-            # torch.save({
-            #     "instructions": policy_rollout_buffer.instructions,
-            #     "obs": policy_rollout_buffer.obs,
-            #     "actions": policy_rollout_buffer.actions,
-            #     "action_logits": policy_rollout_buffer.action_logits,
-            #     "action_masks": policy_rollout_buffer.action_masks,
-            #     "action_logprobs": policy_rollout_buffer.action_logprobs,
-            #     "responses": policy_rollout_buffer.responses
-            # }, "policy_buffer.bin")
 
             verifier_rollout_buffer = collect_verifier_buffer(
                 verifier_model_type=verifier_model_type,

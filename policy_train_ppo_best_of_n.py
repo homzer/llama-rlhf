@@ -29,8 +29,11 @@ def select_best_of_n_buffer(
     if use_last_token_reward:
         scores = []
         for i in range(len(verifier_rollout_buffer)):
-            last_idx = np.nonzero(actor_rollout_buffer.action_masks[i])[0][-1].item()
-            scores.append(verifier_rollout_buffer.scores[i][last_idx])
+            nonzero_indices = np.nonzero(actor_rollout_buffer.action_masks[i])[0]
+            if len(nonzero_indices) > 0:
+                scores.append(verifier_rollout_buffer.scores[i][nonzero_indices[-1]])
+            else:
+                scores.append(0.0)
         scores = np.stack(scores, axis=0)
     else:
         scores = masked_mean(verifier_rollout_buffer.scores, actor_rollout_buffer.action_masks, dim=-1)
