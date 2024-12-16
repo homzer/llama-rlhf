@@ -433,8 +433,9 @@ def run(
             if use_last_token_reward:
                 rewards = []
                 for i in range(len(verifier_rollout_buffer)):
-                    last_idx = np.nonzero(actor_rollout_buffer.action_masks[i])[0][-1].item()
-                    rewards.append(verifier_rollout_buffer.scores[i][last_idx])
+                    nonzero_indices = np.nonzero(actor_rollout_buffer.action_masks[i])[0]
+                    if len(nonzero_indices) > 0:
+                        rewards.append(verifier_rollout_buffer.scores[i][nonzero_indices][-1].item())
                 print("Average Rewards: ", np.mean(rewards))
             else:
                 print("Average Rewards: ", masked_mean(verifier_rollout_buffer.scores, actor_rollout_buffer.action_masks))

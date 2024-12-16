@@ -263,3 +263,72 @@ class ParallelPolicyGradientTrainerWithKLDivForCausalLM(ParallelTrainer):
 
         Outputs = collections.namedtuple('Outputs', ['loss', 'rewards'])
         return Outputs(loss=loss.item(), rewards=torch.mean(rewards).item())
+
+
+class ParallelGRPOTrainerForCausalLM(ParallelTrainer):
+    def __init__(
+            self,
+            model: ParallelModelForCausalLM,
+            optimizer: torch.optim.Optimizer,
+            clip_range: float = 0.2,
+            kl_coef: float = 0.04
+    ):
+        super().__init__(model, optimizer)
+        self.model = model
+        self.clip_range = clip_range
+        self.kl_coef = kl_coef
+        self.step = 0
+
+    def forward(self, rollout_data: RolloutBufferSample):
+        self.model.train()
+        self.step += 1
+
+        obs = rollout_data.observations.to(self.model.device())
+        actions = rollout_data.actions.to(self.model.device())
+        action_masks = rollout_data.action_masks.to(self.model.device())
+        rewards = rollout_data.rewards.to(self.model.device())
+        old_action_logprobs = rollout_data.old_action_logprobs.to(self.model.device())
+
+        outputs = self.model.forward(obs)
+        action_logprobs = torch.gather(
+            torch.log_softmax(outputs.logits, dim=-1), dim=-1, index=actions.unsqueeze(-1)
+        ).squeeze(-1)
+
+        # Normalize rewards
+        rewards = torch.masked_select(rewards.view(-1), action_masks.view(-1))
+        # ratio between old and new policy, should be one at the first iteration
+        ratio = torch.exp(action_logprobs - old_action_logprobs)
+        ratio = torch.masked_select(ratio.view(-1), action_masks.view(-1))
+        # clipped surrogate loss
+        policy_loss = rewards * ratio
+        if self.clip_range > 0:
+            clipped_actor_loss = rewards * torch.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range)
+            policy_loss = torch.min(policy_loss, clipped_actor_loss)
+        policy_loss = - torch.mean(policy_loss)
+
+        kl_loss = 0.0
+        if rollout_data.ref_action_logprobs is not None:
+            ref_action_logprobs = rollout_data.ref_action_logprobs.to(self.model.device())
+            # Avoid overflowing
+            ref_action_logprobs[ref_action_logprobs == 0] = -1e-5
+            action_logprobs[ref_action_logprobs == 0] = -1e-5
+            logprobs_ratios = ref_action_logprobs / action_logprobs
+            kl_loss = self.kl_coef * torch.masked_select(
+                (logprobs_ratios - torch.log(logprobs_ratios) - 1).view(-1),
+                action_masks.view(-1)
+            ).mean()
+
+        loss = policy_loss + kl_loss
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+
+        Outputs = collections.namedtuple('Outputs', [
+            'loss', "policy_loss", 'rewards', "kl_loss"])
+        return Outputs(
+            loss=loss.item(),
+            policy_loss=policy_loss.item(),
+            rewards=torch.mean(rewards).item(),
+            kl_loss=kl_loss.item() if isinstance(kl_loss, torch.Tensor) else kl_loss,
+        )
+
