@@ -129,7 +129,11 @@ def run(
             print("Average Rewards: ", np.mean(rewards))
 
             # Reinforce Leave-One-Out
-            verifier_rollout_buffer = compute_rloo_rewards(verifier_rollout_buffer)
+            verifier_rollout_buffer = compute_rloo_rewards(
+                verifier_rollout_buffer=verifier_rollout_buffer,
+                policy_rollout_buffer=policy_rollout_buffer,
+                num_samples_per_prompt=num_samples_per_prompt
+            )
 
             rollout_buffer = RolloutBuffer(
                 obs=policy_rollout_buffer.obs,
