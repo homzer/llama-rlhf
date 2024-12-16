@@ -25,8 +25,8 @@ def compute_rloo_rewards(
         # compute baseline reward
         baseline = []
         for j in range(i, i + num_samples_per_prompt):
-            action_mask = policy_rollout_buffer.action_masks[j]
-            nonzero_indices = np.nonzero(action_mask)[0]
+            action_masks = policy_rollout_buffer.action_masks[j]
+            nonzero_indices = np.nonzero(action_masks)[0]
             if len(nonzero_indices) == 0:
                 continue
             baseline.append(verifier_rollout_buffer.scores[j][nonzero_indices[-1]])
@@ -36,11 +36,11 @@ def compute_rloo_rewards(
         baseline_score = sum(baseline) / len(baseline)
 
         for j in range(i, i + num_samples_per_prompt):
-            action_mask = policy_rollout_buffer.action_masks[j]
-            score = verifier_rollout_buffer.scores[j][np.nonzero(action_mask)[0][-1].item()]
+            last_token_idx = np.nonzero(policy_rollout_buffer.action_masks[j])[0][-1]
+            score = verifier_rollout_buffer.scores[j][last_token_idx]
             # leave-one-out
             score = (baseline_score * len(baseline) - score) / (len(baseline) - 1)
-            verifier_rollout_buffer.scores[j][action_mask] = score
+            verifier_rollout_buffer.scores[j][last_token_idx] = score
     return verifier_rollout_buffer
 
 
@@ -144,7 +144,7 @@ def run(
                 action_masks=policy_rollout_buffer.action_masks,
                 action_logprobs=policy_rollout_buffer.action_logprobs,
                 ref_action_logprobs=None,
-                use_last_token_reward=False,
+                use_last_token_reward=True,
                 reward_normalize=False,
             )
 

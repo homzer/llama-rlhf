@@ -100,7 +100,8 @@ class RolloutBuffer:
             kl_coef: float = 0.1,
             mu: float = 0.0,
             reward_normalize: bool = True,
-            use_last_token_reward: bool = False
+            use_last_token_reward: bool = False,
+            last_token_reward_only: bool = False
     ):
         self.obs = None
         self.actions = None
@@ -119,6 +120,7 @@ class RolloutBuffer:
         self.mu = mu
         self.reward_normalize = reward_normalize
         self.use_last_token_reward = use_last_token_reward
+        self.last_token_reward_only = last_token_reward_only
 
         self.buffer_size = obs.shape[0]
         self.max_seq_len = obs.shape[1]
@@ -147,26 +149,23 @@ class RolloutBuffer:
         assert np.sum(self.rewards[~ self.action_masks]) == 0  # Check rewards correctness
 
         if self.use_last_token_reward:
-            last_token_rewards = np.zeros_like(self.rewards)
             for i in range(self.buffer_size):
-                last_token_idx = np.nonzero(self.action_masks[i])[0][-1].item()
-                last_token_rewards[i][last_token_idx] = self.rewards[i][last_token_idx]
-            self.rewards = last_token_rewards
+                nonzero_indices = np.nonzero(self.action_masks[i])[0]
+                if len(nonzero_indices) > 0:
+                    self.rewards[i][self.action_masks[i]] = self.rewards[i][nonzero_indices[-1]]
 
         if self.reward_normalize:
-            # Normalize rewards
-            if self.use_last_token_reward:
-                reward_masks = np.full_like(self.action_masks, fill_value=False)
-                for i in range(self.buffer_size):
-                    last_token_idx = np.nonzero(self.action_masks[i])[0][-1].item()
-                    reward_masks[i][last_token_idx] = True
-                self.rewards = (self.rewards - np.mean(
-                    self.rewards[self.action_masks])) / (np.std(self.rewards[self.action_masks]))
-                self.rewards[~ reward_masks] = 0.0
-            else:
-                self.rewards = self.mu + (self.rewards - np.mean(
-                    self.rewards[self.action_masks]
-                )) / (np.std(self.rewards[self.action_masks]))
+            self.rewards = self.mu + (self.rewards - np.mean(
+                self.rewards[self.action_masks]
+            )) / (np.std(self.rewards[self.action_masks]))
+
+        if self.last_token_reward_only:
+            for i in range(self.buffer_size):
+                nonzero_indices = np.nonzero(self.action_masks[i])[0]
+                if len(nonzero_indices) > 0:
+                    score = self.rewards[i][nonzero_indices[-1]]
+                    self.rewards[i] = 0.0
+                    self.rewards[i][nonzero_indices[-1]] = score
 
         # Adding KL penalty
         self.rewards += - self.kl_coef * self.compute_kl_penalty()

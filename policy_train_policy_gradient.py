@@ -196,10 +196,7 @@ def run(
                 action_logprobs=policy_rollout_buffer.action_logprobs,
                 use_last_token_reward=use_last_token_reward
             )
-            if use_last_token_reward:
-                rollout_buffer = re_scoring_token_rewards(rollout_buffer)
-            else:
-                rollout_buffer = re_scoring_eos_rewards(rollout_buffer)
+            rollout_buffer = re_scoring_eos_rewards(rollout_buffer)
 
             train_policy_gradient(
                 rollout_buffer=rollout_buffer,

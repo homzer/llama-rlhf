@@ -451,6 +451,7 @@ def run(
                         reference_rollout_buffer is not None
                 ) else None,
                 use_last_token_reward=use_last_token_reward,
+                last_token_reward_only=use_last_token_reward,
                 kl_coef=kl_coef
             )
 
