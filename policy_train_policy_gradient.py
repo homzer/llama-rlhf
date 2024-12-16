@@ -155,6 +155,16 @@ def run(
                 num_samples_per_prompt=num_samples_per_prompt
             )
 
+            # torch.save({
+            #     "instructions": policy_rollout_buffer.instructions,
+            #     "obs": policy_rollout_buffer.obs,
+            #     "actions": policy_rollout_buffer.actions,
+            #     "action_logits": policy_rollout_buffer.action_logits,
+            #     "action_masks": policy_rollout_buffer.action_masks,
+            #     "action_logprobs": policy_rollout_buffer.action_logprobs,
+            #     "responses": policy_rollout_buffer.responses
+            # }, "policy_buffer.bin")
+
             verifier_rollout_buffer = collect_verifier_buffer(
                 verifier_model_type=verifier_model_type,
                 verifier_config_file=verifier_config_file,

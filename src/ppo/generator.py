@@ -41,44 +41,6 @@ class ActorGeneratorForCausalLM(GeneratorForCausalLM):
             top_p=top_p
         )
 
-    def model_forward(self, tokens, input_masks=None, start_pos=None):
-        bsz = tokens.shape[0]
-        prev_pos = 0
-        tokens = tokens.clone()
-        unfinished_sequences = torch.ones(size=[bsz], dtype=torch.long, device=self.model.device())
-        tokens_logits = torch.zeros(tokens.shape)
-        tokens_logprobs = torch.zeros(tokens.shape)
-        for cur_pos in range(start_pos, self.max_seq_len):
-            with torch.no_grad():
-                outputs = self.model.forward(
-                    tokens[:, prev_pos: cur_pos], prev_pos, use_cache=True
-                )
-            # next_tokens = sampling_strategy(outputs.logits, self.temperature, self.top_p)
-            next_tokens = self.sampling(outputs.logits, tokens=tokens, cur_pos=cur_pos)
-            tokens_logits = tokens_logits.to(outputs.logits)
-            tokens_logprobs = tokens_logprobs.to(outputs.logits)
-            tokens_logits[:, prev_pos: cur_pos] = torch.gather(
-                outputs.logits, dim=-1, index=next_tokens.unsqueeze(-1)
-            ).squeeze(-1)
-            tokens_logprobs[:, prev_pos: cur_pos] = torch.gather(
-                torch.log_softmax(outputs.logits, dim=-1), dim=-1, index=next_tokens.unsqueeze(-1)
-            ).squeeze(-1)
-            next_token = next_tokens[:, -1].reshape(-1)
-            next_token = torch.where(
-                input_masks[:, cur_pos], tokens[:, cur_pos], next_token
-            )
-            tokens[:, cur_pos] = next_token
-            prev_pos = cur_pos
-            unfinished_sequences = unfinished_sequences * (
-                    next_token != self.tokenizer.eos_id
-            ).long()
-            if unfinished_sequences.max() == 0:
-                break
-
-        self.model.flush()
-        Outputs = collections.namedtuple("Outputs", ['tokens', 'tokens_logits', 'tokens_logprobs'])
-        return Outputs(tokens=tokens, tokens_logits=tokens_logits, tokens_logprobs=tokens_logprobs)
-
     def forward(self, instructions: Union[List[str], List[List[int]]]) -> ActionGeneratorOutputs:
         self.model.eval()
         prep_outputs = self.prepare_for_generation(instructions)
