@@ -6,6 +6,7 @@ from typing import List
 import safetensors
 import torch
 
+from src.entities import Timer
 from src.parallel.utils import set_barrier
 
 
@@ -31,6 +32,7 @@ class Checkpoint:
         state_dict = OrderedDict()
         for ckpt_file in ckpt_files:
             ckpt_file = str(ckpt_file)
+            print(f"Loading {ckpt_file} ...")
             if ckpt_file.endswith(".safetensors"):
                 with safetensors.safe_open(ckpt_file, "pt", device="cpu") as reader:
                     for k in reader.keys():
@@ -45,45 +47,49 @@ class Checkpoint:
 
     def split(self, state_dict: dict, n: int) -> List[dict]:
         new_state_dicts = [OrderedDict() for _ in range(n)]
-        for name, param in state_dict.items():
-            assert 'lora' not in name, 'can not split a lora checkpoint, merge it first'
-            param = param.cpu()
-            if self.is_col_parallel(name):
-                dim0 = param.shape[0]
-                assert dim0 % n == 0
-                split = dim0 // n
-                for i in range(n):
-                    new_state_dicts[i][name] = param[i * split: (i + 1) * split].clone()
-            elif self.is_row_parallel(name):
-                dim1 = param.shape[1]
-                assert dim1 % n == 0
-                split = dim1 // n
-                for i in range(n):
-                    new_state_dicts[i][name] = param[:, i * split: (i + 1) * split].clone()
-            else:
-                for i in range(n):
-                    new_state_dicts[i][name] = param.clone()
-            # release memory
-            state_dict[name] = None
+        timer = Timer(len(state_dict))
+        with torch.no_grad():
+            for name, param in state_dict.items():
+                timer.step()
+                assert 'lora' not in name, 'can not split a lora checkpoint, merge it first'
+                param = param.cpu()
+                if self.is_col_parallel(name):
+                    dim0 = param.shape[0]
+                    assert dim0 % n == 0
+                    split = dim0 // n
+                    for i in range(n):
+                        new_state_dicts[i][name] = param[i * split: (i + 1) * split].clone()
+                elif self.is_row_parallel(name):
+                    dim1 = param.shape[1]
+                    assert dim1 % n == 0
+                    split = dim1 // n
+                    for i in range(n):
+                        new_state_dicts[i][name] = param[:, i * split: (i + 1) * split].clone()
+                else:
+                    for i in range(n):
+                        new_state_dicts[i][name] = param
+                # release memory
+                state_dict[name] = None
 
         return new_state_dicts
 
     def merge(self, state_dict1: dict, state_dict2: dict) -> dict:
         new_state_dicts = OrderedDict()
-        for name in state_dict1.keys():
-            assert 'lora' not in name, 'can not split a lora checkpoint, merge it first'
-            param1 = state_dict1[name]
-            param2 = state_dict2[name]
-            if self.is_col_parallel(name):
-                new_state_dicts[name] = torch.cat([param1, param2], dim=0).clone()
-            elif self.is_row_parallel(name):
-                assert len(param1.shape) == 2
-                assert len(param2.shape) == 2
-                new_state_dicts[name] = torch.cat([param1, param2], dim=1).clone()
-            else:
-                new_state_dicts[name] = state_dict1[name].clone()
-            # release memory
-            state_dict1[name] = None
+        with torch.no_grad():
+            for name in state_dict1.keys():
+                assert 'lora' not in name, 'can not split a lora checkpoint, merge it first'
+                param1 = state_dict1[name]
+                param2 = state_dict2[name]
+                if self.is_col_parallel(name):
+                    new_state_dicts[name] = torch.cat([param1, param2], dim=0)
+                elif self.is_row_parallel(name):
+                    assert len(param1.shape) == 2
+                    assert len(param2.shape) == 2
+                    new_state_dicts[name] = torch.cat([param1, param2], dim=1)
+                else:
+                    new_state_dicts[name] = state_dict1[name]
+                # release memory
+                state_dict1[name] = None
             state_dict2[name] = None
 
         return new_state_dicts
@@ -157,12 +163,12 @@ class Checkpoint:
             assert len(checkpoints) > 0
             # merge to 1 first and then split to `model_parallel_world_size`
             state_dicts = [torch.load(ckpt_file, map_location="cpu") for ckpt_file in checkpoints]
-            merge_state_dict = self.auto_merge_n_to_1(state_dicts)
+            state_dicts = self.auto_merge_n_to_1(state_dicts)
 
-            new_state_dicts = self.split(merge_state_dict, model_parallel_world_size)
+            state_dicts = self.split(state_dicts, model_parallel_world_size)
             os.makedirs(pl_ckpt_dir, exist_ok=True)
             for i in range(model_parallel_world_size):
-                torch.save(new_state_dicts[i], os.path.join(pl_ckpt_dir, 'consolidated.%02d.pth' % i))
+                torch.save(state_dicts[i], os.path.join(pl_ckpt_dir, 'consolidated.%02d.pth' % i))
             if verbose:
                 print('Done!')
         return pl_ckpt_dir

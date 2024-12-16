@@ -435,8 +435,8 @@ class LogitsRolloutBuffer:
                     logits[i, :, :] = self.logits.fetch(bi)
 
             yield LogitsRolloutBufferSample(
-                instructions=self.instructions[batch_indices],
-                outputs=self.outputs[batch_indices],
+                instructions=[str(instruction) for instruction in self.instructions[batch_indices]],
+                outputs=[str(output) for output in self.outputs[batch_indices]],
                 logits=logits,
                 output_tokens_logps=torch.tensor(self.output_tokens_logps[batch_indices])
             )

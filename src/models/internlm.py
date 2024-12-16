@@ -11,10 +11,10 @@ from fairscale.nn.model_parallel.layers import (
 
 from src.checkpoint import CheckpointForInternLM
 from src.models.modeling import AttentionForCausalLM, ParallelModelForCausalLM, CausalLMOutputs
-from src.models.modeling_acts import RotaryEmbedding, Clamp, RMSNorm, LogitsNormalize
+from src.models.modeling_acts import Clamp, RMSNorm, LogitsNormalize
 from src.models.modeling_args import InternLMArgs
 from src.parallel.utils import set_model_parallel_barrier
-from src.utils import compute_position_ids, apply_rotary_pos_emb
+from src.utils import apply_rotary_emb, precompute_freqs_cis
 
 
 class InternLMAttention(AttentionForCausalLM):
@@ -28,8 +28,6 @@ class InternLMAttention(AttentionForCausalLM):
         assert self.num_key_value_heads % args.model_parallel_world_size == 0
         self.num_local_key_value_heads = self.num_key_value_heads // args.model_parallel_world_size
         self.n_rep = args.num_attention_heads // args.num_key_value_heads
-
-        self.rotary_emb = None
 
         self.wq = None
         self.wk = None
@@ -66,16 +64,11 @@ class InternLMAttention(AttentionForCausalLM):
             init_method=lambda x: x,
             ).type(self.args.dtype)
 
-        self.rotary_emb = RotaryEmbedding(
-            self.head_dim,
-            max_position_embeddings=self.args.max_position_embeddings,
-            base=self.args.rope_theta,
-        ).type(self.args.dtype)
-
     def forward(
             self,
             x: torch.Tensor,
             start_pos: int,
+            freqs_cis: torch.Tensor,
             mask: Optional[torch.Tensor],
             use_cache=False
     ):
@@ -86,11 +79,7 @@ class InternLMAttention(AttentionForCausalLM):
         xk = xk.view(bsz, seq_len, self.num_local_key_value_heads, self.head_dim)
         xv = xv.view(bsz, seq_len, self.num_local_key_value_heads, self.head_dim)
 
-        cos, sin = self.rotary_emb.forward(xv.transpose(1, 2), seq_len=seq_len + start_pos)
-        position_ids = compute_position_ids(start_pos, seq_len).to(x.device)
-        xq, xk = apply_rotary_pos_emb(xq.transpose(1, 2), xk.transpose(1, 2), cos, sin, position_ids)
-        xq = xq.transpose(1, 2)
-        xk = xk.transpose(1, 2)
+        xq, xk = apply_rotary_emb(xq, xk, freqs_cis=freqs_cis)
 
         if use_cache:
             xk, xv = self.apply_cache(xk, xv, start_pos)
@@ -99,6 +88,7 @@ class InternLMAttention(AttentionForCausalLM):
 
         output = self.apply_attention(xq, xk, xv, mask)
         return self.wo(output)
+
 
 class InternLMFeedForward(nn.Module):
     def __init__(self, args: InternLMArgs):
@@ -154,10 +144,11 @@ class InternLMTransformerBlock(nn.Module):
             self,
             x: torch.Tensor,
             start_pos: int,
+            freqs_cis: torch.Tensor,
             mask: Optional[torch.Tensor],
             use_cache
     ):
-        h = x + self.attention.forward(self.attention_norm(x), start_pos, mask, use_cache)
+        h = x + self.attention.forward(self.attention_norm(x), start_pos, freqs_cis, mask, use_cache)
         h = self.clamp.forward(h)
         out = h + self.feed_forward.forward(self.ffn_norm(h))
         out = self.clamp.forward(out)
@@ -175,6 +166,10 @@ class InternLMHead(nn.Module):
             self.layers.append(InternLMTransformerBlock(args))
         self.norm = None
 
+        self.freqs_cis = precompute_freqs_cis(
+            self.args.hidden_size // self.args.num_attention_heads, self.args.max_seq_len * 2, self.args.rope_theta
+        )  # [s * 2, head_dim / 2]
+
     def init_weights(self):
         self.tok_embeddings = ParallelEmbedding(
             self.args.vocab_size, self.args.hidden_size, init_method=lambda x: x
@@ -187,6 +182,8 @@ class InternLMHead(nn.Module):
         tokens = tokens.to(next(self.parameters()).device)
         _bsz, seq_len = tokens.shape
         h = self.tok_embeddings(tokens)
+        self.freqs_cis = self.freqs_cis.to(h.device)
+        freqs_cis = self.freqs_cis[start_pos: start_pos + seq_len]
 
         mask = None
         if seq_len > 1:
@@ -194,7 +191,7 @@ class InternLMHead(nn.Module):
             mask = torch.triu(mask, diagonal=start_pos + 1).type_as(h)
 
         for layer in self.layers:
-            h = layer(h, start_pos, mask, use_cache)
+            h = layer(h, start_pos, freqs_cis, mask, use_cache)
         return self.norm(h)
 
 
