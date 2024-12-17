@@ -109,7 +109,7 @@ def run(
         policy_model_type: str,
         verifier_ckpt_dir: str,
         verifier_model_type: str,
-        reference_ckpt_dir: str,
+        reference_ckpt_dir: str = None,
         policy_config_file: str = None,
         policy_tokenizer_file: str = None,
         verifier_config_file: str = None,
@@ -169,16 +169,18 @@ def run(
                 num_samples_per_prompt=num_samples_per_prompt
             )
 
-            reference_rollout_buffer = collect_reference_buffer(
-                actor_model_type=policy_model_type,
-                actor_config_file=policy_config_file,
-                max_seq_len=max_seq_len,
-                actor_tokenizer_file=policy_tokenizer_file,
-                dtype=dtype,
-                reference_ckpt_dir=reference_ckpt_dir,
-                actor_rollout_buffer=policy_rollout_buffer,
-                max_forward_batch_size=max_forward_batch_size
-            )
+            reference_rollout_buffer = None
+            if reference_ckpt_dir is not None:
+                reference_rollout_buffer = collect_reference_buffer(
+                    actor_model_type=policy_model_type,
+                    actor_config_file=policy_config_file,
+                    max_seq_len=max_seq_len,
+                    actor_tokenizer_file=policy_tokenizer_file,
+                    dtype=dtype,
+                    reference_ckpt_dir=reference_ckpt_dir,
+                    actor_rollout_buffer=policy_rollout_buffer,
+                    max_forward_batch_size=max_forward_batch_size
+                )
 
             # Collecting verifier buffer
             verifier_rollout_buffer = collect_verifier_buffer(
@@ -214,7 +216,9 @@ def run(
                 action_logits=policy_rollout_buffer.action_logits,
                 action_masks=policy_rollout_buffer.action_masks,
                 action_logprobs=policy_rollout_buffer.action_logprobs,
-                ref_action_logprobs=reference_rollout_buffer.output_tokens_logps,
+                ref_action_logprobs=reference_rollout_buffer.output_tokens_logps if (
+                    reference_rollout_buffer is not None
+                ) else None,
                 use_last_token_reward=True,
                 last_token_reward_only=False,
                 kl_coef=0.0,

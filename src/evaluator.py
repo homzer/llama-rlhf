@@ -31,20 +31,20 @@ class SolverEvaluator:
             top_p=top_p
         )
         self.evaluators = {
-            "GSM8K": GSM8KEvaluator,
-            "MATH": MATHEvaluator,
-            "MMLU": MMLUEvaluator,
-            "ARC": MultiChoicesEvaluator,
-            "CSQA": MultiChoicesEvaluator,
-            "BBH": BBHEvaluator,
-            "AGIEval": MultiChoicesEvaluator
+            "gsm8k": GSM8KEvaluator,
+            "math": MATHEvaluator,
+            "mmlu": MMLUEvaluator,
+            "arc": MultiChoicesEvaluator,
+            "csqa": MultiChoicesEvaluator,
+            "bbh": BBHEvaluator,
+            "agieval": MultiChoicesEvaluator
         }
         self.batch_size = batch_size
 
     def forward(self, task: str, dataset: JsonDataset):
         print(f"Evaluating {task}.........")
         dataloader = DataLoader(dataset, batch_size=self.batch_size)
-        evaluator = self.evaluators[task]()
+        evaluator = self.evaluators[task.lower()]()
 
         results = []
         timer = Timer(len(dataloader))
