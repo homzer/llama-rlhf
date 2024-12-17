@@ -389,47 +389,6 @@ class ORPOLoss(Loss):
         return loss.mean()
 
 
-class DiscriminativeDPOLoss(Loss):
-    def __init__(self, beta: float = 0.2, gamma: float = 0.0, reduce: str = "mean"):
-        super().__init__()
-        self.beta = beta
-        self.gamma = gamma
-        assert reduce in ["sum", "mean"]
-        self.reduce = reduce
-
-    def prepare_for_loss(self, logits, masks):
-        logprobs = torch.nn.functional.logsigmoid(
-            logits.float() if logits.dtype == torch.float16 else logits
-        ).type_as(logits)
-        if masks is None:
-            masks = torch.ones_like(logprobs)
-        masks = masks.to(logits.device)
-        logprobs = torch.sum(logprobs * masks, dim=-1) if (
-            self.reduce == "sum"
-        ) else masked_mean(logprobs, masks, dim=-1)  # [b]
-        return logprobs
-
-    def forward(
-            self,
-            chosen_logits: torch.Tensor,
-            rejected_logits: torch.Tensor,
-            chosen_masks: torch.Tensor = None,
-            rejected_masks: torch.Tensor = None,
-    ):
-        """
-        compute discriminative DPO loss
-        :param chosen_logits: [batch_size, seq_length]
-        :param rejected_logits: [batch_size, seq_length]
-        :param chosen_masks: [batch_size, seq_length]
-        :param rejected_masks: [batch_size, seq_length]
-        :return: scalar loss tensor
-        """
-        chosen_logprobs = self.prepare_for_loss(chosen_logits, chosen_masks)
-        rejected_logprobs = self.prepare_for_loss(rejected_logits, rejected_masks)
-        loss = - torch.nn.functional.logsigmoid(self.beta * (chosen_logprobs - rejected_logprobs) - self.gamma).mean()
-        return loss
-
-
 def norm(x: torch.Tensor, dim: int = -1, eps: float = 1e-5):
     return x / (x.std(dim=dim, keepdim=True) + eps)
 

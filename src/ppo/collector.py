@@ -118,9 +118,9 @@ class CriticBufferCollector:
             verifier=critic, tokenizer=tokenizer, max_seq_len=max_seq_len
         )
 
-    def forward(self, instructions: np.ndarray, actions: np.ndarray, action_masks: np.ndarray) -> CriticRolloutBuffer:
+    def forward(self, instructions: List[str], actions: np.ndarray, action_masks: np.ndarray) -> CriticRolloutBuffer:
         generator_outputs = self.generator.forward(
-            obs=instructions.tolist(),
+            obs=instructions,
             actions=actions,
             action_masks=action_masks
         )
