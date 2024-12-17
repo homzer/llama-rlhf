@@ -124,7 +124,7 @@ class Llama3Tokenizer(Tokenizer):
         ))
         t: List[int] = []
         for substr in substrs:
-            t.extend(self.model.encode(substr, allowed_special=self.allowed_special))
+            t.extend(self.model.encode(substr, allowed_special=self.allowed_special, disallowed_special=()))
         if bos and (len(t) == 0 or t[0] != self.bos_id):
             t.insert(0, self.bos_id)
         if eos and (len(t) == 0 or t[-1] != self.eos_id):
