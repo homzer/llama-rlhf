@@ -126,8 +126,8 @@ def run(
                 for data in policy_rollout_buffer.get(max_batch_size):
                     timer.step()
                     trainer_outputs = trainer.forward(
-                        instructions=data.instructions.tolist(),
-                        outputs=data.responses.tolist()
+                        instructions=data.instructions,
+                        outputs=data.responses
                     )
                     if trainer.step % 100 == 0:
                         print(f'--------- STEP {trainer.step} OF {timer.total} ---------')
