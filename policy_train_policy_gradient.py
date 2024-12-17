@@ -116,7 +116,7 @@ def run(
         seed: int = None,
         use_last_token_reward: bool = False
 ):
-    setup_model_parallel(seed=seed)
+    parallel_infos = setup_model_parallel(seed=seed)
     policy_config_file = policy_config_file or policy_ckpt_dir
     policy_tokenizer_file = policy_tokenizer_file or policy_ckpt_dir
     verifier_config_file = verifier_config_file or verifier_ckpt_dir
@@ -203,12 +203,13 @@ def run(
                 max_batch_size=max_batch_size
             )
 
-            torch.save({
-                'obs': rollout_buffer.obs,
-                'actions': rollout_buffer.actions,
-                'rewards': rollout_buffer.origin_rewards,
-                'action_masks': rollout_buffer.action_masks
-            }, os.path.join(save_dir, f"epoch-{epoch + 1}", f"buffer.bin"))
+            if parallel_infos.local_rank == 0:
+                torch.save({
+                    'obs': rollout_buffer.obs,
+                    'actions': rollout_buffer.actions,
+                    'rewards': rollout_buffer.origin_rewards,
+                    'action_masks': rollout_buffer.action_masks
+                }, os.path.join(save_dir, f"epoch-{epoch + 1}", f"buffer.bin"))
 
 
 if __name__ == '__main__':

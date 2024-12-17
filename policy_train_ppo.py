@@ -351,7 +351,7 @@ def run(
         use_chat_template: bool = False,
         use_last_token_reward: bool = False
 ):
-    setup_model_parallel()
+    parallel_infos = setup_model_parallel()
     actor_config_file = actor_config_file or actor_ckpt_dir
     actor_tokenizer_file = actor_tokenizer_file or actor_ckpt_dir
     critic_config_file = critic_config_file or critic_ckpt_dir
@@ -475,15 +475,16 @@ def run(
                 clip_range=clip_range
             )
 
-            torch.save({
-                'obs': rollout_buffer.obs,
-                'actions': rollout_buffer.actions,
-                'values': rollout_buffer.values,
-                'rewards': rollout_buffer.origin_rewards,
-                'action_masks': rollout_buffer.action_masks,
-                'advantages': rollout_buffer.advantages,
-                'returns': rollout_buffer.returns
-            }, os.path.join(actor_save_dir, f"epoch-{epoch + 1}", "buffer.bin"))
+            if parallel_infos.local_rank == 0:
+                torch.save({
+                    'obs': rollout_buffer.obs,
+                    'actions': rollout_buffer.actions,
+                    'values': rollout_buffer.values,
+                    'rewards': rollout_buffer.origin_rewards,
+                    'action_masks': rollout_buffer.action_masks,
+                    'advantages': rollout_buffer.advantages,
+                    'returns': rollout_buffer.returns
+                }, os.path.join(actor_save_dir, f"epoch-{epoch + 1}", "buffer.bin"))
 
             train_critic(
                 critic_model_type=critic_model_type,

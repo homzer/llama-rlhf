@@ -155,9 +155,7 @@ class RolloutBuffer:
                     self.rewards[i][self.action_masks[i]] = self.rewards[i][nonzero_indices[-1]]
 
         if self.reward_normalize:
-            self.rewards = self.mu + (self.rewards - np.mean(
-                self.rewards[self.action_masks]
-            )) / (np.std(self.rewards[self.action_masks]))
+            self.rewards = self.rewards / (np.std(self.rewards[self.action_masks]))
 
         if self.last_token_reward_only:
             for i in range(self.buffer_size):
