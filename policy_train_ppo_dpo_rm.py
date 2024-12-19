@@ -59,7 +59,7 @@ def collect_verifier_buffer(
     verifier_buffer_collector = CriticBufferCollector(verifier, verifier_tokenizer, max_seq_len)
     verifier_rollout_buffer = CriticRolloutBuffer()
     print("Reward buffer collecting ...")
-    timer = Timer(total=len(actor_rollout_buffer) // max_forward_batch_size)
+    timer = Timer(total=len(actor_rollout_buffer) // max_forward_batch_size, episode=10)
     for data in actor_rollout_buffer.get(max_forward_batch_size):
         timer.step()
         verifier_rollout_buffer.extend(
@@ -70,6 +70,7 @@ def collect_verifier_buffer(
 
     verifier.cpu()
     del verifier
+    del verifier_buffer_collector
     torch.cuda.empty_cache()
     set_barrier()
 
@@ -84,7 +85,7 @@ def collect_verifier_buffer(
     reference = VerifierForDPO(reference)
     reference_buffer_collector = CriticBufferCollector(reference, reference_tokenizer, max_seq_len)
     reference_rollout_buffer = CriticRolloutBuffer()
-    timer = Timer(total=len(actor_rollout_buffer) // max_forward_batch_size)
+    timer = Timer(total=len(actor_rollout_buffer) // max_forward_batch_size, episode=10)
     for data in actor_rollout_buffer.get(max_forward_batch_size):
         timer.step()
         reference_rollout_buffer.extend(
@@ -95,6 +96,7 @@ def collect_verifier_buffer(
 
     reference.cpu()
     del reference
+    del reference_buffer_collector
     torch.cuda.empty_cache()
     set_barrier()
 

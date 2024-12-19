@@ -30,21 +30,12 @@ class SolverEvaluator:
             temperature=temperature,
             top_p=top_p
         )
-        self.evaluators = {
-            "gsm8k": GSM8KEvaluator,
-            "math": MATHEvaluator,
-            "mmlu": MMLUEvaluator,
-            "arc": MultiChoicesEvaluator,
-            "csqa": MultiChoicesEvaluator,
-            "bbh": BBHEvaluator,
-            "agieval": MultiChoicesEvaluator
-        }
         self.batch_size = batch_size
 
     def forward(self, task: str, dataset: JsonDataset):
         print(f"Evaluating {task}.........")
         dataloader = DataLoader(dataset, batch_size=self.batch_size)
-        evaluator = self.evaluators[task.lower()]()
+        evaluator = EVALUATORS.get(task.lower())()
 
         results = []
         timer = Timer(len(dataloader))
@@ -119,6 +110,12 @@ class Evaluator:
     def format_label(self, label: str) -> str:
         raise NotImplementedError
 
+    def eval(self, output: str, label: str) -> bool | None:
+        raise NotImplementedError
+
+    def extract_answer(self, output: str) -> str:
+        raise NotImplementedError
+
     def forward(self, output: str, label: str = None) -> str:
         raise NotImplementedError
 
@@ -174,8 +171,8 @@ class GSM8KEvaluator(Evaluator):
             results.append(self.format_label("".join(nm)))
         return results
 
-    def forward(self, output: str, label: str = None) -> str:
-        final_result = ""
+    def extract_answer(self, output: str) -> str:
+        answer = ""
         # splitting
         output = output.strip().split("\n")
         for out in output:
@@ -188,166 +185,27 @@ class GSM8KEvaluator(Evaluator):
             if len(results) == 0:
                 results.extend(self.extract_numbers(out))
             if len(results) != 0:
-                final_result = results[-1]
+                answer = results[-1]
+        return answer
 
+    def eval(self, output: str, label: str) -> bool | None:
+        answer = self.extract_answer(output)
+        if len(answer) == 0:
+            return None
+        return self.format_label(label) == answer
+
+    def forward(self, output: str, label: str = None) -> str:
+        answer = self.extract_answer(output)
         # evaluation
-        if len(final_result) == 0:
+        if len(answer) == 0:
             self.miss += 1
         elif label is not None:
-            if self.format_label(label) == final_result:
+            if self.format_label(label) == answer:
                 self.meter.forward(1)
                 self.correct += 1
             else:
                 self.meter.forward(0)
-
-        return final_result
-
-
-# class MATHEvaluator(Evaluator):
-#     def __init__(self, escape_error: bool = True):
-#         super().__init__()
-#         self.boxed = "boxed"
-#         self.escape_error = escape_error
-#
-#     def extract_answer(self, text: str) -> str:
-#         a = ""
-#         if self.boxed in text:
-#             ans = text.split('boxed')[-1]
-#             if len(ans) == 0:
-#                 return ""
-#             elif ans[0] == '{':
-#                 stack = 1
-#                 for c in ans[1:]:
-#                     if c == '{':
-#                         stack += 1
-#                         a += c
-#                     elif c == '}':
-#                         stack -= 1
-#                         if stack == 0:
-#                             break
-#                         a += c
-#                     else:
-#                         a += c
-#             else:
-#                 a = ans.split('$')[0].strip()
-#
-#         a = a.replace(" ", "")
-#         a = re.sub(r"\\mathbf", "", a)
-#         a = re.sub(r"^\\text", "", a)
-#         a = re.sub(r"^\w=", "", a)
-#         a = re.sub(r"\\left|\\right|\\!|\\%|\\\$|", "", a)
-#         a = re.sub(r"\\text{.*\n*.*}", "", a)
-#         a = re.sub(r"\^{?\\circ}?", "", a)
-#         a = re.sub(r"\\mbox{.*}", "", a)
-#         a = re.sub(r"\\\\", r"\\", a)
-#         a = re.sub(r"\\$", "", a)
-#         return a
-#
-#     def format_label(self, label: str) -> str:
-#         return re.sub(r'\s', "", label)
-#
-#     def forward(self, output: str, label: str = None) -> str:
-#         result = self.extract_answer(output)
-#         if label is not None:
-#             label = self.format_label(label)
-#             if len(result) == 0:
-#                 self.miss += 1
-#             else:
-#                 is_equal = False
-#                 if self.escape_error:
-#                     try:
-#                         is_equal = math_equal(result, label)
-#                     except:
-#                         pass
-#                 else:
-#                     is_equal = math_equal(result, label)
-#
-#                 if is_equal:
-#                     self.meter.forward(1)
-#                     self.correct += 1
-#                 else:
-#                     self.meter.forward(0)
-#
-#         return result
-
-# class MATHEvaluator(Evaluator):
-#     def __init__(self, escape_error: bool = True):
-#         super().__init__()
-#         self.boxed = "boxed"
-#         self.escape_error = escape_error
-#
-#     def extract_answer(self, text: str) -> str:
-#         a = ""
-#         if self.boxed in text:
-#             ans = text.split('boxed')[-1]
-#             if len(ans) == 0:
-#                 return ""
-#             elif ans[0] == '{':
-#                 stack = 1
-#                 for c in ans[1:]:
-#                     if c == '{':
-#                         stack += 1
-#                         a += c
-#                     elif c == '}':
-#                         stack -= 1
-#                         if stack == 0:
-#                             break
-#                         a += c
-#                     else:
-#                         a += c
-#             else:
-#                 a = ans.split('$')[0].strip()
-#
-#         a = a.replace(" ", "")
-#         a = re.sub(r"\\mathbf", "", a)
-#         a = re.sub(r"^\\text", "", a)
-#         a = re.sub(r"^\w=", "", a)
-#         a = re.sub(r"\\left|\\right|\\!|\\%|\\\$|", "", a)
-#         a = re.sub(r"\\text{.*\n*.*}", "", a)
-#         a = re.sub(r"\^{?\\circ}?", "", a)
-#         a = re.sub(r"\\mbox{.*}", "", a)
-#         a = re.sub(r"\\\\", r"\\", a)
-#         a = re.sub(r"\\$", "", a)
-#         return a
-#
-#     def format_output(self, output: str) -> str:
-#         # Use regular expressions to split the text into sentences
-#         sentences = re.split(r'(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=[.?])\s', output.strip())
-#         # Extract the last sentence from the list of sentences
-#         last_sentence = sentences[-1] if sentences else ''
-#         last_sentence = re.sub(r"\s", "", last_sentence)
-#         last_sentence = re.sub(r"(?<=\W)\wfrac", "frac", last_sentence)
-#         last_sentence = re.sub(r"\\left|\\right|\\!|\\%|\\\$|", "", last_sentence)
-#         last_sentence = re.sub(r"\\\\", r"\\", last_sentence)
-#         last_sentence = re.sub(r"\^{?\\circ}?", "", last_sentence)
-#         last_sentence = re.sub(r"\\mbox{.*}", "", last_sentence)
-#         last_sentence = re.sub(r'(?<=\d),(?=\d{3})', '', last_sentence)
-#         last_sentence = re.sub(r'(?<=\D)\.(?=\d)', "0.", last_sentence)
-#         return last_sentence
-#
-#     def format_label(self, label: str) -> str:
-#         label = re.sub(r'\s', "", label.strip())
-#         label = re.sub(r'(?<=\d),(?=\d{3})', '', label)
-#         return label
-#
-#     def forward(self, output: str, label: str = None) -> str:
-#         output = self.format_output(output)
-#         if len(re.findall(r"\d+", output)) == 0:
-#             self.miss += 1
-#             return ""
-#         result = self.extract_answer(output)
-#         if label is not None:
-#             label = self.format_label(label)
-#             if label in output:
-#                 self.meter.forward(1)
-#                 self.correct += 1
-#             else:
-#                 if label in ["\\begin{pmatrix}\\frac{3}{5}&\\frac{1}{5}\\frac{3}{5}&\\frac{1}{5}\\end{pmatrix}"]:
-#                     print()
-#                 print("RESULT", result, "| LABEL", label)
-#                 self.meter.forward(0)
-#
-#         return result
+        return answer
 
 
 class MATHEvaluator(Evaluator):
@@ -356,10 +214,10 @@ class MATHEvaluator(Evaluator):
         self.boxed = "boxed"
         self.escape_error = escape_error
 
-    def extract_answer(self, text: str) -> str:
+    def extract_answer(self, output: str) -> str:
         a = ""
-        if self.boxed in text:
-            ans = text.split('boxed')[-1]
+        if self.boxed in output:
+            ans = output.split('boxed')[-1]
             if len(ans) == 0:
                 return ""
             elif ans[0] == '{':
@@ -394,6 +252,12 @@ class MATHEvaluator(Evaluator):
     def format_label(self, label: str) -> str:
         return re.sub(r'\s', "", label)
 
+    def eval(self, output: str, label: str) -> bool | None:
+        answer = self.extract_answer(output)
+        if len(answer) == 0:
+            return None
+        return self.format_label(label) in answer
+
     def forward(self, output: str, label: str = None) -> str:
         result = self.extract_answer(output)
         if label is not None:
@@ -417,6 +281,19 @@ class MMLUEvaluator(Evaluator):
     def format_label(self, label: str) -> str:
         match = re.search(r'([ABCD])\.', label)
         return match.group(1) if match else None
+
+    def extract_answer(self, output: str) -> str:
+        answer = ""
+        answers = re.findall(r'([ABCD])\.', output)
+        if len(answers) > 0:
+            answer = answers[-1]
+        return answer
+
+    def eval(self, output: str, label: str) -> bool | None:
+        answer = self.extract_answer(output)
+        if len(answer) == 0:
+            return None
+        return self.format_label(label) == answer
 
     def forward(self, output: str, label: str = None) -> str:
         answer = None
@@ -518,3 +395,14 @@ class BBHEvaluator(Evaluator):
     def format_label(self, label: str):
         matches = re.findall(self.get_label_pattern(label), label)
         return matches[0].lower() if len(matches) != 0 else None
+
+
+EVALUATORS = {
+    "gsm8k": GSM8KEvaluator,
+    "math": MATHEvaluator,
+    "mmlu": MMLUEvaluator,
+    "arc": MultiChoicesEvaluator,
+    "csqa": MultiChoicesEvaluator,
+    "bbh": BBHEvaluator,
+    "agieval": MultiChoicesEvaluator
+}
