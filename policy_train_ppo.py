@@ -277,6 +277,7 @@ def train_critic(
         critic_max_batch_size: int,
         inner_epochs: int,
 ):
+    epoch = 0 if epoch == 0 else 1  # TODO For saving memory
     critic, critic_tokenizer = get_parallel_verifier(
         model_type=critic_model_type,
         config_file=critic_config_file,
