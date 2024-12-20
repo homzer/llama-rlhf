@@ -262,14 +262,11 @@ class MATHEvaluator(Evaluator):
         result = self.extract_answer(output)
         if label is not None:
             label = self.format_label(label)
-            if len(result) == 0:
-                self.miss += 1
+            if label in result:
+                self.meter.forward(1)
+                self.correct += 1
             else:
-                if label in result:
-                    self.meter.forward(1)
-                    self.correct += 1
-                else:
-                    self.meter.forward(0)
+                self.meter.forward(0)
 
         return result
 
