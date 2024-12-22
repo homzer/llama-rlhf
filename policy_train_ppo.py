@@ -134,6 +134,7 @@ def collect_critic_buffer(
         actor_rollout_buffer: ActorRolloutBuffer,
         max_forward_batch_size: int,
 ) -> CriticRolloutBuffer:
+    epoch = 0 if epoch == 0 else 1  # TODO: for saving memory
     critic, critic_tokenizer = get_parallel_verifier(
         model_type=critic_model_type,
         config_file=critic_config_file,
@@ -301,7 +302,10 @@ def train_critic(
             if critic_trainer.step % 100 == 0:
                 print(f'--------- STEP {critic_trainer.step} OF {timer.total} ---------')
                 print('Loss: ', trainer_outputs.loss)
-    critic_trainer.save(os.path.join(critic_save_dir, f"epoch-{epoch + 1}"))
+    if epoch == 0:  # TODO For saving memory
+        critic_trainer.save(os.path.join(critic_save_dir, f"epoch-{epoch + 1}"))
+    else:
+        critic_trainer.save(os.path.join(critic_save_dir, f"epoch-{epoch}"))
 
     critic.cpu()
     del critic

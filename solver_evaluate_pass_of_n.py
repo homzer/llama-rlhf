@@ -29,7 +29,7 @@ def compute_pass_of_n(evaluator: Evaluator, results: list, num_samples_per_promp
         for result in results:
             if True in result["predict"][:n]:
                 meter.forward(1)
-            elif False in result["predict"][:n]:
+            else:
                 meter.forward(0)
         result_dict[n] = meter.average
     return result_dict
