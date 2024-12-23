@@ -33,9 +33,9 @@ class SolverEvaluator:
         self.batch_size = batch_size
 
     def forward(self, task: str, dataset: JsonDataset):
-        print(f"Evaluating {task}.........")
+        task = task.lower()
         dataloader = DataLoader(dataset, batch_size=self.batch_size)
-        evaluator = EVALUATORS.get(task.lower())()
+        print(f"Evaluating {task}.........")
 
         results = []
         timer = Timer(len(dataloader))
@@ -49,11 +49,16 @@ class SolverEvaluator:
             print(data['instruction'][0].strip() + '\n' + outputs[0])
             print("---" * 10)
 
-        for data in results:
-            data['predict'] = evaluator.forward(data['output'], data['label'])
+        if task in EVALUATORS:
+            evaluator = EVALUATORS.get(task)()
+            for data in results:
+                data['predict'] = evaluator.forward(data['output'], data['label'])
 
-        Output = collections.namedtuple('Output', ['acc', 'datalist', 'missing', 'correct'])
-        return Output(acc=evaluator.accuracy, datalist=results, missing=evaluator.miss, correct=evaluator.correct)
+            Output = collections.namedtuple('Output', ['acc', 'datalist', 'missing', 'correct'])
+            return Output(acc=evaluator.accuracy, datalist=results, missing=evaluator.miss, correct=evaluator.correct)
+        else:
+            Output = collections.namedtuple('Output', ['acc', 'datalist', 'missing', 'correct'])
+            return Output(acc=0, datalist=results, missing=0, correct=0)
 
 
 class VerifierEvaluator:
