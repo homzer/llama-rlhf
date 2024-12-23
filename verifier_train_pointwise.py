@@ -74,7 +74,7 @@ def main(
             )
             if trainer.step % 100 == 0:
                 print(f'step {trainer.step} of {len(dataloader)} -------------------------------')
-                print("LOSS: ", outputs.loss.item(), "Acc: ", trainer.verifier_accuracy())
+                print("LOSS: ", outputs.loss, "Acc: ", trainer.verifier_accuracy())
             timer.step()
         trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))
 
