@@ -5,11 +5,42 @@ import torch
 
 from src.rewards.strategy import PairwiseVerifierStrategyForLastToken, \
     PairwiseVerifierStrategyForMeanScore, PairwiseVerifierStrategyForFocalMeanScore, \
-    PairwiseVerifierStrategyForFocalLoss, PairwiseVerifierStrategyForDPO, PairwiseVerifierStrategyForSimPO
+    PairwiseVerifierStrategyForFocalLoss, PairwiseVerifierStrategyForDPO, PairwiseVerifierStrategyForSimPO, \
+    PointwiseVerifierStrategyForFocalLoss, PointwiseVerifierStrategyForLastToken
 from src.generator import GeneratorForVerifier
 from src.models.modeling import ParallelVerifier, Verifier, ModelForCausalLM, ParallelModelForCausalLM
 from src.ppo.generator import LogitsGeneratorForCausalLM
 from src.tokenizers.tokenizer import Tokenizer
+
+
+class PointwiseVerifierGeneratorForLastToken(GeneratorForVerifier):
+    def __init__(
+            self,
+            model: Union[Verifier, ParallelVerifier],
+            tokenizer: Tokenizer,
+            max_seq_len: int,
+    ):
+        super().__init__(model=model, tokenizer=tokenizer, max_seq_len=max_seq_len)
+        self.strategy = PointwiseVerifierStrategyForLastToken()
+
+    def forward(self, instructions: Union[List[str], List[List[int]]], outputs: Union[List[str], List[List[int]]]):
+        self.model.eval()
+        examples = self.prepare_for_generation(instructions, outputs)
+        with torch.no_grad():
+            scores = self.model.forward(examples.tokens).scores
+        Outputs = collections.namedtuple("Outputs", ["scores"])
+        return Outputs(scores=self.strategy.generator_forward(scores, examples.masks))
+
+
+class PointwiseVerifierGeneratorForFocalLoss(PointwiseVerifierGeneratorForLastToken):
+    def __init__(
+            self,
+            model: Union[Verifier, ParallelVerifier],
+            tokenizer: Tokenizer,
+            max_seq_len: int,
+    ):
+        super().__init__(model=model, tokenizer=tokenizer, max_seq_len=max_seq_len)
+        self.strategy = PointwiseVerifierStrategyForFocalLoss()
 
 
 class VerifierGeneratorForLastToken(GeneratorForVerifier):

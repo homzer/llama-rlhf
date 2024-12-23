@@ -24,6 +24,75 @@ class PairwiseVerifierStrategy:
         raise NotImplementedError
 
 
+class PointwiseVerifierStrategyForLastToken(PointwiseVerifierStrategy):
+    """ Binary Classification. Default to be Cross-Entropy Loss """
+    def trainer_forward(
+            self,
+            scores: torch.Tensor,
+            masks: torch.Tensor,
+            labels: torch.Tensor,
+            **kwargs
+    ):
+        bsz, seq_len = scores.shape
+        valid_bsz = bsz
+        loss = torch.tensor(0.).to(scores)
+        labels = labels.to(scores)
+        for i in range(bsz):
+            nonzero_indices = masks[i].nonzero()
+            if len(nonzero_indices) == 0:
+                valid_bsz -= 1
+                continue
+            end_idx = nonzero_indices[-1].item()
+            score = scores[i][end_idx]
+            loss += torch.nn.functional.binary_cross_entropy_with_logits(score, labels[i])
+        if valid_bsz > 0:
+            loss = loss / valid_bsz
+        return loss
+
+    def generator_forward(self, scores: torch.Tensor, masks: torch.Tensor) -> List[float]:
+        scores = scores.detach().cpu()
+        bsz = scores.shape[0]
+        reduce_scores = []
+        for i in range(bsz):
+            check_end = masks[i].nonzero()
+            if len(check_end) == 0:
+                print("Warming: instruction len out of range. Setting reward score to 0.")
+                reduce_scores.append(0)
+                continue
+            reduce_scores.append(torch.sigmoid(scores[i][check_end[-1].item()]).item())
+        return reduce_scores
+
+
+class PointwiseVerifierStrategyForFocalLoss(PointwiseVerifierStrategyForLastToken):
+    def __init__(self, gamma: float = 2.0):
+        self.gamma = gamma
+
+    def trainer_forward(
+            self,
+            scores: torch.Tensor,
+            masks: torch.Tensor,
+            labels: torch.Tensor,
+            **kwargs
+    ):
+        bsz, seq_len = scores.shape
+        valid_bsz = bsz
+        loss = torch.tensor(0.).to(scores)
+        labels = labels.to(scores)
+        for i in range(bsz):
+            nonzero_indices = masks[i].nonzero()
+            if len(nonzero_indices) == 0:
+                valid_bsz -= 1
+                continue
+            end_idx = nonzero_indices[-1].item()
+            score = scores[i][end_idx]
+            p = torch.sigmoid(score)
+            penalty = (1 - labels[i]) * p ** self.gamma + labels[i] * (1 - p) ** self.gamma
+            loss += penalty * torch.nn.functional.binary_cross_entropy_with_logits(score, labels[i])
+        if valid_bsz > 0:
+            loss = loss / valid_bsz
+        return loss
+
+
 class PairwiseVerifierStrategyForLastToken(PairwiseVerifierStrategy):
     def trainer_forward(
             self,

@@ -17,6 +17,7 @@ from src.parallel import setup_model_parallel
 
 
 def main(
+        strategy: str,
         ckpt_dir: str,
         save_dir: str,
         train_file: str,
@@ -29,10 +30,9 @@ def main(
         tokenizer_file: str = None,
         config_file: str = None,
         dtype: str = "bfloat16",
-        lora_dtype: str = "float32",
+        lora_dtype: str = "bfloat16",
         use_chat_template: bool = False,
         seed: int = None,
-        strategy: str = "sum-score",  # "last-token"
         beta: float = 1.0,
         gamma: float = 0.0,
 ):

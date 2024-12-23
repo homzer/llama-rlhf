@@ -5,10 +5,73 @@ import torch
 
 from src.rewards.strategy import PairwiseVerifierStrategyForLastToken, \
     PairwiseVerifierStrategyForMeanScore, PairwiseVerifierStrategyForFocalMeanScore, \
-    PairwiseVerifierStrategyForFocalLoss, PairwiseVerifierStrategyForDPO, PairwiseVerifierStrategyForSimPO
+    PairwiseVerifierStrategyForFocalLoss, PairwiseVerifierStrategyForDPO, PairwiseVerifierStrategyForSimPO, \
+    PointwiseVerifierStrategyForLastToken, PointwiseVerifierStrategyForFocalLoss
 from src.models.modeling import ParallelVerifier, ParallelModelForCausalLM
 from src.tokenizers import Tokenizer
 from src.trainer import ParallelVerifierTrainer, ParallelSolverTrainer
+
+
+class ParallelPointwiseVerifierTrainerForLastToken(ParallelVerifierTrainer):
+    def __init__(
+            self,
+            model: ParallelVerifier,
+            tokenizer: Tokenizer,
+            optimizer: torch.optim.Optimizer,
+            accumulation_steps: int = 1
+    ):
+        super().__init__(
+            model=model,
+            tokenizer=tokenizer,
+            optimizer=optimizer,
+            accumulation_steps=accumulation_steps
+        )
+        self.strategy = PointwiseVerifierStrategyForLastToken()
+        self.predictions = []
+
+    def forward(self, instructions: List[str], responses: List[str], labels: torch.Tensor):
+        self.model.train()
+        examples = self.prepare_for_training(instructions, responses)
+        scores = self.model.forward(examples.tokens).scores
+
+        loss = self.strategy.trainer_forward(
+            scores=scores,
+            masks=examples.masks,
+            labels=labels
+        )
+
+        if loss != 0:
+            self._back_propagation(loss)
+
+        predicts = self.strategy.generator_forward(scores, examples.masks)
+        for predict, label in zip(predicts, labels.tolist()):
+            assert label in [0, 1]
+            self.predictions.append((predict < 0.5) if label == 0 else (predict > 0.5))
+
+        Output = collections.namedtuple('Output', ['loss'])
+        return Output(loss=loss.item() if isinstance(loss, torch.Tensor) else loss)
+
+    def verifier_accuracy(self) -> float:
+        accuracy = sum(self.predictions) / len(self.predictions)
+        self.predictions = []
+        return accuracy
+
+
+class ParallelPointwiseVerifierTrainerForFocalLoss(ParallelPointwiseVerifierTrainerForLastToken):
+    def __init__(
+            self,
+            model: ParallelVerifier,
+            tokenizer: Tokenizer,
+            optimizer: torch.optim.Optimizer,
+            accumulation_steps: int = 1
+    ):
+        super().__init__(
+            model=model,
+            tokenizer=tokenizer,
+            optimizer=optimizer,
+            accumulation_steps=accumulation_steps
+        )
+        self.strategy = PointwiseVerifierStrategyForFocalLoss()
 
 
 class ParallelVerifierTrainerForLastToken(ParallelVerifierTrainer):
