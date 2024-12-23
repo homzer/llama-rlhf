@@ -353,6 +353,8 @@ def run(
         begin_epoch: int = 0,
         kl_coef: float = 0.1,
         clip_range: float = 0.2,
+        gamma: float = 0.9,
+        gae_lamda: float = 0.8,
         use_chat_template: bool = False,
         use_last_token_reward: bool = False
 ):
@@ -396,7 +398,7 @@ def run(
             )
 
             reference_rollout_buffer = None
-            if reference_ckpt_dir is not None:
+            if reference_ckpt_dir is not None and kl_coef != 0:
                 # Collecting reference logprobs
                 reference_rollout_buffer = collect_reference_buffer(
                     actor_model_type=actor_model_type,
@@ -458,7 +460,9 @@ def run(
                 ) else None,
                 use_last_token_reward=use_last_token_reward,
                 last_token_reward_only=use_last_token_reward,
-                kl_coef=kl_coef
+                kl_coef=kl_coef,
+                gamma=gamma,
+                gae_lambda=gae_lamda
             )
 
             # Actor training
