@@ -1,13 +1,16 @@
 import os
+import random
 from collections import OrderedDict
 from pathlib import Path
 from typing import List
 
+import fire
 import safetensors
 import torch
+from safetensors.torch import save_file
 
-from src.entities import Timer
-from src.parallel.utils import set_barrier
+from src.parallel.initialize import set_barrier
+from src.utils import json_load, json_dump
 
 
 class Checkpoint:
@@ -45,12 +48,17 @@ class Checkpoint:
                 raise TypeError(ckpt_file)
         return state_dict
 
+    @classmethod
+    def save_hf(cls, state_dict: dict, save_dir: str):
+        print(f"Saving to {save_dir} ...")
+        save_file(state_dict, os.path.join(save_dir, "model.safetensors"))
+
     def split(self, state_dict: dict, n: int) -> List[dict]:
+        if n == 1:
+            return [state_dict]
         new_state_dicts = [OrderedDict() for _ in range(n)]
-        timer = Timer(len(state_dict))
         with torch.no_grad():
             for name, param in state_dict.items():
-                timer.step()
                 assert 'lora' not in name, 'can not split a lora checkpoint, merge it first'
                 param = param.cpu()
                 if self.is_col_parallel(name):
@@ -152,7 +160,7 @@ class Checkpoint:
             self,
             ckpt_dir: str,
             model_parallel_world_size: int,
-            global_rank: int,
+            global_rank: int = 0,
             verbose: bool = True
     ) -> str:
         pl_ckpt_dir = os.path.join(ckpt_dir, str(model_parallel_world_size))
@@ -194,6 +202,15 @@ class Checkpoint:
             )
         set_barrier()
         return ckpt_dir
+
+    @classmethod
+    def show(cls, checkpoint_file):
+        if checkpoint_file.endswith(".safetensors"):
+            state_dict = cls.load_hf([checkpoint_file])
+        else:
+            state_dict = torch.load(checkpoint_file, map_location="cpu")
+        for name, param in state_dict.items():
+            print(name, param.shape)
 
 
 class CheckpointForLlama(Checkpoint):
@@ -239,6 +256,88 @@ class CheckpointForLlama3(Checkpoint):
             "wo.weight", "w2.weight", "o_proj.weight", "down_proj.weight"
         ]
         super().__init__(col_parallel_names, row_parallel_names)
+        self.replace_names = {
+            "tok_embeddings.": "embed_tokens.",
+            ".feed_forward.w1.": ".mlp.gate_proj.",
+            ".feed_forward.w2.": ".mlp.down_proj.",
+            ".feed_forward.w3.": ".mlp.up_proj.",
+            ".attention_norm.": ".input_layernorm.",
+            ".ffn_norm.": ".post_attention_layernorm.",
+            ".attention.wq.": ".self_attn.q_proj.",
+            ".attention.wk.": ".self_attn.k_proj.",
+            ".attention.wv.": ".self_attn.v_proj.",
+            ".attention.wo.": ".self_attn.o_proj.",
+        }
+
+    def _rename_consolidate_to_huggingface(self, state_dict, head_dim: int) -> dict:
+        def permute(_w, _head_dim):
+            _dim1, _dim2 = _w.shape
+            return _w.view(_dim1 // _head_dim, _head_dim // 2, 2, _dim2).transpose(1, 2).reshape(_dim1, _dim2)
+        new_state_dict = OrderedDict()
+        for name, param in state_dict.items():
+            old_name = name
+            if name == "output.weight":
+                param = param.clone()
+                name = "lm_head.weight"
+            else:
+                for source, target in self.replace_names.items():
+                    name = name.replace(source, target)
+                name = "model." + name
+            print(old_name, "------>", name)
+            if 'q_proj' in name or 'k_proj' in name:
+                param = permute(param, head_dim)
+            new_state_dict[name] = param
+        return new_state_dict
+
+    def convert_consolidate_to_huggingface(self, ckpt_dir: str, hf_config_dir: str, save_dir: str = None, head_dim: int = None):
+        """
+        Convert consolidated checkpoints into huggingface ones.
+        :param head_dim: attention head dimension.
+        :param ckpt_dir: path to the consolidate checkpoints dir.
+        :param hf_config_dir: huggingface config dir.
+        :param save_dir: default to `None`.
+        """
+        ckpt_dir = self.auto_split_consolidate_checkpoints(
+            ckpt_dir=ckpt_dir,
+            model_parallel_world_size=1,
+            global_rank=0
+        )
+        config = json_load(os.path.join(hf_config_dir, "config.json"))
+        state_dict = self._rename_consolidate_to_huggingface(
+            torch.load(os.path.join(ckpt_dir, "consolidated.00.pth")),
+            head_dim=config["head_dim"] if "head_dim" in config else head_dim
+        )
+        ckpt_dir = os.path.join(ckpt_dir, "hf")
+        os.makedirs(ckpt_dir, exist_ok=True)
+        save_dir = save_dir or ckpt_dir
+        self.save_hf(state_dict, save_dir)
+        import shutil
+        config["tie_word_embeddings"] = False  # untie word embeddings
+        json_dump(config, os.path.join(save_dir, "config.json"), indent=2)
+        shutil.copy2(os.path.join(hf_config_dir, "generation_config.json"), save_dir)
+        shutil.copy2(os.path.join(hf_config_dir, "special_tokens_map.json"), save_dir)
+        shutil.copy2(os.path.join(hf_config_dir, "tokenizer_config.json"), save_dir)
+        shutil.copy2(os.path.join(hf_config_dir, "tokenizer.json"), save_dir)
+
+
+class CheckpointForGemma2(Checkpoint):
+    def __init__(self):
+        col_parallel_names = [
+            "q_proj.weight", "k_proj.weight", "v_proj.weight", "gate_proj.weight", "up_proj.weight", "lm_head.weight",
+            "q_proj.bias", "k_proj.bias", "v_proj.bias", "gate_proj.bias", "up_proj.bias", "lm_head.bias"
+        ]
+        row_parallel_names = [
+            "o_proj.weight", "down_proj.weight", "embed_tokens.weight",
+        ]
+        super().__init__(col_parallel_names, row_parallel_names)
+
+    @classmethod
+    def load_hf(cls, ckpt_files: List[str]) -> dict:
+        state_dict = Checkpoint.load_hf(ckpt_files)
+        if "lm_head.weight" not in state_dict:  # for tie word embeddings
+            print("`lm_head.weight` not found in checkpoint, copy `model.embed_tokens.weight` to replace it.")
+            state_dict["lm_head.weight"] = state_dict["model.embed_tokens.weight"].clone()
+        return state_dict
 
 
 class CheckpointForQwen(Checkpoint):
@@ -251,6 +350,14 @@ class CheckpointForQwen(Checkpoint):
             "o_proj.weight", "down_proj.weight", "embed_tokens.weight",
         ]
         super().__init__(col_parallel_names, row_parallel_names)
+
+    @classmethod
+    def load_hf(cls, ckpt_files: List[str]) -> dict:
+        state_dict = Checkpoint.load_hf(ckpt_files)
+        if "lm_head.weight" not in state_dict:  # for tie word embeddings
+            print("`lm_head.weight` not found in checkpoint, copy `model.embed_tokens.weight` to replace it.")
+            state_dict["lm_head.weight"] = state_dict["model.embed_tokens.weight"].clone()
+        return state_dict
 
 
 class CheckpointForInternLM(Checkpoint):
@@ -355,3 +462,56 @@ class CheckpointForBaichuan(Checkpoint):
             state_dict[name] = None
 
         return new_state_dicts
+
+
+def rename_llama3(ckpt_dir: str, hf_config_dir: str, save_dir: str = None, head_dim: int = None):
+    checkpoint = CheckpointForLlama3()
+    checkpoint.convert_consolidate_to_huggingface(ckpt_dir, hf_config_dir, save_dir, head_dim)
+
+
+def show(ckpt_file):
+    Checkpoint.show(ckpt_file)
+
+
+def check_equal(ckpt_file1="../../models/llama3-hf/llama-3.2-1b-instruct-hf/original/consolidated.00.pth",
+                ckpt_file2="../../models/llama3-hf/llama-3.2-1b-instruct-hf/model.safetensors"):
+    state_dict1 = torch.load(ckpt_file1, map_location="cpu") if ckpt_file1.endswith(".pth") else Checkpoint.load_hf([ckpt_file1])
+    state_dict2 = torch.load(ckpt_file2, map_location="cpu") if ckpt_file2.endswith(".pth") else Checkpoint.load_hf([ckpt_file2])
+    replace_names = {
+        "tok_embeddings.": "embed_tokens.",
+        ".feed_forward.w1.": ".mlp.gate_proj.",
+        ".feed_forward.w2.": ".mlp.down_proj.",
+        ".feed_forward.w3.": ".mlp.up_proj.",
+        ".attention_norm.": ".input_layernorm.",
+        ".ffn_norm.": ".post_attention_layernorm.",
+        ".attention.wq.": ".self_attn.q_proj.",
+        ".attention.wk.": ".self_attn.k_proj.",
+        ".attention.wv.": ".self_attn.v_proj.",
+        ".attention.wo.": ".self_attn.o_proj.",
+    }
+    def replace(_name):
+        if _name == "output.weight":
+            _name = "lm_head.weight"
+        else:
+            for source, target in replace_names.items():
+                _name = _name.replace(source, target)
+            _name = "model." + _name
+        return _name
+
+    for name, param in state_dict1.items():
+        if name in state_dict2:
+            hf_name = name
+        else:
+            if name == "output.weight":
+                continue
+            hf_name = replace(name)
+        i = random.randint(0, param.shape[0] - 1)
+        if hf_name not in state_dict2:
+            continue
+        print(name, hf_name, param[i].tolist() == state_dict2[hf_name][i].tolist())
+        # assert param[i].tolist() == state_dict2[hf_name][i].tolist()
+
+
+if __name__ == '__main__':
+    fire.Fire()
+

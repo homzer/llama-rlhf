@@ -7,9 +7,8 @@ from torch.utils.data import DataLoader
 from src.dataset import ChatTemplateDataset, JsonDataset
 from src.entities import Timer
 from src.modeling import get_parallel_verifier
-from src.parallel.utils import setup_model_parallel
-from src.rewards.trainer import ParallelPointwiseVerifierTrainerForLastToken, \
-    ParallelPointwiseVerifierTrainerForFocalLoss
+from src.parallel.initialize import setup_model_parallel
+from src.rewards.trainer import ParallelPointwiseVerifierTrainerForLastToken, ParallelPointwiseVerifierTrainerForFocalLoss
 
 
 def main(

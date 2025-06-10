@@ -9,9 +9,68 @@ from policy_train_ppo_best_of_n import select_best_of_n_buffer
 from src.dataset import JsonDataset
 from src.entities import Timer
 from src.modeling import get_parallel_model
-from src.parallel.utils import setup_model_parallel, set_barrier
+from src.parallel.initialize import setup_model_parallel, set_barrier
+from src.parallel.optimizer import ParallelOptimizer
+from src.ppo.buffer import RolloutBuffer
 from src.trainer import ParallelSolverTrainer
 from src.utils import json_load
+
+
+def train_rft_policy(
+        policy_rollout_buffer: RolloutBuffer,
+        policy_model_type: str,
+        policy_config_file: str,
+        max_seq_len: int,
+        policy_tokenizer_file: str,
+        lora_dtype: str,
+        lora_rank: int,
+        dtype: str,
+        lr: float,
+        policy_ckpt_dir: str,
+        epoch: int,
+        save_dir: str,
+        max_batch_size: int,
+        inner_epochs: int
+):
+    model, tokenizer = get_parallel_model(
+        model_type=policy_model_type,
+        config_file=policy_config_file,
+        max_seq_len=max_seq_len,
+        tokenizer_file=policy_tokenizer_file,
+        lora_dtype=lora_dtype,
+        lora_rank=lora_rank,
+        dtype=dtype
+    )
+    optimizer = ParallelOptimizer(torch.optim.Adam(model.parameters(), lr=lr))
+    trainer = ParallelSolverTrainer(
+        model=model,
+        tokenizer=tokenizer,
+        optimizer=optimizer,
+        max_seq_len=max_seq_len
+    )
+    trainer.load_model(policy_ckpt_dir) if (
+            epoch == 0
+    ) else trainer.load(os.path.join(save_dir, "epoch-%03d" % epoch))
+    timer = Timer(total=(policy_rollout_buffer.size() // max_batch_size) * inner_epochs, episode=100)
+    for inner_epoch in range(inner_epochs):
+        for data in policy_rollout_buffer.get(max_batch_size):
+            timer.step()
+            trainer_outputs = trainer.forward(
+                instructions=data.instructions,
+                outputs=data.responses
+            )
+            if trainer.step % 100 == 0:
+                print(f'--------- STEP {trainer.step} OF {timer.total} ---------')
+                print(f'Loss: {trainer_outputs.loss}')
+    trainer.save(os.path.join(save_dir, "epoch-%03d" % (epoch + 1)))
+
+    model.cpu()
+    del model
+    del optimizer
+    del trainer
+    torch.cuda.empty_cache()
+    gc.collect()
+    set_barrier()
 
 
 def run(
@@ -102,45 +161,22 @@ def run(
             )
 
             print("Training policy ......")
-            model, tokenizer = get_parallel_model(
-                model_type=policy_model_type,
-                config_file=policy_config_file,
+            train_rft_policy(
+                policy_rollout_buffer=policy_rollout_buffer,
+                policy_model_type=policy_model_type,
+                policy_config_file=policy_config_file,
                 max_seq_len=max_seq_len,
-                tokenizer_file=policy_tokenizer_file,
+                policy_tokenizer_file=policy_tokenizer_file,
                 lora_dtype=lora_dtype,
                 lora_rank=lora_rank,
-                dtype=dtype
+                dtype=dtype,
+                lr=lr,
+                policy_ckpt_dir=policy_ckpt_dir,
+                epoch=epoch,
+                save_dir=save_dir,
+                max_batch_size=max_batch_size,
+                inner_epochs=inner_epochs
             )
-            optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-            trainer = ParallelSolverTrainer(
-                model=model,
-                tokenizer=tokenizer,
-                optimizer=optimizer,
-                max_seq_len=max_seq_len
-            )
-            trainer.load_model(policy_ckpt_dir) if (
-                    epoch == 0
-            ) else trainer.load(os.path.join(save_dir, f"epoch-{epoch}"))
-            timer = Timer(total=(len(policy_rollout_buffer) // max_batch_size) * inner_epochs, episode=100)
-            for inner_epoch in range(inner_epochs):
-                for data in policy_rollout_buffer.get(max_batch_size):
-                    timer.step()
-                    trainer_outputs = trainer.forward(
-                        instructions=data.instructions,
-                        outputs=data.responses
-                    )
-                    if trainer.step % 100 == 0:
-                        print(f'--------- STEP {trainer.step} OF {timer.total} ---------')
-                        print('Loss: ', trainer_outputs.loss)
-            trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))
-
-            model.cpu()
-            del model
-            del optimizer
-            del trainer
-            torch.cuda.empty_cache()
-            gc.collect()
-            set_barrier()
 
 
 if __name__ == '__main__':

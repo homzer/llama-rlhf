@@ -9,42 +9,59 @@ from policy_train_ppo import collect_actor_buffer, collect_reference_buffer, col
 from src.dataset import JsonDataset
 from src.entities import Timer
 from src.modeling import get_parallel_model
-from src.parallel.utils import setup_model_parallel, set_barrier
-from src.ppo.buffer import CriticRolloutBuffer, RolloutBuffer, ActorRolloutBuffer
+from src.parallel.initialize import setup_model_parallel, set_barrier
+from src.ppo.buffer import CriticRolloutBuffer, PolicyRolloutBuffer, RolloutBuffer
+from src.ppo.parallel_buffer import ParallelRolloutBuffer
 from src.ppo.trainer import ParallelGRPOTrainerForCausalLM
 from src.utils import json_load
 
 
 def compute_grpo_rewards(
+        policy_rollout_buffer: RolloutBuffer,
         verifier_rollout_buffer: CriticRolloutBuffer,
-        policy_rollout_buffer: ActorRolloutBuffer,
         num_samples_per_prompt: int,
-) -> CriticRolloutBuffer:
-    """ Normalize EOS token reward across batch. """
-    assert len(verifier_rollout_buffer) % num_samples_per_prompt == 0
-    for i in range(0, len(verifier_rollout_buffer), num_samples_per_prompt):
-        assert all(
-            instruction == policy_rollout_buffer.instructions[i] for
-            instruction in policy_rollout_buffer.instructions[i + 1: i + num_samples_per_prompt]
-        )
+) -> (RolloutBuffer, CriticRolloutBuffer):
+    policy_rollout_buffer = ParallelRolloutBuffer(**policy_rollout_buffer)
+    policy_rollout_buffer.gather_from_data_parallel_region()
+    verifier_rollout_buffer = ParallelRolloutBuffer(**verifier_rollout_buffer)
+    verifier_rollout_buffer.gather_from_data_parallel_region()
 
-        # compute baseline reward
-        baseline = []
-        for j in range(i, i + num_samples_per_prompt):
-            action_masks = policy_rollout_buffer.action_masks[j]
-            nonzero_indices = np.nonzero(action_masks)[0]
-            if len(nonzero_indices) == 0:
-                continue
-            baseline.append(verifier_rollout_buffer.scores[j][nonzero_indices[-1]])
-        if len(baseline) == 0:
-            continue
-        assert len(baseline) == num_samples_per_prompt, "please check for the samples bug"
+    sorted_indices = sorted(range(policy_rollout_buffer.size()), key=lambda x: policy_rollout_buffer["instructions"][x])
+    # sort policy rollout buffer
+    policy_rollout_buffer.rearrange(sorted_indices)
+    # sort verifier rollout buffer
+    verifier_rollout_buffer.rearrange(sorted_indices)
 
-        for j in range(i, i + num_samples_per_prompt):
-            last_token_idx = np.nonzero(policy_rollout_buffer.action_masks[j])[0][-1]
-            score = verifier_rollout_buffer.scores[j][last_token_idx]
-            verifier_rollout_buffer.scores[j][last_token_idx] = (score - np.mean(baseline)) / np.std(baseline)
-    return verifier_rollout_buffer
+    # check for arranged instructions
+    for i in range(0, policy_rollout_buffer.size(), num_samples_per_prompt):
+        assert len(set(policy_rollout_buffer["instructions"][i: i + num_samples_per_prompt].tolist())) == 1
+
+    scores = []
+    for i in range(verifier_rollout_buffer.size()):
+        nonzero_indices = np.nonzero(verifier_rollout_buffer["action_masks"][i])[0]
+        if len(nonzero_indices) > 0:
+            scores.append(verifier_rollout_buffer["scores"][i][nonzero_indices[-1]])
+        else:
+            scores.append(0.0)
+    scores = np.stack(scores, axis=0).reshape((-1, num_samples_per_prompt))
+    scores_std = scores.std(axis=-1, keepdims=True)
+    scores_std[scores_std == 0] = 1e-12
+    scores = (scores - scores.mean(axis=-1, keepdims=True)) / scores_std
+    scores = scores.reshape(-1).tolist()
+    # update verifier rollout buffer
+    verifier_rollout_buffer = ParallelRolloutBuffer(**CriticRolloutBuffer(
+        scores=scores, action_masks=verifier_rollout_buffer["action_masks"]
+    ))
+
+    # shuffle
+    randon_indices = np.random.permutation(policy_rollout_buffer.size())
+    policy_rollout_buffer.rearrange(randon_indices)
+    verifier_rollout_buffer.rearrange(randon_indices)
+
+    policy_rollout_buffer.scatter_to_data_parallel_region()
+    verifier_rollout_buffer.scatter_to_data_parallel_region()
+
+    return policy_rollout_buffer, verifier_rollout_buffer
 
 
 def train_grpo(
@@ -59,7 +76,7 @@ def train_grpo(
         epoch: int,
         policy_ckpt_dir: str,
         save_dir: str,
-        rollout_buffer: RolloutBuffer,
+        rollout_buffer: PolicyRolloutBuffer,
         max_batch_size: int,
         inner_epochs: int,
         clip_range: float = 0.2,
@@ -78,7 +95,7 @@ def train_grpo(
     trainer = ParallelGRPOTrainerForCausalLM(policy, optimizer, clip_range=clip_range, kl_coef=kl_coef)
     trainer.load_model(policy_ckpt_dir) if (
             epoch == 0
-    ) else trainer.load(os.path.join(save_dir, f"epoch-{epoch}"))
+    ) else trainer.load(os.path.join(save_dir, "epoch-%03d" % epoch))
     print('Policy training ...')
     timer = Timer(total=(len(rollout_buffer) // max_batch_size) * inner_epochs, episode=100)
     for inner_epoch in range(inner_epochs):
@@ -87,11 +104,11 @@ def train_grpo(
             trainer_outputs = trainer.forward(data)
             if trainer.step % 100 == 0:
                 print(f'--------- STEP {trainer.step} OF {timer.total} ---------')
-                print('Loss: ', trainer_outputs.loss)
-                print('Policy Loss: ', trainer_outputs.policy_loss)
-                print('Rewards: ', trainer_outputs.rewards)
-                print('KL Loss: ', trainer_outputs.kl_loss)
-    trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))
+                print(f'Loss: {trainer_outputs.loss}')
+                print(f'Policy Loss: {trainer_outputs.policy_loss}')
+                print(f'Rewards: {trainer_outputs.rewards}')
+                print(f'KL Loss: {trainer_outputs.kl_loss}')
+    trainer.save(os.path.join(save_dir, "epoch-%03d" % (epoch + 1)))
 
     policy.cpu()
     del policy
@@ -194,28 +211,23 @@ def run(
                 max_forward_batch_size=max_forward_batch_size
             )
 
-            rewards = []
-            for i in range(len(verifier_rollout_buffer)):
-                nonzero_indices = np.nonzero(policy_rollout_buffer.action_masks[i])[0]
-                if len(nonzero_indices) > 0:
-                    rewards.append(verifier_rollout_buffer.scores[i][nonzero_indices][-1].item())
-            print("Average Rewards: ", np.mean(rewards))
+            print(f"Average Rewards: {verifier_rollout_buffer.mean(use_last_token_reward=True)}")
 
             # Compute GRPO rewards
-            verifier_rollout_buffer = compute_grpo_rewards(
+            policy_rollout_buffer, verifier_rollout_buffer = compute_grpo_rewards(
                 verifier_rollout_buffer=verifier_rollout_buffer,
                 policy_rollout_buffer=policy_rollout_buffer,
                 num_samples_per_prompt=num_samples_per_prompt
             )
 
-            rollout_buffer = RolloutBuffer(
-                obs=policy_rollout_buffer.obs,
-                actions=policy_rollout_buffer.actions,
-                rewards=verifier_rollout_buffer.scores,
-                values=verifier_rollout_buffer.scores,
-                action_logits=policy_rollout_buffer.action_logits,
-                action_masks=policy_rollout_buffer.action_masks,
-                action_logprobs=policy_rollout_buffer.action_logprobs,
+            rollout_buffer = PolicyRolloutBuffer(
+                obs=policy_rollout_buffer["obs"],
+                actions=policy_rollout_buffer["actions"],
+                rewards=verifier_rollout_buffer["scores"],
+                values=verifier_rollout_buffer["scores"],
+                action_logits=policy_rollout_buffer["action_logits"],
+                action_masks=policy_rollout_buffer["action_masks"],
+                action_logprobs=policy_rollout_buffer["action_logprobs"],
                 ref_action_logprobs=reference_rollout_buffer.output_tokens_logps if (
                     reference_rollout_buffer is not None
                 ) else None,

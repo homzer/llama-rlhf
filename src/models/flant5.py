@@ -2,12 +2,6 @@ import collections
 import copy
 import math
 
-import fairscale.nn.model_parallel.initialize as fs_init
-from fairscale.nn.model_parallel.layers import (
-    RowParallelLinear,
-    ColumnParallelLinear,
-    ParallelEmbedding
-)
 import torch
 import torch.nn as nn
 import torch.nn.init as init
@@ -16,8 +10,13 @@ from transformers.models.t5.modeling_t5 import T5LayerNorm
 
 from src.models.modeling import ParallelModelForSeq2SeqLM, Seq2SeqLMOutputs
 from src.models.modeling_args import T5Config, LoraT5Config
+from src.parallel.initialize import set_barrier, get_model_parallel_world_size
+from src.parallel.model_parallel.layers import (
+    RowParallelLinear,
+    ColumnParallelLinear,
+    ParallelEmbedding
+)
 from src.utils import apply_lora
-from src.parallel import set_barrier
 
 
 def _relative_position_bucket(_relative_position, _bidirectional=True, _num_buckets=32, _max_distance=128):
@@ -116,8 +115,8 @@ class ParallelT5Attention(nn.Module):
         self.relative_attention_max_distance = config.relative_attention_max_distance
         self.d_model = config.d_model
         self.key_value_proj_dim = config.d_kv
-        assert config.num_heads % fs_init.get_model_parallel_world_size() == 0
-        self.n_heads = config.num_heads // fs_init.get_model_parallel_world_size()
+        assert config.num_heads % get_model_parallel_world_size() == 0
+        self.n_heads = config.num_heads // get_model_parallel_world_size()
         self.inner_dim = self.n_heads * config.d_kv
 
         if self.has_relative_attention_bias:

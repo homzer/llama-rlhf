@@ -3,10 +3,10 @@ import os
 import fire
 
 from src.dataset import JsonDataset, ChatTemplateDataset
-from src.evaluator import SolverEvaluator
+from src.evaluator import DataParallelPolicyEvaluator
 from src.modeling import get_parallel_model
-from src.parallel.utils import setup_model_parallel
-from src.utils import json_dump
+from src.parallel.initialize import setup_model_parallel
+from src.utils import json_dump, print_current_func_args
 
 
 def main(
@@ -23,9 +23,15 @@ def main(
         config_file: str = None,
         use_chat_template: bool = False,
         dtype: str = "bfloat16",
-        seed: int = None
+        seed: int = None,
+        model_parallel_size: int = None
 ):
-    parallel_infos = setup_model_parallel(seed=seed)
+    parallel_infos = setup_model_parallel(
+        seed=seed,
+        log_dir=log_dir,
+        model_parallel_size=model_parallel_size
+    )
+    print_current_func_args()
     tokenizer_file = tokenizer_file or ckpt_dir
     config_file = config_file or ckpt_dir
 
@@ -41,10 +47,17 @@ def main(
     if use_chat_template:
         dataset = ChatTemplateDataset(dataset, tokenizer)
     model.load(ckpt_dir)
-    evaluator = SolverEvaluator(model, tokenizer, max_batch_size, max_seq_len, temperature, top_p)
+    evaluator = DataParallelPolicyEvaluator(
+        model=model,
+        tokenizer=tokenizer,
+        batch_size=max_batch_size,
+        max_seq_len=max_seq_len,
+        temperature=temperature,
+        top_p=top_p
+    )
     outputs = evaluator.forward(task, dataset)
     print("Evaluate Accuracy: ", outputs.acc, "Missing: ", outputs.missing)
-    if parallel_infos.local_rank == 0:
+    if parallel_infos.global_rank == 0:
         os.makedirs(log_dir, exist_ok=True)
         json_dump(outputs.datalist, os.path.join(log_dir, f'results-{round(outputs.acc, 4)}.jsonl'))
 

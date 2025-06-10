@@ -1,24 +1,36 @@
 import os
 
 import fire
-from torch.utils.data import DataLoader
-from tqdm import tqdm
 
 from src.dataset import JsonDataset, ChatTemplateDataset
-from src.entities import Timer, AverageMeter
-from src.evaluator import EVALUATORS, Evaluator
-from src.generator import GroupGeneratorForCausalLM
+from src.entities import AverageMeter
+from src.evaluator import DataParallelPolicyEvaluator
 from src.modeling import get_parallel_model
-from src.parallel.utils import setup_model_parallel
-from src.utils import json_dump, convert_dataloader_data_to_list
+from src.parallel.initialize import setup_model_parallel
+from src.utils import json_dump, print_current_func_args
 
 
-def compute_pass_of_n(evaluator: Evaluator, results: list, num_samples_per_prompts: int) -> dict:
-    for result in results:
-        assert isinstance(result["output"], list)
-        result["predict"] = []
-        for output in result["output"]:
-            result["predict"].append(evaluator.eval(output, result["label"]))
+def process_results(results: list, num_samples_per_prompts: int) -> list:
+    results = sorted(results, key=lambda x: x['instruction'])
+    datalist = []
+    for i in range(0, len(results), num_samples_per_prompts):
+        assert len(set([result["instruction"] for result in results[i: i + num_samples_per_prompts]])) == 1
+        data = dict(
+            instruction=results[i]["instruction"],
+            label=results[i]["label"],
+            output=[],
+            predict=[],
+            score=[]
+        )
+        for j in range(i, i + num_samples_per_prompts):
+            data["output"].append(results[j]["output"])
+            data["predict"].append(results[j]["predict"])
+            data["score"].append(results[j]["score"])
+        datalist.append(data)
+    return datalist
+
+
+def compute_pass_of_n(results: list, num_samples_per_prompts: int) -> dict:
     result_dict = {}
     n = 1
     while num_samples_per_prompts // n > 0:
@@ -26,8 +38,8 @@ def compute_pass_of_n(evaluator: Evaluator, results: list, num_samples_per_promp
         n *= 2
     for n in result_dict.keys():
         meter = AverageMeter()
-        for result in results:
-            if True in result["predict"][:n]:
+        for data in results:
+            if 1 in data["score"][:n]:
                 meter.forward(1)
             else:
                 meter.forward(0)
@@ -50,9 +62,17 @@ def main(
         config_file: str = None,
         use_chat_template: bool = False,
         dtype: str = "bfloat16",
-        seed: int = None
+        seed: int = None,
+        model_parallel_size: int = None,
+        sequence_parallel_size: int = 1,
 ):
-    parallel_infos = setup_model_parallel(seed=seed)
+    parallel_infos = setup_model_parallel(
+        seed=seed,
+        log_dir=log_dir,
+        model_parallel_size=model_parallel_size,
+        sequence_parallel_size=sequence_parallel_size
+    )
+    print_current_func_args()
     tokenizer_file = tokenizer_file or ckpt_dir
     config_file = config_file or ckpt_dir
 
@@ -66,37 +86,29 @@ def main(
     )
     model.load(ckpt_dir)
     dataset = JsonDataset(label_file)
+    dataset.repeat(n=num_samples_per_prompt).shuffle()
     if use_chat_template:
         dataset = ChatTemplateDataset(dataset, tokenizer)
-    dataloader = DataLoader(dataset, batch_size=max_batch_size)
-    generator = GroupGeneratorForCausalLM(
+
+    evaluator = DataParallelPolicyEvaluator(
         model=model,
         tokenizer=tokenizer,
+        batch_size=max_batch_size,
         max_seq_len=max_seq_len,
-        num_samples_per_prompt=num_samples_per_prompt,
         temperature=temperature,
         top_p=top_p
     )
-    print(f"Evaluating {task}.........")
-    evaluator = EVALUATORS.get(task.lower())()
-    results = []
-    timer = Timer(len(dataloader))
-    for data in tqdm(dataloader):
-        timer.step()
-        responses = generator.forward(data["instruction"])
-        for i, result in enumerate(convert_dataloader_data_to_list(data)):
-            result['output'] = responses[i]
-            results.append(result)
-        print(data["instruction"][0] + '\n' + responses[0][0])
+    evaluator_outputs = evaluator.forward(task=task, dataset=dataset)
 
-    result_dict = compute_pass_of_n(evaluator, results, num_samples_per_prompt)
+    results = process_results(evaluator_outputs.datalist, num_samples_per_prompt)
+    result_dict = compute_pass_of_n(results, num_samples_per_prompt)
     result_name = []
     for n in result_dict.keys():
         print(f"Pass@{n}:", result_dict.get(n))
         result_name.append(f"Pass@{n}:{round(result_dict.get(n), 4)}")
-    if parallel_infos.local_rank == 0:
-        os.makedirs(log_dir, exist_ok=True)
-        json_dump(results, os.path.join(log_dir, f'results-{"-".join(result_name)}.jsonl'))
+    if parallel_infos.global_rank == 0:
+        os.makedirs(os.path.join(log_dir, task), exist_ok=True)
+        json_dump(results, os.path.join(log_dir, task, f'results-{"-".join(result_name)}.jsonl'))
 
 
 if __name__ == '__main__':

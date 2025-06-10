@@ -2,12 +2,13 @@ import os
 
 import fire
 import torch
-from torch.utils.data import DataLoader
 
 from src.dataset import JsonDataset, ChatTemplateDataset
 from src.entities import Timer
 from src.modeling import get_parallel_model
-from src.parallel.utils import setup_model_parallel
+from src.parallel.data_parallel.dataloader import ParallelDataLoader
+from src.parallel.initialize import setup_model_parallel
+from src.parallel.optimizer import ParallelOptimizer
 from src.trainer import ParallelSolverTrainer
 
 
@@ -15,7 +16,7 @@ def main(
         ckpt_dir: str,
         save_dir: str,
         train_file: str,
-        model_type: str = "llama-1-7b",
+        model_type: str,
         tokenizer_file: str = None,
         config_file: str = None,
         max_seq_len: int = 512,
@@ -29,10 +30,16 @@ def main(
         begin_epoch: int = 0,
         use_chat_template: bool = False,
         seed: int = None,
+        model_parallel_size: int = None,
+        sequence_parallel_size: int = 1,
 ):
     tokenizer_file = tokenizer_file or ckpt_dir
     config_file = config_file or ckpt_dir
-    setup_model_parallel(seed=seed)
+    setup_model_parallel(
+        seed=seed,
+        model_parallel_size=model_parallel_size,
+        sequence_parallel_size=sequence_parallel_size
+    )
 
     model, tokenizer = get_parallel_model(
         model_type=model_type,
@@ -46,8 +53,8 @@ def main(
     dataset = JsonDataset(f=train_file)
     if use_chat_template:
         dataset = ChatTemplateDataset(dataset, tokenizer)
-    dataloader = DataLoader(dataset, batch_size=max_batch_size)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    dataloader = ParallelDataLoader(dataset, batch_size=max_batch_size)
+    optimizer = ParallelOptimizer(torch.optim.Adam(model.parameters(), lr=lr))
     trainer = ParallelSolverTrainer(
         model=model,
         tokenizer=tokenizer,
@@ -65,7 +72,7 @@ def main(
             timer.step()
             if trainer.step % 100 == 0:
                 print(f'step {trainer.step} of {len(dataloader)} -----------------------------')
-                print(f'LOSS: ', outputs.loss.item())
+                print(f'LOSS: ', outputs.loss)
                 trainer.predict(outputs.logits, data['instruction'], data['output'])
             if trainer.step % save_steps == 0:
                 trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))

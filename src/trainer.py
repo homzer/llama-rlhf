@@ -6,12 +6,53 @@ from typing import List
 import torch
 import torch.nn as nn
 
-from src.criterion import PairwiseScoreLoss, KLDivLoss, DPOLoss, ReverseKLDivLoss, JSDivLoss, LastTokenScoreLoss, \
-    SimPOLoss, ORPOLoss
+from src.criterion import (
+    PairwiseScoreLoss,
+    KLDivLoss,
+    DPOLoss,
+    ReverseKLDivLoss,
+    JSDivLoss,
+    LastTokenScoreLoss,
+    SimPOLoss,
+    ORPOLoss
+)
 from src.models.modeling import Module, ParallelModule, ParallelModelForCausalLM, ParallelVerifier
 from src.tokenizers import Tokenizer
-from src.utils import truncate
-from src.parallel.utils import set_barrier
+from src.utils import truncate, masked_mean
+from src.parallel.initialize import set_barrier
+
+
+def prepare_for_forward(
+        instructions: List[str] | List[List[int]],
+        responses: List[str] | List[List[int]],
+        tokenizer: Tokenizer,
+        max_seq_len: int,
+):
+    bsz = len(instructions)
+    tokens = torch.full((bsz, max_seq_len), tokenizer.pad_id).long()
+    labels = torch.full((bsz, max_seq_len), -100).long()
+    for i, (instruction, response) in enumerate(zip(instructions, responses)):
+        if isinstance(instruction, str):
+            instruction_ids = tokenizer.encode(instruction, bos=True, eos=False)
+        elif isinstance(instruction, list) and isinstance(instruction[0], int):
+            instruction_ids = instruction
+        else:
+            raise TypeError(type(instruction))
+
+        if isinstance(response, str):
+            response_ids = tokenizer.encode(response, bos=False, eos=True)
+        elif isinstance(response, list) and isinstance(response[0], int):
+            response_ids = response
+        else:
+            raise TypeError(type(response))
+
+        instruction_ids, response_ids = truncate(instruction_ids, response_ids, max_seq_len)
+        instr_len, output_len = len(instruction_ids), len(response_ids)
+        tokens[i, :instr_len + output_len] = torch.tensor(instruction_ids + response_ids).long()
+        labels[i, instr_len - 1: instr_len - 1 + output_len] = torch.tensor(response_ids).long()
+    masks = (labels != -100)  # type: torch.Tensor
+    Output = collections.namedtuple('Outputs', ['tokens', 'labels', 'masks'])
+    return Output(tokens=tokens, labels=labels, masks=masks)
 
 
 class Trainer:
@@ -103,7 +144,7 @@ class ParallelTrainer(Trainer):
         print(f'Loading done !')
 
 
-class ParallelSolverTrainer(ParallelTrainer):
+class ParallelModelTrainer(ParallelTrainer):
     def __init__(
             self,
             model: ParallelModelForCausalLM,
@@ -114,12 +155,9 @@ class ParallelSolverTrainer(ParallelTrainer):
     ):
         super().__init__(model, optimizer)
         self.model = model
-        self.local_rank = model.local_rank
-        self.world_size = model.world_size
         self.max_seq_len = max_seq_len
         self.tokenizer = tokenizer
         self.optimizer = optimizer
-        self.criterion = nn.CrossEntropyLoss(ignore_index=-100)
         self.accumulation_steps = accumulation_steps
         self.step = 0
 
@@ -131,22 +169,17 @@ class ParallelSolverTrainer(ParallelTrainer):
             self.optimizer.step()
             self.optimizer.zero_grad()
 
-    def prepare_for_training(self, instructions, outputs):
-        """ :return tokens, labels """
-        bsz = len(instructions)
-        tokens = torch.full((bsz, self.max_seq_len), self.tokenizer.pad_id).long()
-        labels = torch.full((bsz, self.max_seq_len), -100).long()
-        for i, (instruction, output) in enumerate(zip(instructions, outputs)):
-            instruction_ids = self.tokenizer.encode(instruction, bos=True, eos=False)
-            output_ids = self.tokenizer.encode(output, bos=False, eos=True)
-            # instruction_ids, output_ids = self._truncating_strategy(instruction_ids, output_ids)
-            instruction_ids, output_ids = truncate(instruction_ids, output_ids, self.max_seq_len)
-            instr_len, output_len = len(instruction_ids), len(output_ids)
-            tokens[i, :instr_len + output_len] = torch.tensor(instruction_ids + output_ids).long()
-            labels[i, instr_len - 1: instr_len - 1 + output_len] = torch.tensor(output_ids).long()
-        masks = (labels != -100)
-        Output = collections.namedtuple('Outputs', ['tokens', 'labels', 'masks'])
-        return Output(tokens=tokens, labels=labels, masks=masks)
+    def prepare_for_forward(
+            self,
+            instructions: List[str] | List[List[int]],
+            responses: List[str] | List[List[int]],
+    ):
+        return prepare_for_forward(
+            instructions=instructions,
+            responses=responses,
+            tokenizer=self.tokenizer,
+            max_seq_len=self.max_seq_len
+        )
 
     def predict(self, logits, instructions: List[str], outputs: List[str]):
         bzs = min(int(logits.shape[0]), 1)
@@ -160,10 +193,29 @@ class ParallelSolverTrainer(ParallelTrainer):
             datalist.append(dict(instruction=instructions[i], output=self.tokenizer.decode(predict_ids)))
         print(datalist[0]['instruction'] + datalist[0]['output'])
 
+
+class ParallelSolverTrainer(ParallelModelTrainer):
+    def __init__(
+            self,
+            model: ParallelModelForCausalLM,
+            tokenizer: Tokenizer,
+            optimizer: torch.optim.Optimizer,
+            max_seq_len: int,
+            accumulation_steps: int = 1
+    ):
+        super().__init__(
+            model=model,
+            tokenizer=tokenizer,
+            optimizer=optimizer,
+            max_seq_len=max_seq_len,
+            accumulation_steps=accumulation_steps
+        )
+        self.criterion = nn.CrossEntropyLoss(ignore_index=-100)
+
     def forward(self, instructions: List[str], outputs: List[str]):
         """ Instruction tuning """
         self.model.train()
-        example = self.prepare_for_training(instructions=instructions, outputs=outputs)
+        example = self.prepare_for_forward(instructions=instructions, responses=outputs)
         logits = self.model.forward(example.tokens).logits
         loss = self.criterion.forward(
             input=logits.view(-1, logits.size(-1)),
@@ -171,10 +223,48 @@ class ParallelSolverTrainer(ParallelTrainer):
         )
         self._back_propagation(loss)
         Output = collections.namedtuple('Output', ['loss', 'logits'])
-        return Output(logits=logits, loss=loss)
+        return Output(logits=logits, loss=loss.item())
 
 
-class ParallelSolverDistillTrainer(ParallelSolverTrainer):
+class ParallelSolverLossThresholdTrainer(ParallelSolverTrainer):
+    def __init__(
+            self,
+            model: ParallelModelForCausalLM,
+            tokenizer: Tokenizer,
+            optimizer: torch.optim.Optimizer,
+            max_seq_len: int,
+            loss_threshold: float = 1.0,
+            accumulation_steps: int = 1
+    ):
+        super().__init__(
+            model=model,
+            tokenizer=tokenizer,
+            optimizer=optimizer,
+            max_seq_len=max_seq_len,
+            accumulation_steps=accumulation_steps
+        )
+        self.loss_threshold = loss_threshold
+        self.criterion = nn.CrossEntropyLoss(ignore_index=-100, reduction='none')
+
+    def forward(self, instructions: List[str], outputs: List[str]):
+        """ TODO: Instruction tuning with loss threshold """
+        self.model.train()
+        example = self.prepare_for_forward(instructions=instructions, responses=outputs)
+        logits = self.model.forward(example.tokens).logits
+        loss = self.criterion.forward(
+            input=logits.view(-1, logits.size(-1)),
+            target=example.labels.view(-1).to(logits.device)
+        )
+        loss = torch.reshape(loss, shape=[-1, example.labels.shape[-1]])
+        loss = masked_mean(loss, example.labels.to(logits.device) != -100, dim=-1)
+        origin_loss = loss.mean()
+        loss = masked_mean(loss, loss < self.loss_threshold)
+        self._back_propagation(loss)
+        Output = collections.namedtuple('Output', ['loss', 'logits', 'origin_loss'])
+        return Output(logits=logits, loss=loss.item(), origin_loss=origin_loss.item())
+
+
+class ParallelSolverDistillTrainer(ParallelModelTrainer):
     def __init__(
             self,
             model: ParallelModelForCausalLM,
@@ -202,7 +292,7 @@ class ParallelSolverDistillTrainer(ParallelSolverTrainer):
         else:
             raise ValueError(loss_type)
 
-    def distill(
+    def forward(
             self,
             instructions: List[str],
             outputs: List[str],
@@ -212,7 +302,7 @@ class ParallelSolverDistillTrainer(ParallelSolverTrainer):
             temperature: float = 1.0
     ):
         self.model.train()
-        example = self.prepare_for_training(instructions=instructions, outputs=outputs)
+        example = self.prepare_for_forward(instructions=instructions, responses=outputs)
         logits = self.model.forward(example.tokens).logits
 
         loss_ce = 0.
@@ -240,7 +330,7 @@ class ParallelSolverDistillTrainer(ParallelSolverTrainer):
         )
 
 
-class ParallelSolverTripleDistillTrainer(ParallelSolverTrainer):
+class ParallelSolverTripleDistillTrainer(ParallelModelTrainer):
     def __init__(
             self,
             model: ParallelModelForCausalLM,
@@ -259,7 +349,7 @@ class ParallelSolverTripleDistillTrainer(ParallelSolverTrainer):
         self.criterion_ce = nn.CrossEntropyLoss(ignore_index=-100)
         self.criterion_kl = KLDivLoss()
 
-    def distill(
+    def forward(
             self,
             instructions: List[str],
             outputs: List[str],
@@ -269,7 +359,7 @@ class ParallelSolverTripleDistillTrainer(ParallelSolverTrainer):
             beta: float = 1.0
     ):
         self.model.train()
-        example = self.prepare_for_training(instructions=instructions, outputs=outputs)
+        example = self.prepare_for_forward(instructions=instructions, responses=outputs)
         logits = self.model.forward(example.tokens).logits
 
         loss_ce = self.criterion_ce.forward(
@@ -292,7 +382,7 @@ class ParallelSolverTripleDistillTrainer(ParallelSolverTrainer):
         return Output(logits=logits, loss=loss, loss_kl=loss_kl, loss_ce=loss_ce, loss_kl_=loss_kl_)
 
 
-class ParallelSolverMccDistillTrainer(ParallelSolverTrainer):
+class ParallelSolverMccDistillTrainer(ParallelModelTrainer):
     def __init__(
             self,
             model: ParallelModelForCausalLM,
@@ -349,7 +439,7 @@ class ParallelSolverMccDistillTrainer(ParallelSolverTrainer):
         q_loss = self.criterion_kl.forward(q, p, masks=masks, temperature=T)
         return (p_loss + q_loss) * 0.5
 
-    def distill(
+    def forward(
             self,
             instructions: List[str],
             outputs_a: List[str],
@@ -359,8 +449,8 @@ class ParallelSolverMccDistillTrainer(ParallelSolverTrainer):
             alpha: float = 1.0,
             T: float = 1.0
     ):
-        example_a = self.prepare_for_training(instructions, outputs_a)
-        example_b = self.prepare_for_training(instructions, outputs_b)
+        example_a = self.prepare_for_forward(instructions, outputs_a)
+        example_b = self.prepare_for_forward(instructions, outputs_b)
 
         logits_a = self.model.forward(example_a.tokens).logits
         logits_b = self.model.forward(example_b.tokens).logits
@@ -378,7 +468,7 @@ class ParallelSolverMccDistillTrainer(ParallelSolverTrainer):
         return Output(logits_a=logits_a, logits_b=logits_b, loss=loss, loss_kl=kl_loss, loss_ce=ce_loss)
 
 
-class ParallelSolverReferenceDistillTrainer(ParallelSolverTrainer):
+class ParallelSolverReferenceDistillTrainer(ParallelModelTrainer):
     def __init__(
             self,
             model: ParallelModelForCausalLM,
@@ -418,7 +508,7 @@ class ParallelSolverReferenceDistillTrainer(ParallelSolverTrainer):
         Outputs = collections.namedtuple("Outputs", ['loss', 'refs'])
         return Outputs(loss=loss, refs=refs)
 
-    def distill(
+    def forward(
             self,
             instructions: List[str],
             outputs: List[str],
@@ -444,7 +534,7 @@ class ParallelSolverReferenceDistillTrainer(ParallelSolverTrainer):
         :return:
         """
         self.model.train()
-        example = self.prepare_for_training(instructions=instructions, outputs=outputs)
+        example = self.prepare_for_forward(instructions=instructions, responses=outputs)
         logits = self.model.forward(example.tokens).logits
 
         loss_ce = 0.
@@ -469,7 +559,7 @@ class ParallelSolverReferenceDistillTrainer(ParallelSolverTrainer):
         return Output(logits=logits, loss=loss, loss_kl=loss_kl, loss_ce=loss_ce, refs=kl_loss_outputs.refs)
 
 
-class ParallelSolverDPOTrainer(ParallelSolverTrainer):
+class ParallelSolverDPOTrainer(ParallelModelTrainer):
     def __init__(
             self,
             model: ParallelModelForCausalLM,
@@ -491,7 +581,7 @@ class ParallelSolverDPOTrainer(ParallelSolverTrainer):
         self.criterion_ce = nn.CrossEntropyLoss(ignore_index=-100)
         self.criterion_dpo = DPOLoss(beta=beta)
 
-    def dpo_forward(
+    def forward(
             self,
             instructions: List[str],
             chosen: List[str],
@@ -501,8 +591,8 @@ class ParallelSolverDPOTrainer(ParallelSolverTrainer):
             reference_chosen_logits: torch.Tensor = None,
             reference_rejected_logits: torch.Tensor = None
     ):
-        chosen_examples = self.prepare_for_training(instructions, chosen)
-        rejected_examples = self.prepare_for_training(instructions, rejected)
+        chosen_examples = self.prepare_for_forward(instructions, chosen)
+        rejected_examples = self.prepare_for_forward(instructions, rejected)
 
         chosen_logits = self.model.forward(chosen_examples.tokens).logits
         rejected_logits = self.model.forward(rejected_examples.tokens).logits
@@ -540,7 +630,7 @@ class ParallelSolverDPOTrainer(ParallelSolverTrainer):
         )
 
 
-class ParallelSolverSimPOTrainer(ParallelSolverTrainer):
+class ParallelSolverSimPOTrainer(ParallelModelTrainer):
     def __init__(
             self,
             model: ParallelModelForCausalLM,
@@ -563,9 +653,9 @@ class ParallelSolverSimPOTrainer(ParallelSolverTrainer):
         self.criterion_ce = nn.CrossEntropyLoss(ignore_index=-100)
         self.criterion_simpo = SimPOLoss(beta=beta, gamma=gamma)
 
-    def simpo_forward(self, instructions: List[str], chosen: List[str], rejected: List[str]):
-        chosen_examples = self.prepare_for_training(instructions, chosen)
-        rejected_examples = self.prepare_for_training(instructions, rejected)
+    def forward(self, instructions: List[str], chosen: List[str], rejected: List[str]):
+        chosen_examples = self.prepare_for_forward(instructions, chosen)
+        rejected_examples = self.prepare_for_forward(instructions, rejected)
 
         chosen_logits = self.model.forward(chosen_examples.tokens).logits
         rejected_logits = self.model.forward(rejected_examples.tokens).logits
@@ -599,7 +689,7 @@ class ParallelSolverSimPOTrainer(ParallelSolverTrainer):
         )
 
 
-class ParallelSolverORPOTrainer(ParallelSolverTrainer):
+class ParallelSolverORPOTrainer(ParallelModelTrainer):
     def __init__(
             self,
             model: ParallelModelForCausalLM,
@@ -615,9 +705,9 @@ class ParallelSolverORPOTrainer(ParallelSolverTrainer):
         )
         self.criterion_orpo = ORPOLoss()
 
-    def orpo_forward(self, instructions: List[str], chosen: List[str], rejected: List[str]):
-        chosen_examples = self.prepare_for_training(instructions, chosen)
-        rejected_examples = self.prepare_for_training(instructions, rejected)
+    def forward(self, instructions: List[str], chosen: List[str], rejected: List[str]):
+        chosen_examples = self.prepare_for_forward(instructions, chosen)
+        rejected_examples = self.prepare_for_forward(instructions, rejected)
 
         chosen_logits = self.model.forward(chosen_examples.tokens).logits
         rejected_logits = self.model.forward(rejected_examples.tokens).logits

@@ -1,16 +1,16 @@
 from typing import List
 
-from transformers import Qwen2Tokenizer
+from transformers import AutoTokenizer
 
 from src.tokenizers import Tokenizer
 
 
 class QwenTokenizer(Tokenizer):
     def __init__(self, model_dir: str):
-        self.model = Qwen2Tokenizer.from_pretrained(model_dir)
+        self.model = AutoTokenizer.from_pretrained(model_dir)
         super().__init__(
             vocab_size=self.model.vocab_size,
-            bos_id=self.model.convert_tokens_to_ids('<|im_start|>'),
+            bos_id=self.model.bos_token_id or self.model.convert_tokens_to_ids('<|im_start|>'),
             eos_id=self.model.eos_token_id,
             pad_id=self.model.pad_token_id
         )

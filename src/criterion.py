@@ -78,13 +78,10 @@ class ReverseKLDivLoss(KLDivLoss):
         bzs = logits.shape[0]
         logits = logits.view(-1, logits.size(-1))
         targets = targets.view(-1, targets.size(-1)).to(logits)
-        estimates = torch.softmax(logits.float(), dim=-1).type_as(logits)
-        targets = torch.softmax(targets.float() / temperature, dim=-1).type_as(targets)
-        estimates = powmax(estimates + self.eps)
-        targets = powmax(targets + self.eps)
 
-        loss = estimates * (torch.log(estimates) - torch.log(targets))
-        loss = torch.sum(loss, dim=-1)
+        loss = torch.softmax(logits, dim=-1) * (
+                torch.log_softmax(logits, dim=-1) - torch.log_softmax(targets / temperature, dim=-1)
+        ).sum(dim=-1)
         if self.return_scalar:
             if masks is not None:
                 masks = masks.view(-1).to(logits.device)
@@ -336,6 +333,33 @@ class DPOLoss(Loss):
         return loss.mean()
 
 
+class ImplicitPRMLoss(DPOLoss):
+    def __init__(self, beta=0.1):
+        super().__init__(beta=beta)
+
+    def forward(
+            self,
+            logits: torch.Tensor,
+            tokens: torch.Tensor,
+            labels: torch.Tensor,
+            masks: torch.Tensor = None,
+            ref_logits: torch.Tensor = None,
+            ref_log_probs: torch.Tensor = None,
+    ):
+        log_probs, ref_log_probs = self.prepare_for_loss(
+            logits=logits,
+            labels=tokens,
+            masks=masks,
+            ref_logits=ref_logits,
+            ref_log_probs=ref_log_probs
+        )
+        loss = torch.nn.functional.binary_cross_entropy_with_logits(
+            input=log_probs - ref_log_probs,
+            target=labels.to(logits),
+        )
+        return loss
+
+
 class ORPOLoss(Loss):
     def __init__(self, eps: float = 1e-5):
         super().__init__()
@@ -353,7 +377,7 @@ class ORPOLoss(Loss):
             masks = torch.ones_like(log_probs)
         masks = masks.to(logits.device)
         log_probs = (log_probs * masks).sum(-1) / (masks.sum(-1) + self.eps)
-        odds = torch.exp(log_probs) / (1 - torch.exp(log_probs))
+        odds = torch.exp(log_probs) / (1 - torch.exp(log_probs) + self.eps)
         return odds
 
     def forward(

@@ -1,11 +1,11 @@
 import collections
-import random
 from typing import List, Union
 
+import numpy as np
 import torch
 
 from src.models.modeling import ModelForCausalLM, ParallelModelForCausalLM, ParallelVerifier, Verifier
-from src.parallel import set_model_parallel_barrier
+from src.parallel.initialize import set_model_parallel_barrier
 from src.tokenizers.tokenizer import Tokenizer
 from src.utils import sample_top_p, masked_mean, truncate
 
@@ -26,6 +26,48 @@ def sampling_strategy(logits: torch.Tensor, t: float, p: float):
     return next_tokens  # [b, s]
 
 
+def prepare_for_generation(
+        instructions: List[str] | List[List[int]] | np.ndarray,
+        tokenizer: Tokenizer,
+        max_seq_len: int,
+):
+    bsz = len(instructions)
+    if isinstance(instructions, np.ndarray):
+        instructions = instructions.tolist()
+    if isinstance(instructions[0], str):
+        prompt_tokens = []
+        for x in instructions:
+            x = tokenizer.encode(x, bos=True, eos=False)
+            prompt_tokens.append(x[: max_seq_len])
+    elif isinstance(instructions[0], list) and isinstance(instructions[0][0], int):
+        prompt_tokens = instructions
+    else:
+        raise TypeError(type(instructions))
+    min_prompt_size = min([len(t) for t in prompt_tokens])
+    tokens = torch.full((bsz, max_seq_len), tokenizer.pad_id).long()
+    for k, t in enumerate(prompt_tokens):
+        tokens[k, : len(t)] = torch.tensor(t).long()
+    input_masks = tokens != tokenizer.pad_id
+    Outputs = collections.namedtuple("Outputs", [
+        'tokens', 'input_masks', 'start_pos'
+    ])
+    return Outputs(tokens=tokens, input_masks=input_masks, start_pos=min_prompt_size)
+
+
+def get_output_masks(tokens: torch.Tensor, input_masks: torch.Tensor, tokenizer: Tokenizer) -> torch.Tensor:
+    prompt_lengths = torch.sum(input_masks, dim=-1)
+    output_masks = torch.full_like(tokens, fill_value=True)
+    for i, t in enumerate(tokens.tolist()):
+        output_masks[i][: prompt_lengths[i] - 1] = False
+        if tokenizer.eos_id in t[prompt_lengths[i]:]:
+            # find index of eos
+            end = t.index(tokenizer.eos_id, prompt_lengths[i])
+            output_masks[i][end:] = False
+        else:
+            output_masks[i][-1:] = False
+    return output_masks.to(torch.bool)
+
+
 class GeneratorForCausalLM:
     def __init__(
             self,
@@ -42,38 +84,21 @@ class GeneratorForCausalLM:
         self.temperature = temperature
         self.top_p = top_p
 
-    def prepare_for_generation(self, prompts: Union[List[str], List[List[int]]], eos: bool = False):
-        bsz = len(prompts)
-        if isinstance(prompts[0], str):
-            prompt_tokens = []
-            for x in prompts:
-                x = self.tokenizer.encode(x, bos=True, eos=eos)
-                prompt_tokens.append(x[: self.max_seq_len])
-        elif isinstance(prompts[0], list) and isinstance(prompts[0][0], int):
-            prompt_tokens = prompts
-        else:
-            raise TypeError(type(prompts))
-        min_prompt_size = min([len(t) for t in prompt_tokens])
-        tokens = torch.full((bsz, self.max_seq_len), self.tokenizer.pad_id).long()
-        for k, t in enumerate(prompt_tokens):
-            tokens[k, : len(t)] = torch.tensor(t).long()
-        input_masks = tokens != self.tokenizer.pad_id
-        Outputs = collections.namedtuple("Outputs", [
-            'tokens', 'input_masks', 'start_pos'
-        ])
-        return Outputs(
-            tokens=tokens.to(self.model.device()),
-            input_masks=input_masks.to(self.model.device()),
-            start_pos=min_prompt_size,
+    def prepare_for_generation(self, instructions: List[str] | List[List[int]]):
+        return prepare_for_generation(
+            instructions=instructions,
+            tokenizer=self.tokenizer,
+            max_seq_len=self.max_seq_len
         )
 
-    def sampling(self, logits: torch.Tensor, **kwargs) -> torch.Tensor:
+    def sampling(self, logits: torch.Tensor) -> torch.Tensor:
         return sampling_strategy(logits, self.temperature, self.top_p)
 
-    def model_forward(self, tokens, input_masks=None, start_pos=None):
+    def model_forward(self, tokens, input_masks, start_pos):
         bsz = tokens.shape[0]
         prev_pos = 0
-        tokens = tokens.clone()
+        tokens = tokens.to(self.model.device()).clone()
+        input_masks = input_masks.to(self.model.device())
         unfinished_sequences = torch.ones(size=[bsz], dtype=torch.long, device=self.model.device())
         tokens_logits = torch.zeros(tokens.shape)
         tokens_logprobs = torch.zeros(tokens.shape)
@@ -82,8 +107,7 @@ class GeneratorForCausalLM:
                 outputs = self.model.forward(
                     tokens[:, prev_pos: cur_pos], prev_pos, use_cache=True
                 )
-            # next_tokens = sampling_strategy(outputs.logits, self.temperature, self.top_p)
-            next_tokens = self.sampling(outputs.logits, tokens=tokens, cur_pos=cur_pos)
+            next_tokens = self.sampling(outputs.logits)
             tokens_logits = tokens_logits.to(outputs.logits)
             tokens_logprobs = tokens_logprobs.to(outputs.logits)
             tokens_logits[:, prev_pos: cur_pos] = torch.gather(
@@ -109,17 +133,11 @@ class GeneratorForCausalLM:
         return Outputs(tokens=tokens, tokens_logits=tokens_logits, tokens_logprobs=tokens_logprobs)
 
     def get_output_masks(self, tokens, input_masks):
-        prompt_lengths = torch.sum(input_masks, dim=-1)
-        output_masks = torch.full_like(tokens, fill_value=True)
-        for i, t in enumerate(tokens.tolist()):
-            output_masks[i][: prompt_lengths[i] - 1] = False
-            if self.tokenizer.eos_id in t[prompt_lengths[i]:]:
-                # find index of eos
-                end = t.index(self.tokenizer.eos_id, prompt_lengths[i])
-                output_masks[i][end:] = False
-            else:
-                output_masks[i][-1:] = False
-        return output_masks.to(torch.bool)
+        return get_output_masks(
+            tokens=tokens,
+            input_masks=input_masks,
+            tokenizer=self.tokenizer
+        )
 
     def decode_response(self, tokens, output_masks):
         responses = []
@@ -163,39 +181,22 @@ class GroupGeneratorForCausalLM(GeneratorForCausalLM):
         self.diverse_prob = diverse_prob
         self.recorded_tokens = None
 
-    def sampling(self, logits: torch.Tensor, **kwargs) -> torch.Tensor:
-        # check for recorded_tokens
-        tokens, cur_pos = kwargs.get("tokens"), kwargs.get("cur_pos")
-        logits = logits[:, -1, :]  # [b, v]
-        if self.diverse_prob is not None:
-            logits_masks = torch.full_like(logits, fill_value=False, dtype=torch.bool)  # [b, v]
-            for i in range(tokens.shape[0]):
-                for recorded_token in self.recorded_tokens[i]:
-                    if (
-                            random.random() < self.diverse_prob and
-                            (recorded_token[: cur_pos] == tokens[i][: cur_pos]).all()
-                    ):
-                        logits_masks[i][recorded_token[cur_pos]] = True
-            logits = logits - logits_masks * 10000.
-        next_tokens = sampling_strategy(logits, self.temperature, self.top_p)
-        return next_tokens
-
     def forward(self, instructions: Union[List[str], List[List[int]]]) -> List[List[str]]:
         self.model.eval()
         prep_outputs = self.prepare_for_generation(instructions)
         responses = [[] for _ in range(len(instructions))]
-        self.recorded_tokens = [[] for _ in range(len(instructions))]
+        # self.recorded_tokens = [[] for _ in range(len(instructions))]
         for _ in range(self.num_samples_per_prompt):
             forward_outputs = self.model_forward(
                 prep_outputs.tokens, prep_outputs.input_masks, prep_outputs.start_pos
             )
-            for i, recorded_token in enumerate(self.recorded_tokens):
-                recorded_token.append(forward_outputs.tokens[i])
+            # for i, recorded_token in enumerate(self.recorded_tokens):
+            #     recorded_token.append(forward_outputs.tokens[i])
             output_masks = self.get_output_masks(forward_outputs.tokens, prep_outputs.input_masks)
             for i, response in enumerate(self.decode_response(forward_outputs.tokens, output_masks)):
                 responses[i].append(response)
             print(instructions[-1] + "\n" + responses[-1][-1])
-        self.recorded_tokens = None
+        # self.recorded_tokens = None
         return responses
 
 
@@ -215,9 +216,13 @@ class GeneratorForVerifier:
 
     def prepare_for_generation(
             self,
-            instructions: Union[List[str], List[List[int]]],
-            outputs: Union[List[str], List[List[int]]]
+            instructions: List[str] | List[List[int]] | np.ndarray,
+            outputs: List[str] | List[List[int]] | np.ndarray
     ):
+        if isinstance(instructions, np.ndarray):
+            instructions = instructions.tolist()
+        if isinstance(outputs, np.ndarray):
+            outputs = outputs.tolist()
         bsz = len(instructions)
         tokens = torch.full((bsz, self.max_seq_len), self.tokenizer.pad_id).long()
         masks = torch.full((bsz, self.max_seq_len), False)
@@ -390,6 +395,8 @@ class ValueAugmentedSamplingGeneratorForCausalLM(GeneratorForCausalLM):
     def model_forward(self, tokens: torch.Tensor, input_masks: torch.Tensor = None, start_pos: int = None):
         self.policy.eval()
         self.critic.eval()
+        tokens = tokens.cuda()
+        input_masks = input_masks.cuda()
         unfinished_sequences = torch.ones(
             size=[tokens.shape[0]], dtype=torch.long, device=self.model.device()
         )
@@ -442,10 +449,10 @@ class ValueAugmentedSamplingGeneratorForCausalLM(GeneratorForCausalLM):
         return Outputs(tokens=select_tokens, output_masks=select_output_masks)
 
     def forward(self, instructions: Union[List[str], List[List[int]]]) -> (List[List[str]], List[List[float]]):
-        prepare_outputs = self.prepare_for_generation(instructions)
-        tokens = self.expand_tensor(prepare_outputs.tokens)
-        input_masks = self.expand_tensor(prepare_outputs.input_masks)
-        forward_outputs = self.model_forward(tokens, input_masks, prepare_outputs.start_pos)
+        prep_outputs = self.prepare_for_generation(instructions)
+        tokens = self.expand_tensor(prep_outputs.tokens)
+        input_masks = self.expand_tensor(prep_outputs.input_masks)
+        forward_outputs = self.model_forward(tokens, input_masks, prep_outputs.start_pos)
         output_masks = self.get_output_masks(forward_outputs.tokens, input_masks)
         # select_outputs = self.select_best_tokens(forward_outputs.tokens, forward_outputs.scores, output_masks)
         # responses = self.decode_response(select_outputs.tokens, select_outputs.output_masks)

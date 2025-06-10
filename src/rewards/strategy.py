@@ -5,7 +5,7 @@ from typing import List
 
 import torch
 
-from src.criterion import DPOLoss, SimPOLoss
+from src.criterion import DPOLoss, SimPOLoss, ImplicitPRMLoss
 
 
 class PointwiseVerifierStrategy:
@@ -93,6 +93,95 @@ class PointwiseVerifierStrategyForFocalLoss(PointwiseVerifierStrategyForLastToke
         return loss
 
 
+class PointwiseVerifierStrategyForStepPRM(PairwiseVerifierStrategy):
+    def trainer_forward(
+            self,
+            scores: torch.Tensor,
+            masks: torch.Tensor,
+            labels: torch.Tensor,
+            indices: torch.Tensor
+    ):
+        bsz, seq_len = scores.shape
+        valid_bsz = bsz
+        loss = torch.tensor(0.).to(scores)
+        labels = labels.to(scores)
+        for i in range(bsz):
+            nonzero_indices = masks[i].nonzero()
+            if len(nonzero_indices) == 0:
+                valid_bsz -= 1
+                continue
+            instruct_len = nonzero_indices[0].item()
+            index = instruct_len + indices[i][indices[i] > 0]
+            index = index[index < seq_len]  # truncate
+            assert len(index.shape) == 1
+            if len(index) == 0:
+                valid_bsz -= 1
+                continue
+            label = labels[i][: len(index)]
+            score = torch.tanh(scores[i])[index]
+            loss += ((score - label) ** 2).mean()
+        if valid_bsz > 0:
+            loss = loss / valid_bsz
+        return loss
+
+    def generator_forward(self, scores: torch.Tensor, masks: torch.Tensor, indices: torch.Tensor) -> List[List[float]]:
+        scores = scores.detach().cpu()
+        bsz, seq_len = scores.shape
+        results = []
+        for i in range(bsz):
+            nonzero_indices = masks[i].nonzero()
+            if len(nonzero_indices) == 0:
+                print("Warming: instruction len out of range.")
+                results.append([])
+                continue
+            instruct_len = nonzero_indices[0].item()
+            index = instruct_len + indices[i][indices[i] > 0]
+            index = index[index < seq_len]  # truncate
+            if len(index) == 0:
+                print("Warming: rating index len out of range.")
+                results.append([])
+                continue
+            score = torch.tanh(scores[i])[index].tolist()
+            results.append(score)
+        return results
+
+
+class PointwiseVerifierStrategyForImplicitPRM(PointwiseVerifierStrategy):
+    def __init__(self, beta=0.1):
+        self.criterion = ImplicitPRMLoss(beta=beta)
+
+    def trainer_forward(
+            self,
+            logits: torch.Tensor,
+            tokens: torch.Tensor,
+            masks: torch.Tensor,
+            labels: torch.Tensor,
+            ref_log_probs: torch.Tensor
+    ):
+        return self.criterion.forward(
+            logits=logits,
+            tokens=tokens,
+            masks=masks,
+            labels=labels,
+            ref_log_probs=ref_log_probs
+        )
+
+    def generator_forward(
+            self,
+            logits: torch.Tensor,
+            tokens: torch.Tensor,
+            ref_log_probs: torch.Tensor,
+            masks: torch.Tensor = None
+    ) -> List[float]:
+        log_probs, ref_log_probs = self.criterion.prepare_for_loss(
+            logits=logits,
+            labels=tokens,
+            masks=masks,
+            ref_log_probs=ref_log_probs
+        )
+        return torch.sigmoid(log_probs - ref_log_probs).tolist()
+
+
 class PairwiseVerifierStrategyForLastToken(PairwiseVerifierStrategy):
     def trainer_forward(
             self,
@@ -134,11 +223,8 @@ class PairwiseVerifierStrategyForLastToken(PairwiseVerifierStrategy):
         return reduce_scores
 
 
-class PairwiseVerifierStrategyForMeanScore(PairwiseVerifierStrategy):
-    def __init__(self, beta: float = 1.0, margin: float = 0.0):
-        self.beta = beta
-        self.margin = margin
-
+class PairwiseVerifierStrategyForPGTG(PairwiseVerifierStrategy):
+    """ Preference-Grounded Token-level Guidance """
     def trainer_forward(
             self,
             chosen_scores: torch.Tensor,
@@ -146,6 +232,51 @@ class PairwiseVerifierStrategyForMeanScore(PairwiseVerifierStrategy):
             chosen_masks: torch.Tensor,
             rejected_masks: torch.Tensor,
             **kwargs
+    ) -> torch.Tensor:
+        bsz, seq_len = chosen_scores.shape
+        valid_bsz = bsz
+        loss = 0
+        chosen_scores = torch.sigmoid(chosen_scores)
+        rejected_scores = torch.sigmoid(rejected_scores)
+        for i in range(bsz):
+            chosen_check_start = chosen_masks[i].nonzero()
+            if len(chosen_check_start) == 0:
+                valid_bsz -= 1
+                continue
+            start_idx = chosen_check_start[0].item()
+            rejected_check_start = rejected_masks[i].nonzero()
+            assert start_idx == rejected_check_start[0].item()
+            chosen_end_idx = chosen_check_start[-1].item() + 1
+            rejected_end_idx = rejected_check_start[-1].item() + 1
+            c = (chosen_end_idx + rejected_end_idx - 2 * start_idx) / 2
+            chosen_score = c * chosen_scores[i][start_idx: chosen_end_idx].mean()
+            rejected_score = c * rejected_scores[i][start_idx: rejected_end_idx].mean()
+            loss += - torch.nn.functional.logsigmoid(chosen_score - rejected_score)
+        if valid_bsz > 0:
+            loss = loss / valid_bsz
+        return loss
+
+    def generator_forward(self, scores: torch.Tensor, masks: torch.Tensor) -> List[float]:
+        scores = scores.detach().cpu()
+        bsz = scores.shape[0]
+        reduce_scores = []
+        scores = torch.sigmoid(scores)
+        for i in range(bsz):
+            reduce_scores.append(torch.masked_select(scores[i], masks[i]).mean().item())
+        return reduce_scores
+
+
+class PairwiseVerifierStrategyForMeanScore(PairwiseVerifierStrategy):
+    def __init__(self, beta: float = 0.2, gamma: float = 2.0):
+        self.beta = beta
+        self.gamma = gamma
+
+    def trainer_forward(
+            self,
+            chosen_scores: torch.Tensor,  # shape [batch_size, seq_length]
+            rejected_scores: torch.Tensor,
+            chosen_masks: torch.Tensor,  # shape [batch_size, seq_length]
+            rejected_masks: torch.Tensor,
     ) -> torch.Tensor:
         bsz, seq_len = chosen_scores.shape
         valid_bsz = bsz
@@ -163,7 +294,7 @@ class PairwiseVerifierStrategyForMeanScore(PairwiseVerifierStrategy):
 
             chosen_score = chosen_scores[i][start_idx: chosen_end_idx].mean()
             rejected_score = rejected_scores[i][start_idx: rejected_end_idx].mean()
-            loss += - torch.nn.functional.logsigmoid(self.beta * (chosen_score - rejected_score) - self.margin)
+            loss += - torch.nn.functional.logsigmoid(self.beta * (chosen_score - rejected_score) - self.gamma)
         if valid_bsz > 0:
             loss = loss / valid_bsz
         return loss
@@ -185,7 +316,6 @@ class PairwiseVerifierStrategyForFocalMeanScore(PairwiseVerifierStrategyForMeanS
             rejected_scores: torch.Tensor,
             chosen_masks: torch.Tensor,
             rejected_masks: torch.Tensor,
-            **kwargs
     ) -> torch.Tensor:
         bsz, seq_len = chosen_scores.shape
         valid_bsz = bsz

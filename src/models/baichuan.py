@@ -4,19 +4,24 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
-from fairscale.nn.model_parallel.layers import (
+from src.parallel.model_parallel.layers import (
     RowParallelLinear,
     ColumnParallelLinear,
     ParallelEmbedding
 )
 
 from src.checkpoint import CheckpointForBaichuan
-from src.models.modeling import AttentionForCausalLM, ParallelModelForCausalLM, CausalLMOutputs, ParallelVerifier, \
+from src.models.modeling import (
+    AttentionForCausalLM,
+    ParallelModelForCausalLM,
+    CausalLMOutputs,
+    ParallelVerifier,
     VerifierOutputs
+)
 from src.models.modeling_acts import RotaryEmbedding, Clamp, RMSNorm, LogitsNormalize
 from src.models.modeling_args import BaichuanArgs, LoraBaichuanArgs
 from src.utils import compute_position_ids, apply_rotary_pos_emb, apply_lora
-from src.parallel.utils import set_model_parallel_barrier
+from src.parallel.initialize import set_model_parallel_barrier
 
 
 class BaichuanAttention(AttentionForCausalLM):

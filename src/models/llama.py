@@ -4,19 +4,28 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
-from fairscale.nn.model_parallel.layers import (
+
+from src.checkpoint import CheckpointForLlama
+from src.models.modeling import (
+    ParallelModelForCausalLM,
+    CausalLMOutputs,
+    AttentionForCausalLM,
+    ParallelVerifier,
+    VerifierOutputs
+)
+from src.models.modeling_acts import RMSNorm, Clamp, LogitsNormalize
+from src.models.modeling_args import LlamaArgs, LoraLlamaArgs
+from src.parallel.initialize import set_model_parallel_barrier
+from src.parallel.model_parallel.layers import (
     RowParallelLinear,
     ColumnParallelLinear,
     ParallelEmbedding
 )
-
-from src.checkpoint import CheckpointForLlama
-from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs, AttentionForCausalLM, \
-    ParallelVerifier, VerifierOutputs
-from src.models.modeling_acts import RMSNorm, Clamp, LogitsNormalize
-from src.models.modeling_args import LlamaArgs, LoraLlamaArgs
-from src.parallel.utils import set_model_parallel_barrier
-from src.utils import apply_rotary_emb, precompute_freqs_cis, apply_lora
+from src.parallel.sequence_parallel.mappings import (
+    scatter_to_sequence_parallel_region,
+    gather_from_sequence_parallel_region
+)
+from src.utils import precompute_freqs_cis, apply_lora, apply_rotary_emb_
 
 
 class LlamaAttention(AttentionForCausalLM):
@@ -33,6 +42,10 @@ class LlamaAttention(AttentionForCausalLM):
         self.wk = None
         self.wv = None
         self.wo = None
+        self.wq_fn = lambda x: self.wq(x)
+        self.wk_fn = lambda x: self.wk(x)
+        self.wv_fn = lambda x: self.wv(x)
+        self.wo_fn = lambda x: self.wo(x)
 
     def init_weights(self):
         self.wq = ColumnParallelLinear(
@@ -72,35 +85,29 @@ class LlamaAttention(AttentionForCausalLM):
             mask: Optional[torch.Tensor],
             use_cache=False
     ):
-        bsz, seqlen, _ = x.shape
-        xq, xk, xv = self.wq(x), self.wk(x), self.wv(x)
+        bsz, seq_len, _ = x.shape
+        xq, xk, xv = self.wq_fn(x), self.wk_fn(x), self.wv_fn(x)
 
-        xq = xq.view(bsz, seqlen, self.n_local_heads, self.head_dim)
-        xk = xk.view(bsz, seqlen, self.n_local_kv_heads, self.head_dim)
-        xv = xv.view(bsz, seqlen, self.n_local_kv_heads, self.head_dim)
+        xq = xq.view(bsz, seq_len, self.n_local_heads, self.head_dim)
+        xk = xk.view(bsz, seq_len, self.n_local_kv_heads, self.head_dim)
+        xv = xv.view(bsz, seq_len, self.n_local_kv_heads, self.head_dim)
 
-        xq, xk = apply_rotary_emb(xq, xk, freqs_cis=freqs_cis)
+        local_freqs_cis = freqs_cis
+        if not use_cache:
+            xk = gather_from_sequence_parallel_region(xk)
+            xv = gather_from_sequence_parallel_region(xv)
+            local_freqs_cis = scatter_to_sequence_parallel_region(freqs_cis.unsqueeze(0)).squeeze(0)
+
+        xq = apply_rotary_emb_(xq, freqs_cis=local_freqs_cis)
+        xk = apply_rotary_emb_(xk, freqs_cis=freqs_cis)
 
         if use_cache:
             xk, xv = self.apply_cache(xk, xv, start_pos)
 
-        # TEST
-        # xk = self.repeat_kv(xk)
-        # xv = self.repeat_kv(xv)
         xk, xv = self.repeat_kv(xk, xv, self.n_rep)
 
         output = self.apply_attention(xq, xk, xv, mask)
-        return self.wo(output)
-
-    # def repeat_kv(self, x: torch.Tensor) -> torch.Tensor:
-    #     bs, seqlen, n_kv_heads, head_dim = x.shape
-    #     if self.n_rep == 1:
-    #         return x
-    #     return (
-    #         x[:, :, :, None, :]
-    #         .expand(bs, seqlen, n_kv_heads, self.n_rep, head_dim)
-    #         .reshape(bs, seqlen, n_kv_heads * self.n_rep, head_dim)
-    #     )
+        return self.wo_fn(output)
 
 
 class LlamaFeedForward(nn.Module):
@@ -117,6 +124,9 @@ class LlamaFeedForward(nn.Module):
         self.w1 = None
         self.w2 = None
         self.w3 = None
+        self.w1_fn = lambda x: self.w1(x)
+        self.w2_fn = lambda x: self.w2(x)
+        self.w3_fn = lambda x: self.w3(x)
 
     def init_weights(self):
         self.w1 = ColumnParallelLinear(
@@ -142,7 +152,7 @@ class LlamaFeedForward(nn.Module):
         ).type(self.args.dtype)
 
     def forward(self, x):
-        return self.w2(F.silu(self.w1(x)) * self.w3(x))
+        return self.w2_fn(F.silu(self.w1_fn(x)) * self.w3_fn(x))
 
 
 class LlamaTransformerBlock(nn.Module):
@@ -187,6 +197,7 @@ class Llama(ParallelModelForCausalLM):
             self.layers.append(LlamaTransformerBlock(layer_id, args))
         self.norm = None
         self.output = None
+        self.output_fn = lambda x: self.output(x)
         self.logits_norm = LogitsNormalize(enable=self.args.use_logits_normalize)
 
         self.freqs_cis = precompute_freqs_cis(
@@ -197,19 +208,29 @@ class Llama(ParallelModelForCausalLM):
     def forward(self, tokens: torch.Tensor, start_pos=0, use_cache=False):
         tokens = tokens.to(next(self.parameters()).device)
         _bsz, seq_len = tokens.shape
+        freqs_cis = self.freqs_cis[start_pos: start_pos + seq_len].to(tokens.device)
+
+        if not use_cache:
+            tokens = scatter_to_sequence_parallel_region(tokens)
+
         h = self.tok_embeddings(tokens)
-        self.freqs_cis = self.freqs_cis.to(h.device)
-        freqs_cis = self.freqs_cis[start_pos: start_pos + seq_len]
 
         mask = None
         if seq_len > 1:
             mask = torch.full((1, 1, seq_len, seq_len), float("-inf"), device=tokens.device)
             mask = torch.triu(mask, diagonal=start_pos + 1).type_as(h)
 
+            if not use_cache:
+                mask = scatter_to_sequence_parallel_region(mask.transpose(1, 2)).transpose(1, 2)
+
         for layer in self.layers:
             h = layer(h, start_pos, freqs_cis, mask, use_cache)
         h = self.norm(h)
-        logits = self.output(h)
+        logits = self.output_fn(h)
+
+        if not use_cache:
+            logits = gather_from_sequence_parallel_region(logits)
+
         return CausalLMOutputs(logits=self.logits_norm.forward(logits), hidden_states=h)
 
     def init_weights(self):
@@ -259,28 +280,39 @@ class LlamaVerifier(ParallelVerifier):
             self.layers.append(LlamaTransformerBlock(layer_id, args))
         self.norm = None
         self.v_head = None
+        self.v_head_fn = lambda x: self.v_head(x)
 
         self.freqs_cis = precompute_freqs_cis(
-            self.args.dim // self.args.n_heads, self.args.max_seq_len * 2
+            self.args.dim // self.args.n_heads, self.args.max_seq_len * 2, self.args.rope_theta
         )
         self.checkpoint = CheckpointForLlama()
 
     def forward(self, tokens: torch.Tensor) -> VerifierOutputs:
         tokens = tokens.to(next(self.parameters()).device)
         _bsz, seq_len = tokens.shape
+        freqs_cis = self.freqs_cis[: seq_len].to(tokens.device)
+
+        # Sequence parallel op.
+        tokens = scatter_to_sequence_parallel_region(tokens)
+
         h = self.tok_embeddings(tokens)
-        self.freqs_cis = self.freqs_cis.to(h.device)
-        freqs_cis = self.freqs_cis[: seq_len]
 
         mask = None
         if seq_len > 1:
             mask = torch.full((1, 1, seq_len, seq_len), float("-inf"), device=tokens.device)
             mask = torch.triu(mask, diagonal=1).type_as(h)
 
+            # Sequence parallel op.
+            mask = scatter_to_sequence_parallel_region(mask.transpose(1, 2)).transpose(1, 2)
+
         for layer in self.layers:
             h = layer(h, 0, freqs_cis, mask, use_cache=False)
         h = self.norm(h)
-        scores = self.v_head(h.type_as(self.v_head.weight)).squeeze(-1)  # [b, s]
+        scores = self.v_head_fn(h).squeeze(-1)  # [b, s]
+
+        # Sequence parallel op.
+        scores = gather_from_sequence_parallel_region(scores)
+
         return VerifierOutputs(scores=scores)
 
     def init_weights(self):
@@ -314,36 +346,10 @@ class LoraLlamaAttention(LlamaAttention):
         self.lora_b_wv = None
         self.lora_a_wo = None
         self.lora_b_wo = None
-
-    def forward(
-            self,
-            x: torch.Tensor,
-            start_pos: int,
-            freqs_cis: torch.Tensor,
-            mask: Optional[torch.Tensor],
-            use_cache=False
-    ):
-        bsz, seqlen, _ = x.shape
-        xq = self.wq(x) + apply_lora(x, self.lora_a_wq, self.lora_b_wq)
-        xk = self.wk(x) + apply_lora(x, self.lora_a_wk, self.lora_b_wk)
-        xv = self.wv(x) + apply_lora(x, self.lora_a_wv, self.lora_b_wv)
-
-        xq = xq.view(bsz, seqlen, self.n_local_heads, self.head_dim)
-        xk = xk.view(bsz, seqlen, self.n_local_kv_heads, self.head_dim)
-        xv = xv.view(bsz, seqlen, self.n_local_kv_heads, self.head_dim)
-
-        xq, xk = apply_rotary_emb(xq, xk, freqs_cis=freqs_cis)
-
-        if use_cache:
-            xk, xv = self.apply_cache(xk, xv, start_pos)
-
-        # xk = self.repeat_kv(xk)
-        # xv = self.repeat_kv(xv)
-        xk, xv = self.repeat_kv(xk, xv, self.n_rep)
-
-        output = self.apply_attention(xq, xk, xv, mask)
-
-        return self.wo(output) + apply_lora(output, self.lora_a_wo, self.lora_b_wo)
+        self.wq_fn = lambda x: self.wq(x) + apply_lora(x, self.lora_a_wq, self.lora_b_wq)
+        self.wk_fn = lambda x: self.wk(x) + apply_lora(x, self.lora_a_wk, self.lora_b_wk)
+        self.wv_fn = lambda x: self.wv(x) + apply_lora(x, self.lora_a_wv, self.lora_b_wv)
+        self.wo_fn = lambda x: self.wo(x) + apply_lora(x, self.lora_a_wo, self.lora_b_wo)
 
     def init_weights(self):
         super().init_weights()
@@ -411,12 +417,9 @@ class LoraLlamaFeedForward(LlamaFeedForward):
         self.lora_b_w2 = None
         self.lora_a_w3 = None
         self.lora_b_w3 = None
-
-    def forward(self, x):
-        w1_x = self.w1(x) + apply_lora(x, self.lora_a_w1, self.lora_b_w1)
-        w3_x = self.w3(x) + apply_lora(x, self.lora_a_w3, self.lora_b_w3)
-        out = F.silu(w1_x) * w3_x
-        return self.w2(out) + apply_lora(out, self.lora_a_w2, self.lora_b_w2)
+        self.w1_fn = lambda x: self.w1(x) + apply_lora(x, self.lora_a_w1, self.lora_b_w1)
+        self.w2_fn = lambda x: self.w2(x) + apply_lora(x, self.lora_a_w2, self.lora_b_w2)
+        self.w3_fn = lambda x: self.w3(x) + apply_lora(x, self.lora_a_w3, self.lora_b_w3)
 
     def init_weights(self):
         super().init_weights()
@@ -476,24 +479,7 @@ class LoraLlama(Llama):
             self.layers.append(LoraLlamaTransformerBlock(layer_id, args))
         self.lora_a_output = None
         self.lora_b_output = None
-
-    def forward(self, tokens: torch.Tensor, start_pos=0, use_cache=False):
-        tokens = tokens.to(next(self.parameters()).device)
-        _bsz, seqlen = tokens.shape
-        h = self.tok_embeddings(tokens)
-        self.freqs_cis = self.freqs_cis.to(h.device)
-        freqs_cis = self.freqs_cis[start_pos: start_pos + seqlen]
-
-        mask = None
-        if seqlen > 1:
-            mask = torch.full((1, 1, seqlen, seqlen), float("-inf"), device=tokens.device)
-            mask = torch.triu(mask, diagonal=start_pos + 1).type_as(h)
-
-        for layer in self.layers:
-            h = layer(h, start_pos, freqs_cis, mask, use_cache)
-        h = self.norm(h)
-        logits = self.output(h) + apply_lora(h, self.lora_a_output, self.lora_b_output)
-        return CausalLMOutputs(logits=self.logits_norm.forward(logits), hidden_states=h)
+        self.output_fn = lambda x: self.output(x) + apply_lora(x, self.lora_a_output, self.lora_b_output)
 
     def load(self, ckpt_dir: str, verbose: bool = True, merge_lora: bool = False):
         super().load(ckpt_dir=ckpt_dir, verbose=verbose, merge_lora=merge_lora)

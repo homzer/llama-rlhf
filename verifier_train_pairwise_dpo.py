@@ -11,8 +11,7 @@ from src.entities import Timer
 from src.modeling import get_parallel_model
 from src.ppo.buffer import LogitsRolloutBuffer
 from src.ppo.collector import LogitsBufferCollector
-from src.parallel import setup_model_parallel, set_barrier
-from src.parallel.utils import get_rank
+from src.parallel.initialize import setup_model_parallel, set_barrier, get_rank
 
 
 def main(
@@ -122,7 +121,7 @@ def main(
                 reference_chosen_rollout_buffer.get(max_batch_size),
                 reference_rejected_rollout_buffer.get(max_batch_size)
         ):
-            assert chosen_data.instructions.tolist() == rejected_data.instructions.tolist()
+            assert chosen_data.instructions == rejected_data.instructions
             timer.step()
             trainer_outputs = trainer.forward(
                 instructions=chosen_data.instructions,

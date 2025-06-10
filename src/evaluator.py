@@ -9,11 +9,16 @@ from src.dataset import PairwiseDataset, JsonDataset
 from src.entities import Timer, AverageMeter
 from src.generator import GeneratorForCausalLM, GeneratorForVerifier
 from src.models.modeling import ModelForCausalLM, ParallelModelForCausalLM, Verifier, ParallelVerifier
+from src.parallel.data_parallel.dataloader import ParallelDataLoader
+from src.parallel.data_parallel.utils import gather_object_from_data_parallel_region
 from src.tokenizers.tokenizer import Tokenizer
 from src.utils import convert_dataloader_data_to_list
 
+PolicyEvaluatorOutputs = collections.namedtuple('PolicyEvaluatorOutputs', [
+    'acc', 'datalist', 'missing', 'correct'])
 
-class SolverEvaluator:
+
+class PolicyEvaluator:
     def __init__(
             self,
             model: Union[ModelForCausalLM, ParallelModelForCausalLM],
@@ -21,7 +26,7 @@ class SolverEvaluator:
             batch_size: int,
             max_seq_len: int,
             temperature: float = 0.0,
-            top_p: float = 0.95
+            top_p: float = 1.0
     ):
         self.generator = GeneratorForCausalLM(
             model=model,
@@ -32,11 +37,7 @@ class SolverEvaluator:
         )
         self.batch_size = batch_size
 
-    def forward(self, task: str, dataset: JsonDataset):
-        task = task.lower()
-        dataloader = DataLoader(dataset, batch_size=self.batch_size)
-        print(f"Evaluating {task}.........")
-
+    def model_forward(self, dataloader: DataLoader) -> list:
         results = []
         timer = Timer(len(dataloader))
         for data in tqdm(dataloader):
@@ -48,17 +49,62 @@ class SolverEvaluator:
             results.extend(datalist)
             print(data['instruction'][0].strip() + '\n' + outputs[0])
             print("---" * 10)
+        return results
 
+    def forward(self, task: str, dataset: JsonDataset):
+        task = task.lower()
+        dataloader = DataLoader(dataset, batch_size=self.batch_size)
+        print(f"Evaluating {task}.........")
+        results = self.model_forward(dataloader)
+
+        evaluator = Evaluator()
         if task in EVALUATORS:
             evaluator = EVALUATORS.get(task)()
             for data in results:
                 data['predict'] = evaluator.forward(data['output'], data['label'])
+                data['score'] = 1 if evaluator.eval(data['output'], label=data['label']) is True else 0
 
-            Output = collections.namedtuple('Output', ['acc', 'datalist', 'missing', 'correct'])
-            return Output(acc=evaluator.accuracy, datalist=results, missing=evaluator.miss, correct=evaluator.correct)
-        else:
-            Output = collections.namedtuple('Output', ['acc', 'datalist', 'missing', 'correct'])
-            return Output(acc=0, datalist=results, missing=0, correct=0)
+        return PolicyEvaluatorOutputs(
+            acc=evaluator.accuracy, datalist=results, missing=evaluator.miss, correct=evaluator.correct
+        )
+
+
+class DataParallelPolicyEvaluator(PolicyEvaluator):
+    def __init__(
+            self,
+            model: Union[ModelForCausalLM, ParallelModelForCausalLM],
+            tokenizer: Tokenizer,
+            batch_size: int,
+            max_seq_len: int,
+            temperature: float = 0.0,
+            top_p: float = 1.0
+    ):
+        super().__init__(
+            model=model,
+            tokenizer=tokenizer,
+            batch_size=batch_size,
+            max_seq_len=max_seq_len,
+            temperature=temperature,
+            top_p=top_p
+        )
+
+    def forward(self, task: str, dataset: JsonDataset):
+        task = task.lower()
+        dataloader = ParallelDataLoader(dataset, batch_size=self.batch_size)
+        print(f"Evaluating {task}.........")
+        results = self.model_forward(dataloader)
+        results = gather_object_from_data_parallel_region(results)
+
+        evaluator = Evaluator()
+        if task in EVALUATORS:
+            evaluator = EVALUATORS.get(task)()
+            for data in results:
+                data['predict'] = evaluator.forward(data['output'], data['label'])
+                data['score'] = 1 if evaluator.eval(data['output'], label=data['label']) is True else 0
+
+        return PolicyEvaluatorOutputs(
+            acc=evaluator.accuracy, datalist=results, missing=evaluator.miss, correct=evaluator.correct
+        )
 
 
 class VerifierEvaluator:
@@ -139,6 +185,7 @@ class GSM8KEvaluator(Evaluator):
             r'(?:So|so)(.*)\n?',
         ]
         self.numeric_words = {
+            "zero": "0",
             "one": "1",
             "two": "2",
             "three": "3",
@@ -154,7 +201,7 @@ class GSM8KEvaluator(Evaluator):
         }
 
     def words_to_numbers(self, text: str):
-        """ replace `One`, `two` with `1`, `2` etc in a text. """
+        """ replace `One`, `two` with `1`, `2` etc. in a text. """
         pattern = re.compile(r'\b(?:' + '|'.join(re.escape(word) for (
             word
         ) in self.numeric_words.keys()) + r')\b', re.IGNORECASE)
@@ -200,17 +247,13 @@ class GSM8KEvaluator(Evaluator):
         return self.format_label(label) == answer
 
     def forward(self, output: str, label: str = None) -> str:
-        answer = self.extract_answer(output)
-        # evaluation
-        if len(answer) == 0:
-            self.miss += 1
-        elif label is not None:
-            if self.format_label(label) == answer:
+        if label is not None:
+            if self.eval(output, label) is True:
                 self.meter.forward(1)
                 self.correct += 1
             else:
                 self.meter.forward(0)
-        return answer
+        return self.extract_answer(output)
 
 
 class MATHEvaluator(Evaluator):
@@ -242,6 +285,7 @@ class MATHEvaluator(Evaluator):
                 a = ans.split('$')[0].strip()
 
         a = a.replace(" ", "")
+        a = re.sub(r',|\.0+$', "", a)
         a = re.sub(r"\\mathbf", "", a)
         a = re.sub(r"^\\text", "", a)
         a = re.sub(r"^\w=", "", a)
@@ -252,28 +296,32 @@ class MATHEvaluator(Evaluator):
         a = re.sub(r"\\\\", r"\\", a)
         a = re.sub(r"\\$", "", a)
         a = re.sub(r"dfrac|tfrac", "frac", a)
-        return a
+        return self.format_label(a)
 
     def format_label(self, label: str) -> str:
-        return re.sub(r'\s', "", label)
+        label = re.sub(r"^0", "", label)
+        label = re.sub(r',|\.0+$', "", label)
+        label = re.sub(r'\s', "", label)
+        label = re.sub(r'\\!', "", label)
+        label = re.sub(r"dfrac|tfrac", "frac", label)
+        label = re.sub(r"\\mbox\{\w+}", "", label)
+        label = re.sub(r"\\left|\\right", "", label)
+        return label
 
     def eval(self, output: str, label: str) -> bool | None:
         answer = self.extract_answer(output)
         if len(answer) == 0:
             return None
-        return self.format_label(label) in answer
+        return answer == self.format_label(label)
 
     def forward(self, output: str, label: str = None) -> str:
-        result = self.extract_answer(output)
         if label is not None:
-            label = self.format_label(label)
-            if label in result:
+            if self.eval(output, label) is True:
                 self.meter.forward(1)
                 self.correct += 1
             else:
                 self.meter.forward(0)
-
-        return result
+        return self.extract_answer(output)
 
 
 class MMLUEvaluator(Evaluator):
@@ -401,10 +449,18 @@ class BBHEvaluator(Evaluator):
 
 EVALUATORS = {
     "gsm8k": GSM8KEvaluator,
+    "asdiv": GSM8KEvaluator,
+    "svamp": GSM8KEvaluator,
     "math": MATHEvaluator,
+    "prm800k": MATHEvaluator,
+    "aime2024": MATHEvaluator,
+    "aime2025": MATHEvaluator,
+    "amc23": MATHEvaluator,
+    "aime": MATHEvaluator,
     "mmlu": MMLUEvaluator,
     "arc": MultiChoicesEvaluator,
     "csqa": MultiChoicesEvaluator,
     "bbh": BBHEvaluator,
-    "agieval": MultiChoicesEvaluator
+    "agieval": MultiChoicesEvaluator,
+    "gpqa-diamond": MATHEvaluator
 }

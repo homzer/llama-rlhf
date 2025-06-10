@@ -3,20 +3,21 @@ import os
 
 import fire
 
-from src.parallel.dataloader import ParallelDataLoader
-from src.parallel.utils import setup_model_parallel
-from src.parallel.datawriter import ParallelDataWriter
 from src.dataset import JsonDataset, ChatTemplateDataset
 from src.entities import Timer
-from src.generator import GeneratorForCausalLM
+from src.generator import GroupGeneratorForCausalLM
 from src.modeling import get_parallel_model
+from src.parallel.data_parallel.dataloader import ParallelDataLoader
+from src.parallel.data_parallel.datawriter import ParallelDataWriter
+from src.parallel.initialize import setup_model_parallel
+from src.utils import convert_dataloader_data_to_list, print_current_func_args
 
 
 def main(
         ckpt_dir: str,
         label_file: str,
         log_dir: str,
-        model_type: str = "llama-2-7b",
+        model_type: str,
         max_seq_len: int = 512,
         max_batch_size: int = 1,
         lora_rank: int = -1,
@@ -25,16 +26,19 @@ def main(
         tokenizer_file: str = None,
         config_file: str = None,
         use_chat_template: bool = False,
+        num_samples_per_prompt: int = 1,
         dtype: str = "bfloat16",
         model_parallel_size: int = None,
         seed: int = None
 ):
-    os.makedirs(log_dir, exist_ok=True)
-    setup_model_parallel(model_parallel_size=model_parallel_size, seed=seed)
-    if tokenizer_file is None:
-        tokenizer_file = ckpt_dir
-    if config_file is None:
-        config_file = ckpt_dir
+    setup_model_parallel(
+        model_parallel_size=model_parallel_size,
+        seed=seed,
+        log_dir=log_dir
+    )
+    print_current_func_args()
+    tokenizer_file = tokenizer_file or ckpt_dir
+    config_file = config_file or ckpt_dir
 
     model, tokenizer = get_parallel_model(
         model_type=model_type,
@@ -49,15 +53,24 @@ def main(
         dataset = ChatTemplateDataset(dataset, tokenizer)
     dataloader = ParallelDataLoader(dataset, batch_size=max_batch_size)
     model.load(ckpt_dir)
-    generator = GeneratorForCausalLM(model, tokenizer, max_seq_len, temperature=temperature, top_p=top_p)
+    generator = GroupGeneratorForCausalLM(
+        model=model,
+        tokenizer=tokenizer,
+        max_seq_len=max_seq_len,
+        temperature=temperature,
+        top_p=top_p,
+        num_samples_per_prompt=num_samples_per_prompt
+    )
     timer = Timer(len(dataloader))
+    os.makedirs(log_dir, exist_ok=True)
     writer = ParallelDataWriter(os.path.join(log_dir, "results.jsonl"), 'w')
     for data in dataloader:
         timer.step()
-        outputs = generator.forward(data['instruction'])
-        print(data['instruction'][-1] + "\n" + outputs[-1])
-        for instruction, output in zip(data["instruction"], outputs):
-            writer.write(json.dumps(dict(instruction=instruction, output=output), ensure_ascii=False) + '\n')
+        responses = generator.forward(data['instruction'])
+        for i, result in enumerate(convert_dataloader_data_to_list(data)):
+            result["output"] = responses[i]
+            writer.write(json.dumps(result, ensure_ascii=False) + '\n')
+    writer.flush()
 
 
 if __name__ == '__main__':

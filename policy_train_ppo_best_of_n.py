@@ -13,30 +13,47 @@ from policy_train_ppo import (
     collect_reference_buffer,
 )
 from src.dataset import JsonDataset
-from src.parallel.utils import setup_model_parallel
-from src.ppo.buffer import RolloutBuffer, ActorRolloutBuffer, CriticRolloutBuffer
+from src.parallel.initialize import setup_model_parallel
+from src.ppo.buffer import PolicyRolloutBuffer, CriticRolloutBuffer, RolloutBuffer
+from src.ppo.parallel_buffer import ParallelRolloutBuffer
 from src.utils import masked_mean, json_load
 
 
 def select_best_of_n_buffer(
-        actor_rollout_buffer: ActorRolloutBuffer,
+        actor_rollout_buffer: RolloutBuffer,
         verifier_rollout_buffer: CriticRolloutBuffer,
         num_samples_per_prompt: int,
         num_samples_keep_per_prompt: int,
         use_last_token_reward: bool
-) -> (ActorRolloutBuffer, CriticRolloutBuffer):
+) -> (RolloutBuffer, CriticRolloutBuffer):
+    actor_rollout_buffer = ParallelRolloutBuffer(**actor_rollout_buffer)
+    actor_rollout_buffer.gather_from_data_parallel_region()
+    verifier_rollout_buffer = ParallelRolloutBuffer(**verifier_rollout_buffer)
+    verifier_rollout_buffer.gather_from_data_parallel_region()
+
+    sorted_indices = sorted(range(actor_rollout_buffer.size()), key=lambda x: actor_rollout_buffer["instructions"][x])
+    # Sort actor rollout buffer
+    actor_rollout_buffer.rearrange(sorted_indices)
+    # Sort critic rollout buffer
+    verifier_rollout_buffer.rearrange(sorted_indices)
+
+    # check for arranged instructions
+    for i in range(0, actor_rollout_buffer.size(), num_samples_per_prompt):
+        assert len(set(actor_rollout_buffer["instructions"][i: i + num_samples_per_prompt].tolist())) == 1
+
     num_samples_keep_per_prompt = min(num_samples_per_prompt, num_samples_keep_per_prompt)
     if use_last_token_reward:
         scores = []
-        for i in range(len(verifier_rollout_buffer)):
-            nonzero_indices = np.nonzero(actor_rollout_buffer.action_masks[i])[0]
+        for i in range(verifier_rollout_buffer.size()):
+            nonzero_indices = np.nonzero(verifier_rollout_buffer["action_masks"][i])[0]
             if len(nonzero_indices) > 0:
-                scores.append(verifier_rollout_buffer.scores[i][nonzero_indices[-1]])
+                scores.append(verifier_rollout_buffer["scores"][i][nonzero_indices[-1]])
             else:
                 scores.append(0.0)
         scores = np.stack(scores, axis=0)
     else:
-        scores = masked_mean(verifier_rollout_buffer.scores, actor_rollout_buffer.action_masks, dim=-1)
+        scores = masked_mean(verifier_rollout_buffer["scores"], verifier_rollout_buffer["action_masks"], dim=-1)
+
     scores_values, scores_indices = torch.topk(
         torch.from_numpy(scores).reshape(-1, num_samples_per_prompt),  # numpy does not support topk()
         k=num_samples_keep_per_prompt,
@@ -45,15 +62,18 @@ def select_best_of_n_buffer(
     scores_indices = scores_indices.reshape(-1).tolist()
 
     # update actor rollout buffer
-    actor_rollout_buffer.instructions = actor_rollout_buffer.instructions[scores_indices]
-    actor_rollout_buffer.obs = actor_rollout_buffer.obs[scores_indices]
-    actor_rollout_buffer.actions = actor_rollout_buffer.actions[scores_indices]
-    actor_rollout_buffer.action_logits = actor_rollout_buffer.action_logits[scores_indices]
-    actor_rollout_buffer.action_masks = actor_rollout_buffer.action_masks[scores_indices]
-    actor_rollout_buffer.action_logprobs = actor_rollout_buffer.action_logprobs[scores_indices]
-    actor_rollout_buffer.responses = actor_rollout_buffer.responses[scores_indices]
+    actor_rollout_buffer.rearrange(scores_indices)
     # update verifier rollout buffer
-    verifier_rollout_buffer.scores = verifier_rollout_buffer.scores[scores_indices]
+    verifier_rollout_buffer.rearrange(scores_indices)
+
+    # Shuffle
+    randon_indices = np.random.permutation(actor_rollout_buffer.size())
+    actor_rollout_buffer.rearrange(randon_indices)
+    verifier_rollout_buffer.rearrange(randon_indices)
+
+    actor_rollout_buffer.scatter_to_data_parallel_region()
+    verifier_rollout_buffer.scatter_to_data_parallel_region()
+
     return actor_rollout_buffer, verifier_rollout_buffer
 
 
@@ -178,23 +198,16 @@ def run(
             max_forward_batch_size=max_forward_batch_size
         )
 
-        if use_last_token_reward:
-            rewards = []
-            for i in range(len(verifier_rollout_buffer)):
-                last_idx = np.nonzero(actor_rollout_buffer.action_masks[i])[0][-1].item()
-                rewards.append(verifier_rollout_buffer.scores[i][last_idx])
-            print("Average Rewards: ", np.mean(rewards))
-        else:
-            print("Average Rewards: ", masked_mean(verifier_rollout_buffer.scores, actor_rollout_buffer.action_masks))
+        print(f"Average Rewards: {verifier_rollout_buffer.mean(use_last_token_reward)}")
 
-        rollout_buffer = RolloutBuffer(
-            obs=actor_rollout_buffer.obs,
-            actions=actor_rollout_buffer.actions,
-            rewards=verifier_rollout_buffer.scores,
-            values=critic_rollout_buffer.scores,
-            action_logits=actor_rollout_buffer.action_logits,
-            action_masks=actor_rollout_buffer.action_masks,
-            action_logprobs=actor_rollout_buffer.action_logprobs,
+        rollout_buffer = PolicyRolloutBuffer(
+            obs=actor_rollout_buffer["obs"],
+            actions=actor_rollout_buffer["actions"],
+            rewards=verifier_rollout_buffer["scores"],
+            values=critic_rollout_buffer["scores"],
+            action_logits=actor_rollout_buffer["action_logits"],
+            action_masks=actor_rollout_buffer["action_masks"],
+            action_logprobs=actor_rollout_buffer["action_logprobs"],
             ref_action_logprobs=reference_rollout_buffer.output_tokens_logps if (
                     reference_rollout_buffer is not None
             ) else None,

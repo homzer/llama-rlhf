@@ -4,17 +4,17 @@ import numpy as np
 from policy_train_policy_gradient import train_policy_gradient
 from policy_train_ppo import collect_actor_buffer, collect_verifier_buffer
 from src.dataset import JsonDataset
-from src.parallel.utils import setup_model_parallel
-from src.ppo.buffer import CriticRolloutBuffer, RolloutBuffer, ActorRolloutBuffer
+from src.parallel.initialize import setup_model_parallel
+from src.ppo.buffer import CriticRolloutBuffer, PolicyRolloutBuffer, RolloutBuffer
 from src.utils import json_load
 
 
 def compute_rloo_rewards(
         verifier_rollout_buffer: CriticRolloutBuffer,
-        policy_rollout_buffer: ActorRolloutBuffer,
+        policy_rollout_buffer: RolloutBuffer,
         num_samples_per_prompt: int,
-) -> CriticRolloutBuffer:
-    """ Normalize EOS token reward across batch. And distribute normalized reward across output tokens """
+) -> CriticRolloutBuffer:  # TODO: rollout buffer
+    """ Normalize EOS token reward across batch. And Set rewards of the output tokens to the normalized rewards. """
     assert len(verifier_rollout_buffer) % num_samples_per_prompt == 0
     for i in range(0, len(verifier_rollout_buffer), num_samples_per_prompt):
         assert all(
@@ -33,13 +33,13 @@ def compute_rloo_rewards(
         if len(baseline) == 0:
             continue
         assert len(baseline) == num_samples_per_prompt, "please check for the samples bug"
-        baseline_score = sum(baseline) / len(baseline)
+        baseline = sum(baseline) / num_samples_per_prompt
 
         for j in range(i, i + num_samples_per_prompt):
             last_token_idx = np.nonzero(policy_rollout_buffer.action_masks[j])[0][-1]
             score = verifier_rollout_buffer.scores[j][last_token_idx]
             # leave-one-out
-            score = (baseline_score * len(baseline) - score) / (len(baseline) - 1)
+            score = score - (baseline * num_samples_per_prompt - score) / (num_samples_per_prompt - 1)
             verifier_rollout_buffer.scores[j][last_token_idx] = score
     return verifier_rollout_buffer
 
@@ -124,8 +124,9 @@ def run(
             # Using last token reward
             rewards = []
             for i in range(len(verifier_rollout_buffer)):
-                last_idx = np.nonzero(policy_rollout_buffer.action_masks[i])[0][-1].item()
-                rewards.append(verifier_rollout_buffer.scores[i][last_idx])
+                nonzero = np.nonzero(policy_rollout_buffer.action_masks[i])[0]
+                if len(nonzero) > 0:
+                    rewards.append(verifier_rollout_buffer.scores[i][nonzero[-1]])
             print("Average Rewards: ", np.mean(rewards))
 
             # Reinforce Leave-One-Out
@@ -135,7 +136,7 @@ def run(
                 num_samples_per_prompt=num_samples_per_prompt
             )
 
-            rollout_buffer = RolloutBuffer(
+            rollout_buffer = PolicyRolloutBuffer(
                 obs=policy_rollout_buffer.obs,
                 actions=policy_rollout_buffer.actions,
                 rewards=verifier_rollout_buffer.scores,
@@ -143,7 +144,6 @@ def run(
                 action_logits=policy_rollout_buffer.action_logits,
                 action_masks=policy_rollout_buffer.action_masks,
                 action_logprobs=policy_rollout_buffer.action_logprobs,
-                ref_action_logprobs=None,
                 use_last_token_reward=True,
                 reward_normalize=False,
             )

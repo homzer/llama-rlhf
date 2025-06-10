@@ -22,7 +22,10 @@ from src.models import (
     LoraMistralHf,
     LlamaHf,
     LoraLlamaHf,
-    InternLM
+    InternLM,
+    Llama3Hf,
+    Qwen3,
+    Gemma2
 )
 from src.models.modeling_args import (
     LlamaArgs,
@@ -37,7 +40,9 @@ from src.models.modeling_args import (
     LoraBaichuanArgs,
     LoraLlamaArgsHf,
     LlamaArgsHf,
-    InternLMArgs
+    InternLMArgs,
+    Llama3Args,
+    Gemma2Args
 )
 from src.tokenizers import (
     Tokenizer,
@@ -47,7 +52,9 @@ from src.tokenizers import (
     QwenTokenizer,
     BaichuanTokenizer,
     LlamaTokenizerHf,
-    InternLMTokenizer
+    InternLMTokenizer,
+    Llama3TokenizerHf,
+    GemmaTokenizer
 )
 
 
@@ -56,17 +63,20 @@ ARGS = {
     "lora-llama": LoraLlamaArgs,
     "llama-hf": LlamaArgsHf,
     "lora-llama-hf": LoraLlamaArgsHf,
-    "llama3": LlamaArgs,
+    "llama3": Llama3Args,
     "lora-llama3": LoraLlamaArgs,
+    "llama3-hf": LlamaArgsHf,
     "mistral": MistralArgs,
     "lora-mistral": LoraMistralArgs,
     "mistral-hf": MistralArgsHf,
     "lora-mistral-hf": LoraMistralArgsHf,
     "qwen": QwenArgs,
+    "qwen3": QwenArgs,
     "lora-qwen": LoraQwenArgs,
     "baichuan": BaichuanArgs,
     "lora-baichuan": LoraBaichuanArgs,
-    "internlm": InternLMArgs
+    "internlm": InternLMArgs,
+    "gemma2": Gemma2Args
 }
 
 
@@ -75,6 +85,7 @@ MODELS = {
     "lora-llama": LoraLlama,
     "llama3": Llama3,
     "lora-llama3": LoraLlama3,
+    "llama3-hf": Llama3Hf,
     "llama-hf": LlamaHf,
     "lora-llama-hf": LoraLlamaHf,
     "mistral": Mistral,
@@ -82,10 +93,12 @@ MODELS = {
     "mistral-hf": MistralHf,
     "lora-mistral-hf": LoraMistralHf,
     "qwen": Qwen,
+    "qwen3": Qwen3,
     "lora-qwen": LoraQwen,
     "baichuan": Baichuan,
     "lora-baichuan": LoraBaichuan,
-    "internlm": InternLM
+    "internlm": InternLM,
+    "gemma2": Gemma2
 }
 
 VERIFIERS = {
@@ -96,18 +109,21 @@ VERIFIERS = {
     "qwen": QwenVerifier,
     "lora-qwen": LoraQwenVerifier,
     "baichuan": BaichuanVerifier,
-    "lora-baichuan": LoraBaichuanVerifier
+    "lora-baichuan": LoraBaichuanVerifier,
 }
 
 TOKENIZERS = {
     "llama": LlamaTokenizer,
     "llama-hf": LlamaTokenizerHf,
     "llama3": Llama3Tokenizer,
+    "llama3-hf": Llama3TokenizerHf,
     "mistral": MistralTokenizer,
     "mistral-hf": MistralTokenizer,
     "qwen": QwenTokenizer,
+    "qwen3": QwenTokenizer,
     "baichuan": BaichuanTokenizer,
-    "internlm": InternLMTokenizer
+    "internlm": InternLMTokenizer,
+    "gemma2": GemmaTokenizer
 }
 
 
@@ -146,7 +162,7 @@ def get_parallel_verifier(
         config_file: str,
         max_seq_len: int,
         tokenizer_file: str,
-        lora_rank: int,
+        lora_rank: int = -1,
         dtype: str = 'bfloat16',
         lora_dtype: str = 'float32',
         use_clamp: bool = False,

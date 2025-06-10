@@ -6,7 +6,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from fairscale.nn.model_parallel.initialize import (
+from src.parallel.initialize import (
     get_model_parallel_world_size,
     get_model_parallel_rank,
     get_model_parallel_src_rank
@@ -14,7 +14,7 @@ from fairscale.nn.model_parallel.initialize import (
 
 from src.checkpoint import Checkpoint
 from src.utils import load_safetensors
-from src.parallel.utils import set_barrier
+from src.parallel.initialize import set_barrier
 
 CausalLMOutputs = collections.namedtuple('CausalLMOutputs', ['logits', 'hidden_states'])
 Seq2SeqLMOutputs = collections.namedtuple('Seq2SeqLMOutputs', ['logits', 'hidden_states'])
@@ -146,22 +146,11 @@ class ParallelModule(Module):
             checkpoints
         ), f"Loading a checkpoint for MP={len(checkpoints)} but model parallel size is {self.model_parallel_world_size}"
         ckpt_path = checkpoints[self.model_parallel_rank]
-        loading_outputs = None
-        if kwargs.get("sequential_load", False):  # For saving cpu memory
-            for i in range(self.model_parallel_world_size):
-                if i == self.model_parallel_rank:
-                    state_dict = torch.load(str(ckpt_path), map_location="cpu")
-                    if kwargs.get("merge_lora", False):
-                        state_dict = Checkpoint.merge_lora_state_dict(state_dict)
-                    loading_outputs = self.load_state_dict(state_dict, strict=False)
-                    self.cuda(self.local_rank)
-                set_barrier()
-        else:
-            state_dict = torch.load(str(ckpt_path), map_location="cpu")
-            if kwargs.get("merge_lora", False):
-                state_dict = Checkpoint.merge_lora_state_dict(state_dict)
-            loading_outputs = self.load_state_dict(state_dict, strict=False)
-            self.cuda(self.local_rank)
+        self.cuda(self.local_rank)
+        state_dict = torch.load(str(ckpt_path), map_location=f"cuda:{self.local_rank}")
+        if kwargs.get("merge_lora", False):
+            state_dict = Checkpoint.merge_lora_state_dict(state_dict)
+        loading_outputs = self.load_state_dict(state_dict, strict=False)
         set_barrier()
         if kwargs.get("verbose", True):
             for missing_key in loading_outputs.missing_keys:
@@ -173,9 +162,7 @@ class ParallelModule(Module):
     def save(self, save_path):
         print(f'Saving model to {save_path} ......')
         if self.model_parallel_src_rank == 0:
-            if self.model_parallel_rank == 0:
-                os.makedirs(save_path, exist_ok=True)
-            set_barrier()
+            os.makedirs(save_path, exist_ok=True)
             torch.save(self.state_dict(), os.path.join(save_path, 'consolidated.%02d.pth' % self.model_parallel_rank))
         set_barrier()
         print(f'Saving done !')
@@ -280,7 +267,7 @@ class AttentionForCausalLM(nn.Module):
 
     @staticmethod
     def apply_attention(xq, xk, xv, mask):
-        bsz, seqlen, n_heads, head_dim = xq.shape
+        bsz, seq_len, n_heads, head_dim = xq.shape
         xq = xq.transpose(1, 2)
         xk = xk.transpose(1, 2)
         xv = xv.transpose(1, 2)
@@ -292,7 +279,7 @@ class AttentionForCausalLM(nn.Module):
         else:
             scores = F.softmax(scores, dim=-1)
         output = torch.matmul(scores, xv)  # (bs, n_local_heads, slen, head_dim)
-        output = output.transpose(1, 2).contiguous().view(bsz, seqlen, -1)
+        output = output.transpose(1, 2).contiguous().view(bsz, seq_len, -1)
         return output
 
     @staticmethod

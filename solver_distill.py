@@ -7,13 +7,13 @@ from torch.utils.data import DataLoader
 
 from src.dataset import MultiOutputsDataset, JsonDataset
 from src.entities import Timer
-from src.evaluator import SolverEvaluator
+from src.evaluator import PolicyEvaluator
 from src.modeling import get_parallel_model
 from src.ppo.buffer import LogitsRolloutBuffer
 from src.ppo.collector import LogitsBufferCollector
 from src.trainer import ParallelSolverDistillTrainer
 from src.utils import json_dump
-from src.parallel.utils import setup_model_parallel, set_barrier
+from src.parallel.initialize import setup_model_parallel, set_barrier
 
 
 def main(
@@ -100,7 +100,7 @@ def main(
         timer = Timer(len(rollout_buffer) // max_batch_size, episode=100)
         for data in rollout_buffer.get(max_batch_size):
             timer.step()
-            outputs = trainer.distill(
+            outputs = trainer.forward(
                 instructions=data.instructions,
                 outputs=data.outputs,
                 target_logits=data.logits,
@@ -117,7 +117,7 @@ def main(
         trainer.save(os.path.join(student_save_dir, f"epoch-{epoch + 1}"))
 
         if task is not None:
-            evaluator = SolverEvaluator(student, student_tokenizer, eval_batch_size, student_max_seq_len)
+            evaluator = PolicyEvaluator(student, student_tokenizer, eval_batch_size, student_max_seq_len)
             eval_outputs = evaluator.forward(task, JsonDataset(label_file))
             print("Evaluate Accuracy: ", eval_outputs.acc, "Missing: ", eval_outputs.missing)
             json_dump(eval_outputs.datalist, os.path.join(

@@ -9,8 +9,7 @@ from src.rewards.generator import VerifierGeneratorForDPO
 from src.dataset import PairwiseDataset, ChatTemplateDataset
 from src.entities import Timer
 from src.modeling import get_parallel_model
-from src.parallel import setup_model_parallel, set_barrier
-from src.parallel.utils import get_local_rank
+from src.parallel.initialize import setup_model_parallel, set_barrier, get_local_rank
 from src.ppo.buffer import LogitsRolloutBuffer
 from src.ppo.collector import LogitsBufferCollector
 from src.ppo.generator import LogitsGeneratorForCausalLM
@@ -38,7 +37,7 @@ def main(
     buffer_dir = log_dir if buffer_dir is None else buffer_dir
     chosen_buffer_file = os.path.join(buffer_dir, "chosen", "buffer.jsonl")
     rejected_buffer_file = os.path.join(buffer_dir, "rejected", "buffer.jsonl")
-    setup_model_parallel(seed=seed)
+    parallel_infos = setup_model_parallel(seed=seed)
     dataset = PairwiseDataset(f=label_file)
 
     if not os.path.exists(chosen_buffer_file) or not os.path.exists(rejected_buffer_file):
@@ -130,7 +129,13 @@ def main(
                 chosen_score=chosen_outputs.scores[i],
                 rejected_score=rejected_outputs.scores[i]
             ))
-    json_dump(datalist, os.path.join(log_dir, "results.json"), indent=4)
+    if parallel_infos.local_rank == 0:
+        json_dump(datalist, os.path.join(log_dir, "results.json"), indent=4)
+
+    del generator
+    torch.cuda.empty_cache()
+    gc.collect()
+    set_barrier()
 
     datalist = []
     timer = Timer(len(reference_chosen_rollout_buffer) // max_batch_size, episode=10)
@@ -140,9 +145,9 @@ def main(
             reference_rejected_rollout_buffer.get(max_batch_size)
     ):
         timer.step()
-        chosen_examples = generator.prepare_for_generation(chosen_data.instructions, chosen_data.outputs)
+        chosen_examples = generator.prepare_for_forward(chosen_data.instructions, chosen_data.outputs)
         chosen_outputs = generator.forward(chosen_data.instructions, chosen_data.outputs)
-        rejected_examples = generator.prepare_for_generation(rejected_data.instructions, rejected_data.outputs)
+        rejected_examples = generator.prepare_for_forward(rejected_data.instructions, rejected_data.outputs)
         rejected_outputs = generator.forward(rejected_data.instructions, rejected_data.outputs)
         for i in range(len(chosen_data.instructions)):
             chosen_token_scores = (torch.masked_select(
@@ -162,7 +167,8 @@ def main(
                 chosen_token_scores=chosen_token_scores.tolist(),
                 rejected_token_scores=rejected_token_scores.tolist()
             ))
-    json_dump(datalist, os.path.join(log_dir, "token-results.jsonl"))
+    if parallel_infos.local_rank == 0:
+        json_dump(datalist, os.path.join(log_dir, "token-results.jsonl"))
 
 
 if __name__ == '__main__':

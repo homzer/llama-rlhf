@@ -3,7 +3,7 @@ import os
 from dataclasses import dataclass
 
 import transformers
-from fairscale.nn.model_parallel.initialize import (
+from src.parallel.initialize import (
     get_model_parallel_world_size,
     get_model_parallel_rank,
     get_model_parallel_src_rank,
@@ -12,7 +12,7 @@ from fairscale.nn.model_parallel.initialize import (
 )
 
 from src.utils import get_torch_dtype
-from src.parallel.utils import get_data_parallel_src_rank
+from src.parallel.initialize import get_data_parallel_src_rank
 
 HF_CONFIG_MAP = {
     "hidden_size": "dim",
@@ -134,6 +134,11 @@ class LlamaArgs(BaseParallelArgs):
 
 
 @dataclass
+class Llama3Args(LlamaArgs):
+    rope_theta: float = None
+
+
+@dataclass
 class LoraLlamaArgs(LlamaArgs):
     r: int = None  # Rank of lora
     lora_dtype: str = "float32"
@@ -248,6 +253,28 @@ class QwenArgs(BaseParallelArgs):
 class LoraQwenArgs(QwenArgs):
     r: int = None  # Rank of lora
     lora_dtype: str = "float32"
+
+
+@dataclass
+class Gemma2Args(BaseParallelArgs):
+    attn_logit_softcapping: float = None
+    final_logit_softcapping: float = None
+    head_dim: int = None
+    hidden_size: int = None
+    intermediate_size: int = None
+    max_position_embeddings: int = None
+    num_attention_heads: int = None
+    num_hidden_layers: int = None
+    num_key_value_heads: int = None
+    query_pre_attn_scalar: int = None
+    rms_norm_eps: float = None
+    rope_theta: float = None
+    vocab_size: int = None
+
+    def from_json(self, filename: str):
+        if not filename.endswith(".json"):
+            filename = os.path.join(filename, "config.json")
+        return super().from_json(filename)
 
 
 @dataclass

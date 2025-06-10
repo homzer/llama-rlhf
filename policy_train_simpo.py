@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader
 from src.dataset import PairwiseDataset, ChatTemplateDataset
 from src.entities import Timer
 from src.modeling import get_parallel_model
-from src.parallel.utils import setup_model_parallel
+from src.parallel.initialize import setup_model_parallel
 from src.trainer import ParallelSolverSimPOTrainer
 from src.utils import json_load
 
@@ -79,7 +79,7 @@ def run(
             timer = Timer(len(dataloader), episode=100)
             for data in dataloader:
                 timer.step()
-                trainer_outputs = trainer.simpo_forward(
+                trainer_outputs = trainer.forward(
                     instructions=data["instruction"],
                     chosen=data["chosen"],
                     rejected=data["rejected"]

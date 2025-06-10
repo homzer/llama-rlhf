@@ -8,12 +8,13 @@ from src.rewards.trainer import (
     ParallelVerifierTrainerForLastToken,
     ParallelVerifierTrainerForMeanScore,
     ParallelVerifierTrainerForFocalMeanScore,
-    ParallelVerifierTrainerForFocalLoss,
+    ParallelVerifierTrainerForFocalLoss, ParallelVerifierTrainerForPGTG,
 )
 from src.dataset import PairwiseDataset, ChatTemplateDataset
 from src.entities import Timer
 from src.modeling import get_parallel_verifier
-from src.parallel import setup_model_parallel
+from src.parallel.initialize import setup_model_parallel
+from src.utils import print_current_func_args
 
 
 def main(
@@ -35,10 +36,12 @@ def main(
         seed: int = None,
         beta: float = 1.0,
         gamma: float = 0.0,
+        log_dir: str = None
 ):
     tokenizer_file = ckpt_dir if tokenizer_file is None else tokenizer_file
     config_file = ckpt_dir if config_file is None else config_file
-    setup_model_parallel(seed=seed)
+    setup_model_parallel(seed=seed, log_dir=log_dir)
+    print_current_func_args()
     model, tokenizer = get_parallel_verifier(
         model_type=model_type,
         config_file=config_file,
@@ -66,7 +69,7 @@ def main(
             tokenizer=tokenizer,
             optimizer=optimizer,
             beta=beta,
-            margin=gamma
+            gamma=gamma
         )
     elif "focal-loss" in strategy:
         trainer = ParallelVerifierTrainerForFocalLoss(
@@ -76,6 +79,12 @@ def main(
         )
     elif "focal-mean-score" in strategy:
         trainer = ParallelVerifierTrainerForFocalMeanScore(
+            model=model,
+            tokenizer=tokenizer,
+            optimizer=optimizer
+        )
+    elif "pgtg" in strategy:
+        trainer = ParallelVerifierTrainerForPGTG(
             model=model,
             tokenizer=tokenizer,
             optimizer=optimizer
@@ -94,8 +103,10 @@ def main(
             )
             if trainer.step % 100 == 0:
                 print(f'step {trainer.step} of {len(dataloader)} -------------------------------')
-                print("LOSS: ", outputs.loss, "Acc: ", trainer.verifier_accuracy())
+                print(f"LOSS: {outputs.loss} Acc: {trainer.verifier_accuracy()}")
             timer.step()
+            if trainer.step % 10000 == 0:
+                trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))
         trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))
 
 

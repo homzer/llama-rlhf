@@ -1,4 +1,4 @@
-from fairscale.nn.model_parallel.layers import VocabParallelEmbedding
+from src.parallel.model_parallel.layers import VocabParallelEmbedding
 
 from src.checkpoint import CheckpointForLlama3
 from src.models import Llama, LoraLlama

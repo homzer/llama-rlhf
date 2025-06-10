@@ -3,7 +3,7 @@ from typing import Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from fairscale.nn.model_parallel.layers import (
+from src.parallel.model_parallel.layers import (
     RowParallelLinear,
     ColumnParallelLinear,
     ParallelEmbedding
@@ -13,7 +13,7 @@ from src.checkpoint import CheckpointForInternLM
 from src.models.modeling import AttentionForCausalLM, ParallelModelForCausalLM, CausalLMOutputs
 from src.models.modeling_acts import Clamp, RMSNorm, LogitsNormalize
 from src.models.modeling_args import InternLMArgs
-from src.parallel.utils import set_model_parallel_barrier
+from src.parallel.initialize import set_model_parallel_barrier
 from src.utils import apply_rotary_emb, precompute_freqs_cis
 
 

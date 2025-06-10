@@ -6,7 +6,7 @@ from src.dataset import PairwiseDataset, ChatTemplateDataset
 from src.evaluator import VerifierEvaluator
 from src.modeling import get_parallel_verifier
 from src.utils import json_dump
-from src.parallel.utils import setup_model_parallel
+from src.parallel.initialize import setup_model_parallel
 
 
 def main(

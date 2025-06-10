@@ -3,10 +3,18 @@ from typing import List, Union
 
 import torch
 
-from src.rewards.strategy import PairwiseVerifierStrategyForLastToken, \
-    PairwiseVerifierStrategyForMeanScore, PairwiseVerifierStrategyForFocalMeanScore, \
-    PairwiseVerifierStrategyForFocalLoss, PairwiseVerifierStrategyForDPO, PairwiseVerifierStrategyForSimPO, \
-    PointwiseVerifierStrategyForFocalLoss, PointwiseVerifierStrategyForLastToken
+from src.rewards.strategy import (
+    PairwiseVerifierStrategyForLastToken,
+    PairwiseVerifierStrategyForMeanScore,
+    PairwiseVerifierStrategyForFocalMeanScore,
+    PairwiseVerifierStrategyForFocalLoss,
+    PairwiseVerifierStrategyForDPO,
+    PairwiseVerifierStrategyForSimPO,
+    PointwiseVerifierStrategyForFocalLoss,
+    PointwiseVerifierStrategyForLastToken,
+    PointwiseVerifierStrategyForImplicitPRM,
+    PointwiseVerifierStrategyForStepPRM
+)
 from src.generator import GeneratorForVerifier
 from src.models.modeling import ParallelVerifier, Verifier, ModelForCausalLM, ParallelModelForCausalLM
 from src.ppo.generator import LogitsGeneratorForCausalLM
@@ -41,6 +49,54 @@ class PointwiseVerifierGeneratorForFocalLoss(PointwiseVerifierGeneratorForLastTo
     ):
         super().__init__(model=model, tokenizer=tokenizer, max_seq_len=max_seq_len)
         self.strategy = PointwiseVerifierStrategyForFocalLoss()
+
+
+class PointwiseVerifierGeneratorForImplicitPRM:
+    def __init__(
+            self,
+            model: Union[ModelForCausalLM, ParallelModelForCausalLM],
+            tokenizer: Tokenizer,
+            max_seq_len: int
+    ):
+        super().__init__()
+        self.generator = LogitsGeneratorForCausalLM(model, tokenizer, max_seq_len)
+        self.strategy = PointwiseVerifierStrategyForImplicitPRM()
+
+    def forward(
+            self,
+            instructions: List[str],
+            outputs: List[str],
+            reference_log_probs: torch.Tensor
+    ):
+        examples = self.generator.prepare_for_forward(instructions, outputs)
+        logits = self.generator.model_forward(examples.tokens).logits
+        scores = self.strategy.generator_forward(
+            logits=logits,
+            tokens=examples.labels,
+            masks=examples.masks,
+            ref_log_probs=reference_log_probs
+        )
+        Outputs = collections.namedtuple("Outputs", ["scores"])
+        return Outputs(scores=scores)
+
+
+class PointwiseVerifierGeneratorForStepPRM(GeneratorForVerifier):
+    def __init__(
+            self,
+            model: Union[Verifier, ParallelVerifier],
+            tokenizer: Tokenizer,
+            max_seq_len: int,
+    ):
+        super().__init__(model=model, tokenizer=tokenizer, max_seq_len=max_seq_len)
+        self.strategy = PointwiseVerifierStrategyForStepPRM()
+
+    def forward(self, instructions, outputs, indices):
+        self.model.eval()
+        examples = self.prepare_for_generation(instructions, outputs)
+        with torch.no_grad():
+            scores = self.model.forward(examples.tokens).scores
+        Outputs = collections.namedtuple("Outputs", ["scores"])
+        return Outputs(scores=self.strategy.generator_forward(scores, examples.masks, indices))
 
 
 class VerifierGeneratorForLastToken(GeneratorForVerifier):
@@ -110,7 +166,7 @@ class VerifierGeneratorForSimPO:
             instructions: List[str],
             outputs: List[str],
     ):
-        examples = self.generator.prepare_for_generation(instructions, outputs)
+        examples = self.generator.prepare_for_forward(instructions, outputs)
         logits = self.generator.model_forward(examples.tokens).logits
         scores = self.strategy.generator_forward(
             logits=logits,
@@ -138,7 +194,7 @@ class VerifierGeneratorForDPO:
             outputs: List[str],
             reference_log_probs: torch.Tensor
     ):
-        examples = self.generator.prepare_for_generation(instructions, outputs)
+        examples = self.generator.prepare_for_forward(instructions, outputs)
         logits = self.generator.model_forward(examples.tokens).logits
         scores = self.strategy.generator_forward(
             logits=logits,

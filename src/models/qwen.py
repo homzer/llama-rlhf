@@ -4,19 +4,28 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
-from fairscale.nn.model_parallel.layers import (
+
+from src.checkpoint import CheckpointForQwen
+from src.models.modeling import (
+    ParallelModelForCausalLM,
+    CausalLMOutputs,
+    AttentionForCausalLM,
+    ParallelVerifier,
+    VerifierOutputs
+)
+from src.models.modeling_acts import Clamp, RMSNorm, RotaryEmbedding, LogitsNormalize
+from src.models.modeling_args import QwenArgs, LoraQwenArgs
+from src.parallel.initialize import set_model_parallel_barrier
+from src.parallel.model_parallel.layers import (
     RowParallelLinear,
     ColumnParallelLinear,
     ParallelEmbedding
 )
-
-from src.checkpoint import CheckpointForQwen
-from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs, AttentionForCausalLM, ParallelVerifier, \
-    VerifierOutputs
-from src.models.modeling_acts import Clamp, RMSNorm, RotaryEmbedding, LogitsNormalize
-from src.models.modeling_args import QwenArgs, LoraQwenArgs
-from src.utils import compute_position_ids, apply_rotary_pos_emb, apply_lora
-from src.parallel.utils import set_model_parallel_barrier
+from src.parallel.sequence_parallel.mappings import (
+    gather_from_sequence_parallel_region,
+    scatter_to_sequence_parallel_region
+)
+from src.utils import compute_position_ids, apply_lora, apply_rotary_pos_emb_
 
 
 class QwenAttention(AttentionForCausalLM):
@@ -37,6 +46,10 @@ class QwenAttention(AttentionForCausalLM):
         self.k_proj = None
         self.v_proj = None
         self.o_proj = None
+        self.q_proj_fn = lambda x: self.q_proj(x)
+        self.k_proj_fn = lambda x: self.k_proj(x)
+        self.v_proj_fn = lambda x: self.v_proj(x)
+        self.o_proj_fn = lambda x: self.o_proj(x)
 
     def init_weights(self):
         self.q_proj = ColumnParallelLinear(
@@ -81,26 +94,38 @@ class QwenAttention(AttentionForCausalLM):
             mask: Optional[torch.Tensor],
             use_cache=False
     ):
-        bsz, seq_len, _ = x.size()
-        xq, xk, xv = self.q_proj(x), self.k_proj(x), self.v_proj(x)
+        bsz, local_seq_len, _ = x.size()
+        xq, xk, xv = self.q_proj_fn(x), self.k_proj_fn(x), self.v_proj_fn(x)
 
-        xq = xq.view(bsz, seq_len, self.num_local_heads, self.head_dim)
-        xk = xk.view(bsz, seq_len, self.num_local_key_value_heads, self.head_dim)
-        xv = xv.view(bsz, seq_len, self.num_local_key_value_heads, self.head_dim)
+        xq = xq.view(bsz, local_seq_len, self.num_local_heads, self.head_dim)
+        xk = xk.view(bsz, local_seq_len, self.num_local_key_value_heads, self.head_dim)
+        xv = xv.view(bsz, local_seq_len, self.num_local_key_value_heads, self.head_dim)
+
+        # Sequence Parallel Op.
+        if not use_cache:  # Bypass the function if performing autoregressive generation.
+            xk = gather_from_sequence_parallel_region(xk)
+            xv = gather_from_sequence_parallel_region(xv)
+        seq_len = xv.shape[1]
+
+        position_ids = compute_position_ids(start_pos, seq_len).to(x.device)
+        # Sequence Parallel Op.
+        local_position_ids = position_ids
+        if not use_cache:  # Bypass the function if performing autoregressive generation.
+            local_position_ids = scatter_to_sequence_parallel_region(position_ids)
 
         cos, sin = self.rotary_emb.forward(xv.transpose(1, 2), seq_len=seq_len + start_pos)
-        position_ids = compute_position_ids(start_pos, seq_len).to(x.device)
-        xq, xk = apply_rotary_pos_emb(xq.transpose(1, 2), xk.transpose(1, 2), cos, sin, position_ids)
+        xq = apply_rotary_pos_emb_(xq.transpose(1, 2), cos, sin, local_position_ids)
+        xk = apply_rotary_pos_emb_(xk.transpose(1, 2), cos, sin, position_ids)
+
         xq = xq.transpose(1, 2)
         xk = xk.transpose(1, 2)
-
         if use_cache:
             xk, xv = self.apply_cache(xk, xv, start_pos)
 
         xk, xv = self.repeat_kv(xk, xv, self.n_rep)
 
         output = self.apply_attention(xq, xk, xv, mask)
-        return self.o_proj(output)
+        return self.o_proj_fn(output)
 
 
 class QwenFeedForward(nn.Module):
@@ -111,6 +136,9 @@ class QwenFeedForward(nn.Module):
         self.gate_proj = None
         self.down_proj = None
         self.up_proj = None
+        self.gate_proj_fn = lambda x: self.gate_proj(x)
+        self.down_proj_fn = lambda x: self.down_proj(x)
+        self.up_proj_fn = lambda x: self.up_proj(x)
 
     def init_weights(self):
         self.gate_proj = ColumnParallelLinear(
@@ -133,7 +161,7 @@ class QwenFeedForward(nn.Module):
         ).type(self.args.dtype)
 
     def forward(self, x):
-        return self.down_proj(F.silu(self.gate_proj(x)) * self.up_proj(x))
+        return self.down_proj_fn(F.silu(self.gate_proj_fn(x)) * self.up_proj_fn(x))
 
 
 class QwenTransformerBlock(nn.Module):
@@ -189,12 +217,20 @@ class QwenHead(nn.Module):
     def forward(self, tokens: torch.Tensor, start_pos=0, use_cache=False):
         tokens = tokens.to(next(self.parameters()).device)
         _bsz, seq_len = tokens.shape
+
+        # Sequence Parallel Op.
+        if not use_cache:  # Bypass the function if performing autoregressive generation.
+            tokens = scatter_to_sequence_parallel_region(tokens)
         h = self.embed_tokens(tokens)
 
         mask = None
         if seq_len > 1:
             mask = torch.full((1, 1, seq_len, seq_len), float("-inf"), device=tokens.device)
             mask = torch.triu(mask, diagonal=start_pos + 1).type_as(h)
+
+            # Sequence Parallel Op.
+            if not use_cache:  # Bypass the function if performing autoregressive generation.
+                mask = scatter_to_sequence_parallel_region(mask.transpose(1, 2)).transpose(1, 2)
 
         for layer in self.layers:
             h = layer(h, start_pos, mask, use_cache)
@@ -207,6 +243,7 @@ class Qwen(ParallelModelForCausalLM):
         self.args = args
         self.model = QwenHead(args)
         self.lm_head = None
+        self.lm_head_fn = lambda x: self.lm_head(x)
         self.logits_norm = LogitsNormalize(enable=self.args.use_logits_normalize)
         self.checkpoint = CheckpointForQwen()
 
@@ -223,7 +260,12 @@ class Qwen(ParallelModelForCausalLM):
             use_cache: bool = False
     ) -> CausalLMOutputs:
         h = self.model.forward(tokens, start_pos, use_cache)
-        output = self.lm_head(h)
+        output = self.lm_head_fn(h)
+
+        # Sequence Parallel Op.
+        if not use_cache:  # Bypass the function if performing autoregressive generation.
+            output = gather_from_sequence_parallel_region(output)
+
         return CausalLMOutputs(logits=self.logits_norm.forward(output), hidden_states=h)
 
     # Copied from llama_hf.LlamaHf.load
@@ -255,39 +297,11 @@ class LoraQwenAttention(QwenAttention):
         self.lora_b_v_proj = None
         self.lora_a_o_proj = None
         self.lora_b_o_proj = None
-    
-    def forward(
-            self,
-            x: torch.Tensor,
-            start_pos: int,
-            mask: Optional[torch.Tensor],
-            use_cache=False
-    ):
-        bsz, seq_len, _ = x.size()
-        xq = self.q_proj(x) + apply_lora(x, self.lora_a_q_proj, self.lora_b_q_proj)
-        xk = self.k_proj(x) + apply_lora(x, self.lora_a_k_proj, self.lora_b_k_proj)
-        xv = self.v_proj(x) + apply_lora(x, self.lora_a_v_proj, self.lora_b_v_proj)
+        self.q_proj_fn = lambda x: self.q_proj(x) + apply_lora(x, self.lora_a_q_proj, self.lora_b_q_proj)
+        self.k_proj_fn = lambda x: self.k_proj(x) + apply_lora(x, self.lora_a_k_proj, self.lora_b_k_proj)
+        self.v_proj_fn = lambda x: self.v_proj(x) + apply_lora(x, self.lora_a_v_proj, self.lora_b_v_proj)
+        self.o_proj_fn = lambda x: self.o_proj(x) + apply_lora(x, self.lora_a_o_proj, self.lora_b_o_proj)
 
-        xq = xq.view(bsz, seq_len, self.num_local_heads, self.head_dim)
-        xk = xk.view(bsz, seq_len, self.num_local_key_value_heads, self.head_dim)
-        xv = xv.view(bsz, seq_len, self.num_local_key_value_heads, self.head_dim)
-
-        cos, sin = self.rotary_emb.forward(xv.transpose(1, 2), seq_len=seq_len + start_pos)
-        position_ids = compute_position_ids(start_pos, seq_len).to(x.device)
-        xq, xk = apply_rotary_pos_emb(xq.transpose(1, 2), xk.transpose(1, 2), cos, sin, position_ids)
-        xq = xq.transpose(1, 2)
-        xk = xk.transpose(1, 2)
-
-        if use_cache:
-            xk, xv = self.apply_cache(xk, xv, start_pos)
-
-        # xk = self.repeat_kv(xk)
-        # xv = self.repeat_kv(xv)
-        xk, xv = self.repeat_kv(xk, xv, self.n_rep)
-
-        output = self.apply_attention(xq, xk, xv, mask)
-        return self.o_proj(output) + apply_lora(output, self.lora_a_o_proj, self.lora_b_o_proj)
-    
     def init_weights(self):
         super().init_weights()
         
@@ -353,12 +367,9 @@ class LoraQwenFeedForward(QwenFeedForward):
         self.lora_b_down_proj = None
         self.lora_a_up_proj = None
         self.lora_b_up_proj = None
-
-    def forward(self, x):
-        x1 = self.gate_proj(x) + apply_lora(x, self.lora_a_gate_proj, self.lora_b_gate_proj)
-        x3 = self.up_proj(x) + apply_lora(x, self.lora_a_up_proj, self.lora_b_up_proj)
-        out = F.silu(x1) * x3
-        return self.down_proj(out) + apply_lora(out, self.lora_a_down_proj, self.lora_b_down_proj)
+        self.gate_proj_fn = lambda x: self.gate_proj(x) + apply_lora(x, self.lora_a_gate_proj, self.lora_b_gate_proj)
+        self.down_proj_fn = lambda x: self.down_proj(x) + apply_lora(x, self.lora_a_down_proj, self.lora_b_down_proj)
+        self.up_proj_fn = lambda x: self.up_proj(x) + apply_lora(x, self.lora_a_up_proj, self.lora_b_up_proj)
 
     def init_weights(self):
         super().init_weights()
@@ -424,16 +435,7 @@ class LoraQwen(Qwen):
         self.model = LoraQwenHead(args)
         self.lora_a_lm_head = None
         self.lora_b_lm_head = None
-
-    def forward(
-            self,
-            tokens: torch.Tensor,
-            start_pos: int = 0,
-            use_cache: bool = False
-    ) -> CausalLMOutputs:
-        h = self.model.forward(tokens, start_pos, use_cache)
-        output = self.lm_head(h) + apply_lora(h, self.lora_a_lm_head, self.lora_b_lm_head)
-        return CausalLMOutputs(logits=self.logits_norm.forward(output), hidden_states=h)
+        self.lm_head_fn = lambda x: self.lm_head(x) + apply_lora(x, self.lora_a_lm_head, self.lora_b_lm_head)
 
     def init_weights(self):
         super().init_weights()
@@ -471,6 +473,7 @@ class QwenVerifier(ParallelVerifier):
         self.args = args
         self.model = QwenHead(args)
         self.v_head = None
+        self.v_head_fn = lambda x: self.v_head(x)
         self.checkpoint = CheckpointForQwen()
 
     def init_weights(self):
@@ -481,7 +484,11 @@ class QwenVerifier(ParallelVerifier):
 
     def forward(self, tokens: torch.Tensor) -> VerifierOutputs:
         h = self.model.forward(tokens)
-        scores = self.v_head(h.type_as(self.v_head.weight)).squeeze(-1)  # [b, s]
+        scores = self.v_head_fn(h).squeeze(-1)  # [b, s]
+
+        # Sequence parallel op.
+        scores = gather_from_sequence_parallel_region(scores)
+
         return VerifierOutputs(scores=scores)
 
     # Copied from llama_hf.LlamaHf.load

@@ -1,14 +1,13 @@
 import collections
-import random
 from typing import List, Union
 
 import numpy as np
 import torch
 
-from src.generator import GeneratorForVerifier, GeneratorForCausalLM, sampling_strategy
+from src.generator import GeneratorForVerifier, GeneratorForCausalLM
 from src.models.modeling import ModelForCausalLM, ParallelModelForCausalLM, ParallelVerifier, Verifier
 from src.tokenizers import Tokenizer
-from src.utils import truncate
+from src.trainer import prepare_for_forward
 
 ActionGeneratorOutputs = collections.namedtuple("ActionGeneratorOutputs", [
     'responses', 'obs', 'actions', 'action_logits', 'action_masks', 'action_logprobs'
@@ -41,7 +40,7 @@ class ActorGeneratorForCausalLM(GeneratorForCausalLM):
             top_p=top_p
         )
 
-    def forward(self, instructions: Union[List[str], List[List[int]]]) -> ActionGeneratorOutputs:
+    def forward(self, instructions: List[str] | List[List[int]]) -> ActionGeneratorOutputs:
         self.model.eval()
         prep_outputs = self.prepare_for_generation(instructions)
         forward_outputs = self.model_forward(
@@ -58,6 +57,68 @@ class ActorGeneratorForCausalLM(GeneratorForCausalLM):
             actions=output_tokens,
             action_logits=forward_outputs.tokens_logits,
             action_masks=output_masks,
+            action_logprobs=forward_outputs.tokens_logprobs
+        )
+
+
+class ActorForwardGeneratorForCausalLM:
+    def __init__(
+            self,
+            model: Union[ModelForCausalLM, ParallelModelForCausalLM],
+            tokenizer: Tokenizer,
+            max_seq_len: int,
+    ):
+        self.model = model
+        self.vocab_size = tokenizer.vocab_size
+        self.max_seq_len = max_seq_len
+        self.tokenizer = tokenizer
+
+    def prepare_for_forward(
+            self,
+            instructions: List[str] | List[List[int]],
+            responses: List[str] | List[List[int]],
+    ):
+        outputs = prepare_for_forward(
+            instructions=instructions,
+            responses=responses,
+            tokenizer=self.tokenizer,
+            max_seq_len=self.max_seq_len
+        )
+        outputs.labels[outputs.labels == -100] = 0
+        Output = collections.namedtuple('Outputs', ['tokens', 'labels', 'masks'])
+        return Output(tokens=outputs.tokens, labels=outputs.labels, masks=outputs.masks)
+
+    def model_forward(self, tokens, labels):
+        tokens = tokens.to(self.model.device())
+        labels = labels.to(self.model.device())
+
+        with torch.no_grad():
+            outputs = self.model.forward(tokens)
+        tokens_logits = torch.gather(
+            outputs.logits, dim=-1, index=labels.unsqueeze(-1)
+        ).squeeze(-1)
+        tokens_logprobs = torch.gather(
+            torch.log_softmax(outputs.logits, dim=-1), dim=-1, index=labels.unsqueeze(-1)
+        ).squeeze(-1)
+        Outputs = collections.namedtuple("Outputs", ['tokens', 'tokens_logits', 'tokens_logprobs'])
+        return Outputs(tokens=tokens, tokens_logits=tokens_logits, tokens_logprobs=tokens_logprobs)
+
+    def forward(
+            self,
+            instructions: List[str] | List[List[int]],
+            responses: List[str] | List[List[int]]
+    ) -> ActionGeneratorOutputs:
+        self.model.eval()
+
+        prep_outputs = self.prepare_for_forward(instructions, responses)
+        forward_outputs = self.model_forward(prep_outputs.tokens, prep_outputs.labels)
+
+        return ActionGeneratorOutputs(
+            responses=responses,
+            obs=prep_outputs.tokens,
+            actions=prep_outputs.labels,
+            action_logits=forward_outputs.tokens_logits,
+            action_masks=prep_outputs.masks,
             action_logprobs=forward_outputs.tokens_logprobs
         )
 
@@ -82,25 +143,24 @@ class ActorGroupGeneratorForCausalLM(ActorGeneratorForCausalLM):
         )
         self.num_samples_per_prompt = num_samples_per_prompt
         self.diverse_prob = diverse_prob
-        self.recorded_tokens = None
+        # self.recorded_tokens = None
 
-    # TODO: Copied from src.generator.DiversityGeneratorForCausalLM().sampling()
-    def sampling(self, logits: torch.Tensor, **kwargs) -> torch.Tensor:
-        # check for recorded_tokens
-        tokens, cur_pos = kwargs.get("tokens"), kwargs.get("cur_pos")
-        logits = logits[:, -1, :]  # [b, v]
-        if self.diverse_prob is not None:
-            logits_masks = torch.full_like(logits, fill_value=False, dtype=torch.bool)  # [b, v]
-            for i in range(tokens.shape[0]):
-                for recorded_token in self.recorded_tokens[i]:
-                    if (
-                            random.random() < self.diverse_prob and
-                            (recorded_token[: cur_pos] == tokens[i][: cur_pos]).all()
-                    ):
-                        logits_masks[i][recorded_token[cur_pos]] = True
-            logits = logits - logits_masks * 10000.
-        next_tokens = sampling_strategy(logits, self.temperature, self.top_p)
-        return next_tokens
+    # def sampling(self, logits: torch.Tensor, **kwargs) -> torch.Tensor:
+    #     # check for recorded_tokens
+    #     tokens, cur_pos = kwargs.get("tokens"), kwargs.get("cur_pos")
+    #     logits = logits[:, -1, :]  # [b, v]
+    #     if self.diverse_prob is not None:
+    #         logits_masks = torch.full_like(logits, fill_value=False, dtype=torch.bool)  # [b, v]
+    #         for i in range(tokens.shape[0]):
+    #             for recorded_token in self.recorded_tokens[i]:
+    #                 if (
+    #                         random.random() < self.diverse_prob and
+    #                         (recorded_token[: cur_pos] == tokens[i][: cur_pos]).all()
+    #                 ):
+    #                     logits_masks[i][recorded_token[cur_pos]] = True
+    #         logits = logits - logits_masks * 10000.
+    #     next_tokens = sampling_strategy(logits, self.temperature, self.top_p)
+    #     return next_tokens
 
     @staticmethod
     def stack_and_flatten(x: Union[List[List[torch.Tensor]], List[List[str]]]):
@@ -121,13 +181,13 @@ class ActorGroupGeneratorForCausalLM(ActorGeneratorForCausalLM):
         action_masks = [[] for _ in range(len(instructions))]
         action_logprobs = [[] for _ in range(len(instructions))]
 
-        self.recorded_tokens = [[] for _ in range(len(instructions))]
+        # self.recorded_tokens = [[] for _ in range(len(instructions))]
         for _ in range(self.num_samples_per_prompt):
             forward_outputs = self.model_forward(
                 prep_outputs.tokens, prep_outputs.input_masks, prep_outputs.start_pos
             )
-            for i, recorded_token in enumerate(self.recorded_tokens):
-                recorded_token.append(forward_outputs.tokens[i])
+            # for i, recorded_token in enumerate(self.recorded_tokens):
+            #     recorded_token.append(forward_outputs.tokens[i])
             output_masks = self.get_output_masks(forward_outputs.tokens, prep_outputs.input_masks)
             output_tokens = torch.zeros_like(forward_outputs.tokens)
             output_tokens[:, :-1] = forward_outputs.tokens[:, 1:]
@@ -139,7 +199,8 @@ class ActorGroupGeneratorForCausalLM(ActorGeneratorForCausalLM):
                 action_logprobs[i].append(forward_outputs.tokens_logprobs[i])
             for i, response in enumerate(self.decode_response(forward_outputs.tokens, output_masks)):
                 responses[i].append(response)
-        self.recorded_tokens = None
+            print(f"{instructions[-1]}\n{responses[-1][-1]}")
+        # self.recorded_tokens = None
 
         return ActionGeneratorOutputs(
             responses=self.stack_and_flatten(responses),
@@ -181,37 +242,17 @@ class LogitsGeneratorForCausalLM:
         self.max_seq_len = max_seq_len
         self.tokenizer = tokenizer
 
-    def prepare_for_generation(
+    def prepare_for_forward(
             self,
             instructions: Union[List[str], List[List[int]]],
             responses: Union[List[str], List[List[int]]]
     ):
-        """ TODO: duplicated code with `ParallelSolverTrainer().prepare_for_generation()` """
-        bsz = len(instructions)
-        tokens = torch.full((bsz, self.max_seq_len), self.tokenizer.pad_id).long()
-        labels = torch.full((bsz, self.max_seq_len), -100).long()
-        for i, (instruction, response) in enumerate(zip(instructions, responses)):
-            if isinstance(instruction, str):
-                instruction_ids = self.tokenizer.encode(instruction, bos=True, eos=False)
-            elif isinstance(instruction, list) and isinstance(instruction[0], int):
-                instruction_ids = instruction
-            else:
-                raise TypeError(type(instruction))
-
-            if isinstance(response, str):
-                output_ids = self.tokenizer.encode(response, bos=False, eos=True)
-            elif isinstance(response, list) and isinstance(response[0], int):
-                output_ids = response
-            else:
-                raise TypeError(type(response))
-
-            instruction_ids, output_ids = truncate(instruction_ids, output_ids, self.max_seq_len)
-            instr_len, output_len = len(instruction_ids), len(output_ids)
-            tokens[i, :instr_len + output_len] = torch.tensor(instruction_ids + output_ids).long()
-            labels[i, instr_len - 1: instr_len - 1 + output_len] = torch.tensor(output_ids).long()
-        masks = (labels != -100)
-        Output = collections.namedtuple('Outputs', ['tokens', 'labels', 'masks'])
-        return Output(tokens=tokens, labels=labels, masks=masks)
+        return prepare_for_forward(
+            instructions=instructions,
+            responses=responses,
+            tokenizer=self.tokenizer,
+            max_seq_len=self.max_seq_len
+        )
 
     def model_forward(self, tokens):
         with torch.no_grad():
@@ -226,7 +267,7 @@ class LogitsGeneratorForCausalLM:
             responses: Union[List[str], List[List[int]]]
     ) -> LogitsGeneratorOutputs:
         self.model.eval()
-        prep_outputs = self.prepare_for_generation(instructions, responses)
+        prep_outputs = self.prepare_for_forward(instructions, responses)
         logits = self.model_forward(prep_outputs.tokens).logits
 
         # retrieve token probs

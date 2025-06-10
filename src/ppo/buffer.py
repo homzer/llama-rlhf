@@ -1,5 +1,4 @@
 import collections
-import copy
 import json
 import os.path
 from typing import Generator, List, Union
@@ -8,8 +7,9 @@ import numpy as np
 import torch
 
 from src.entities import SlimLogits
+from src.utils import masked_mean
 
-RolloutBufferSample = collections.namedtuple(
+PolicyRolloutBufferSample = collections.namedtuple(
     "RolloutBufferSample", [
         "observations",
         "actions",
@@ -24,16 +24,6 @@ RolloutBufferSample = collections.namedtuple(
     ]
 )
 
-PolicyRolloutBufferSample = collections.namedtuple(
-    "PolicyRolloutBufferSample", [
-        "instructions",
-        "obs",
-        "actions",
-        "values",
-        "action_logits",
-        "action_masks"
-    ]
-)
 ActorRolloutBufferSample = collections.namedtuple(
     "ActorRolloutBufferSample", [
         "instructions",
@@ -43,6 +33,19 @@ ActorRolloutBufferSample = collections.namedtuple(
         "action_masks",
         "action_logprobs",
         "responses"
+    ]
+)
+
+ActorRolloutBufferWithLabelSample = collections.namedtuple(
+    "ActorRolloutBufferWithLabelSample", [
+        "instructions",
+        "obs",
+        "actions",
+        "action_logits",
+        "action_masks",
+        "action_logprobs",
+        "responses",
+        "labels"
     ]
 )
 
@@ -63,7 +66,8 @@ OutputRolloutBufferSample = collections.namedtuple(
 
 CriticRolloutBufferSample = collections.namedtuple(
     "RewardRolloutBufferSample", [
-        "scores"
+        "scores",
+        "action_masks"
     ]
 )
 
@@ -84,7 +88,88 @@ LogitsRolloutBufferSampleV0 = collections.namedtuple(
 )
 
 
-class RolloutBuffer:
+class RolloutBuffer(dict):
+    def __init__(self, **kwargs):
+        super().__init__()
+        self.set(**kwargs)
+
+    def set(self, **kwargs):
+        """initialize buffer."""
+        for key, value in kwargs.items():
+            self[key] = value.copy() if isinstance(value, np.ndarray) else np.array(value)
+
+    def size(self) -> int:
+        """Return the size of the rollout buffer"""
+        if len(self) == 0:
+            raise RuntimeError("Rollout buffer is not initialized.")
+        for key in self.keys():
+            assert len(self[key]) == len(self[next(iter(self))])
+        return len(self[next(iter(self))])
+
+    def rearrange(self, indices: List[int] | np.ndarray):
+        for key in self.keys():
+            self[key] = self[key][indices]
+
+    def shuffle(self):
+        self.rearrange(np.random.permutation(self.size()))
+
+    def save(self, save_dir: str, overwrite: bool = True):
+        os.makedirs(save_dir, exist_ok=True)
+        save_file = os.path.join(save_dir, "buffer.jsonl")
+        print(f"Saving buffer to {save_file} ......")
+        with open(save_file, 'w' if overwrite else 'a', encoding='utf-8') as writer:
+            for i in range(self.size()):
+                data = dict()
+                for key in self.keys():
+                    data[key] = self[key][i].tolist()
+                writer.write(json.dumps(data, ensure_ascii=False) + '\n')
+        print("Saving done!")
+
+    @classmethod
+    def load(cls, buffer_dir: str, start: int = 0, stop: int = None) -> "RolloutBuffer":
+        buffer_file = os.path.join(buffer_dir, "buffer.jsonl")
+        print(f"Loading buffer from {buffer_file} ......")
+        kwargs = dict()
+        with open(buffer_file, 'r', encoding="utf-8") as reader:
+            for i, line in enumerate(reader):
+                if stop is not None and stop <= i:
+                    break
+                if start <= i:
+                    for key, value in json.loads(line).items():
+                        if key not in kwargs:
+                            kwargs[key] = []
+                        kwargs[key].append(value)
+
+        buffer = RolloutBuffer(**kwargs)
+        print("Loading done!")
+        return buffer
+
+    def extend(self, rollout_buffer: "RolloutBuffer") -> "RolloutBuffer":
+        if len(rollout_buffer) == 0:
+            return self
+        if len(self) == 0 or self.size() == 0:
+            self.set(**rollout_buffer)
+        else:
+            for key in self.keys():
+                self[key] = np.concatenate([self[key], rollout_buffer[key]], axis=0)
+        return self
+
+    def get(self, batch_size: int) -> Generator:
+        indices = np.arange(self.size())
+        start_idx = 0
+        RolloutBufferSample = collections.namedtuple(
+            "RolloutBufferSample", field_names=[key for key in self.keys()]
+        )
+        while start_idx < self.size():
+            batch_indices = indices[start_idx: start_idx + batch_size]
+            data = dict()
+            for key in self.keys():
+                data[key] = self[key][batch_indices]
+            yield RolloutBufferSample(**data)
+            start_idx += batch_size
+
+
+class PolicyRolloutBuffer:
     def __init__(
             self,
             obs: np.ndarray,
@@ -100,8 +185,10 @@ class RolloutBuffer:
             kl_coef: float = 0.1,
             mu: float = 0.0,
             reward_normalize: bool = True,
+            reward_sub_mean: bool = False,
             use_last_token_reward: bool = False,
-            last_token_reward_only: bool = False
+            last_token_reward_only: bool = False,
+            reward_is_q: bool = False
     ):
         self.obs = None
         self.actions = None
@@ -119,8 +206,10 @@ class RolloutBuffer:
         self.kl_coef = kl_coef
         self.mu = mu
         self.reward_normalize = reward_normalize
+        self.reward_sub_mean = reward_sub_mean
         self.use_last_token_reward = use_last_token_reward
         self.last_token_reward_only = last_token_reward_only
+        self.reward_is_q = reward_is_q
 
         self.buffer_size = obs.shape[0]
         self.max_seq_len = obs.shape[1]
@@ -143,6 +232,7 @@ class RolloutBuffer:
         self.action_masks = action_masks.copy()
         self.action_logprobs = action_logprobs.copy()
         self.origin_rewards = rewards.copy()  # for logging only
+        self.origin_values = values.copy()  # for logging only
         if ref_action_logprobs is not None:
             self.ref_action_logprobs = ref_action_logprobs.copy()
 
@@ -155,7 +245,11 @@ class RolloutBuffer:
                     self.rewards[i][self.action_masks[i]] = self.rewards[i][nonzero_indices[-1]]
 
         if self.reward_normalize:
-            self.rewards = self.rewards / (np.std(self.rewards[self.action_masks]))
+            if self.reward_sub_mean:
+                self.rewards = (self.rewards - np.mean(
+                    self.rewards[self.action_masks])) / np.std(self.rewards[self.action_masks])
+            else:
+                self.rewards = self.rewards / np.std(self.rewards[self.action_masks])
 
         if self.last_token_reward_only:
             for i in range(self.buffer_size):
@@ -173,24 +267,34 @@ class RolloutBuffer:
     def compute_kl_penalty(self):
         if self.ref_action_logprobs is None:
             return np.zeros_like(self.action_logprobs)
-        return 0.5 * (self.action_logprobs - self.ref_action_logprobs) ** 2  # using mse loss
+        return np.abs(self.action_logprobs - self.ref_action_logprobs)  # using abs kl loss
 
     def compute_returns_and_advantage(self):
-        last_gae_lam = 0
-        for step in reversed(range(self.max_seq_len - 1)):
-            next_values = self.values[:, step + 1] * np.where(self.action_masks[:, step + 1], 1, 0)
-            delta = self.rewards[:, step] + self.gamma * next_values - self.values[:, step]
-            last_gae_lam = delta + self.gamma * self.gae_lambda * last_gae_lam * self.action_masks[:, step + 1]
-            self.advantages[:, step] = last_gae_lam
-        self.returns = self.advantages + self.values
+        if self.reward_is_q:
+            if self.reward_normalize:
+                if self.reward_sub_mean:
+                    self.values = (self.values - np.mean(
+                        self.values[self.action_masks])) / np.std(self.values[self.action_masks])
+                else:
+                    self.values = self.values / np.std(self.values[self.action_masks])
+            self.advantages = self.rewards - (1 - self.gae_lambda) * self.values
+            self.returns = self.rewards
+        else:
+            last_gae_lam = 0
+            for step in reversed(range(self.max_seq_len - 1)):
+                next_values = self.values[:, step + 1] * np.where(self.action_masks[:, step + 1], 1, 0)
+                delta = self.rewards[:, step] + self.gamma * next_values - self.values[:, step]
+                last_gae_lam = delta + self.gamma * self.gae_lambda * last_gae_lam * self.action_masks[:, step + 1]
+                self.advantages[:, step] = last_gae_lam
+            self.returns = self.advantages + self.values
 
-    def get(self, batch_size: int) -> Generator[RolloutBufferSample, None, None]:
+    def get(self, batch_size: int, shuffle: bool = True) -> Generator[PolicyRolloutBufferSample, None, None]:
         size = self.obs.shape[0]
-        indices = np.random.permutation(size)
+        indices = np.random.permutation(size) if shuffle else np.arange(size)
         start_idx = 0
         while start_idx < size:
             batch_indices = indices[start_idx: start_idx + batch_size]
-            yield RolloutBufferSample(
+            yield PolicyRolloutBufferSample(
                 observations=torch.tensor(self.obs[batch_indices]),
                 actions=torch.tensor(self.actions[batch_indices]),
                 old_values=torch.tensor(self.values[batch_indices]),
@@ -363,173 +467,32 @@ class LogitsRolloutBuffer:
             start_idx += batch_size
 
 
-class OutputRolloutBuffer:
-    def __init__(
-            self,
-            instructions: Union[List[str], np.ndarray] = None,
-            outputs: Union[List[str], np.ndarray] = None,
-    ):
-        self.instructions = None
-        self.outputs = None
+class CriticRolloutBuffer(RolloutBuffer):
+    def __init__(self, scores: np.ndarray | List[float] = None, action_masks: np.ndarray = None):
+        super().__init__()
+        self.set(scores=scores, action_masks=action_masks)
 
-        if instructions is not None:
-            assert outputs is not None
-            self._set(instructions, outputs)
+    def set(self, scores=None, action_masks=None):
+        if scores is not None and action_masks is not None:
+            if isinstance(scores, np.ndarray) and scores.shape == action_masks.shape:
+                self["scores"] = scores.copy()
+            else:
+                self["scores"] = np.zeros_like(action_masks, dtype=np.float32)
+                for i in range(len(action_masks)):
+                    self["scores"][i, :][action_masks[i]] = scores[i]
+            self["action_masks"] = action_masks.copy()
 
-    def __len__(self):
-        return 0 if self.instructions is None else len(self.instructions)
-
-    def _set(self, instructions, outputs):
-        assert len(instructions) == len(outputs)
-        if not isinstance(instructions, np.ndarray):
-            instructions = np.array(instructions)
-        if not isinstance(outputs, np.ndarray):
-            outputs = np.array(outputs)
-        self.instructions = instructions
-        self.outputs = outputs
-
-    def extend(self, rollout_buffer: "OutputRolloutBuffer"):
-        if len(self) == 0:
-            self._set(
-                rollout_buffer.instructions,
-                rollout_buffer.outputs,
-            )
+    def mean(self, use_last_token_reward: bool) -> float:
+        if use_last_token_reward:
+            rewards = []
+            for i in range(self.size()):
+                nonzero_indices = np.nonzero(self["action_masks"][i])[0]
+                if len(nonzero_indices) > 0:
+                    rewards.append(self["scores"][i][nonzero_indices][-1].item())
+            return np.mean(rewards)
         else:
-            self.instructions = np.concatenate([self.instructions, rollout_buffer.instructions], axis=0)
-            self.outputs = np.concatenate([self.outputs, rollout_buffer.outputs], axis=0)
+            return masked_mean(self["scores"], self["action_masks"])
 
-        return self
-
-    def get(self, batch_size: int) -> Generator[OutputRolloutBufferSample, None, None]:
-        size = self.outputs.shape[0]
-        indices = np.arange(size)
-        start_idx = 0
-        while start_idx < size:
-            batch_indices = indices[start_idx: start_idx + batch_size]
-            yield OutputRolloutBufferSample(
-                instructions=self.instructions[batch_indices],
-                outputs=self.outputs[batch_indices],
-            )
-            start_idx += batch_size
-
-
-class ActorRolloutBuffer:
-    def __init__(
-            self,
-            instructions: List[str] = None,
-            obs: np.ndarray = None,
-            actions: np.ndarray = None,
-            action_logits: np.ndarray = None,
-            action_masks: np.ndarray = None,
-            action_logprobs: np.ndarray = None,
-            responses: List[str] = None
-    ):
-        self.instructions = None
-        self.obs = None
-        self.actions = None
-        self.action_logits = None
-        self.action_masks = None
-        self.action_logprobs = None
-        self.responses = None
-
-        if obs is not None:
-            self._set(instructions, obs, actions, action_logits, action_masks, action_logprobs, responses)
-
-    def __len__(self):
-        return 0 if self.instructions is None else len(self.instructions)
-
-    def _set(self, instructions, obs, actions, action_logits, action_masks, action_logprobs, responses):
-        buffer_size = obs.shape[0]
-        max_seq_len = obs.shape[1]
-
-        self.obs = np.zeros((buffer_size, max_seq_len), dtype=np.int64)
-        self.actions = np.zeros((buffer_size, max_seq_len), dtype=np.int64)
-        self.action_logits = np.zeros((buffer_size, max_seq_len), dtype=np.float32)
-        self.action_masks = np.zeros((buffer_size, max_seq_len), dtype=bool)
-        self.action_logprobs = np.zeros((buffer_size, max_seq_len), dtype=np.float32)
-
-        self.instructions = np.array(instructions)
-        self.obs[:, :] = obs.copy()
-        self.actions[:, :] = actions.copy()
-        self.action_logits[:, :] = action_logits.copy()
-        self.action_masks[:, :] = action_masks.copy()
-        self.action_logprobs[:, :] = action_logprobs.copy()
-        self.responses = np.array(responses)
-
-    def extend(self, rollout_buffer: "ActorRolloutBuffer"):
-        if self.obs is None:
-            self._set(
-                rollout_buffer.instructions,
-                rollout_buffer.obs,
-                rollout_buffer.actions,
-                rollout_buffer.action_logits,
-                rollout_buffer.action_masks,
-                rollout_buffer.action_logprobs,
-                rollout_buffer.responses
-            )
-        else:
-            self.instructions = np.concatenate([self.instructions, rollout_buffer.instructions], axis=0)
-            self.obs = np.concatenate([self.obs, rollout_buffer.obs], axis=0)
-            self.actions = np.concatenate([self.actions, rollout_buffer.actions], axis=0)
-            self.action_logits = np.concatenate([self.action_logits, rollout_buffer.action_logits], axis=0)
-            self.action_masks = np.concatenate([self.action_masks, rollout_buffer.action_masks], axis=0)
-            self.action_logprobs = np.concatenate([self.action_logprobs, rollout_buffer.action_logprobs], axis=0)
-            self.responses = np.concatenate([self.responses, rollout_buffer.responses], axis=0)
-
-        return self
-
-    def get(self, batch_size: int) -> Generator[ActorRolloutBufferSample, None, None]:
-        size = self.obs.shape[0]
-        indices = np.arange(size)
-        start_idx = 0
-        while start_idx < size:
-            batch_indices = indices[start_idx: start_idx + batch_size]
-            yield ActorRolloutBufferSample(
-                instructions=self.instructions[batch_indices].tolist(),
-                obs=self.obs[batch_indices],
-                actions=self.actions[batch_indices],
-                action_logits=self.action_logits[batch_indices],
-                action_masks=self.action_masks[batch_indices],
-                action_logprobs=self.action_logprobs[batch_indices],
-                responses=self.responses[batch_indices].tolist()
-            )
-            start_idx += batch_size
-
-
-class CriticRolloutBuffer:
-    def __init__(self, scores: Union[np.ndarray, List] = None, action_masks: np.ndarray = None):
-        self.scores = None
-        if scores is not None:
-            self._set(scores, action_masks)
-
-    def __len__(self):
-        return len(self.scores) if self.scores is not None else 0
-
-    def _set(self, scores, action_masks=None):
-        if action_masks is None:
-            if isinstance(scores, list):
-                scores = np.array(scores)
-            assert isinstance(scores, np.ndarray)
-            self.scores = scores.copy()
-        else:
-            buffer_size = action_masks.shape[0]
-            max_seq_len = action_masks.shape[1]
-            self.scores = np.zeros((buffer_size, max_seq_len), dtype=np.float32)
-            for i in range(buffer_size):
-                self.scores[i, :][action_masks[i]] = scores[i]
-
-    def extend(self, rollout_buffer: "CriticRolloutBuffer"):
-        if self.scores is None:
-            self._set(rollout_buffer.scores)
-        else:
-            self.scores = np.concatenate([self.scores, rollout_buffer.scores], axis=0)
-        return self
-
-    def get(self, batch_size: int) -> Generator[CriticRolloutBufferSample, None, None]:
-        size = len(self)
-        indices = np.arange(size)
-        start_idx = 0
-        while start_idx < size:
-            batch_indices = indices[start_idx: start_idx + batch_size]
-            yield CriticRolloutBufferSample(scores=self.scores[batch_indices])
-            start_idx += batch_size
+    @classmethod
+    def load(cls, buffer_dir: str, start: int = 0, stop: int = None) -> "CriticRolloutBuffer":
+        return CriticRolloutBuffer(**super().load(buffer_dir=buffer_dir, start=start, stop=stop))

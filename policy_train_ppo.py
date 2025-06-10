@@ -2,18 +2,23 @@ import gc
 import os
 
 import fire
-import numpy as np
 import torch
-from torch.utils.data import DataLoader
 
 from src.dataset import JsonDataset, ChatTemplateDataset
 from src.entities import Timer
 from src.modeling import get_parallel_model, get_parallel_verifier
-from src.parallel.utils import setup_model_parallel, set_barrier
-from src.ppo.buffer import CriticRolloutBuffer, RolloutBuffer, ActorRolloutBuffer, LogitsRolloutBuffer
-from src.ppo.collector import CriticBufferCollector, LogitsBufferCollector, ActorGroupBufferCollector
+from src.parallel.data_parallel.dataloader import ParallelDataLoader
+from src.parallel.initialize import setup_model_parallel, set_barrier
+from src.parallel.optimizer import ParallelOptimizer
+from src.ppo.buffer import (
+    CriticRolloutBuffer,
+    PolicyRolloutBuffer,
+    LogitsRolloutBuffer,
+    RolloutBuffer
+)
+from src.ppo.collector import CriticBufferCollector, LogitsBufferCollector, ActorBufferCollector
 from src.ppo.trainer import ParallelActorTrainerForCausalLM, ParallelCriticTrainerForCausalLM
-from src.utils import masked_mean, json_load
+from src.utils import json_load
 
 
 def random_init_v_head(critic):
@@ -41,7 +46,9 @@ def collect_actor_buffer(
         temperature: float = 1.0,
         top_p: float = 1.0,
         num_samples_per_prompt: int = 1,
-) -> ActorRolloutBuffer:
+) -> RolloutBuffer:
+    dataset.repeat(num_samples_per_prompt).shuffle()
+
     actor, actor_tokenizer = get_parallel_model(
         model_type=actor_model_type,
         config_file=actor_config_file,
@@ -50,25 +57,24 @@ def collect_actor_buffer(
         lora_rank=-1,
         dtype=dtype
     )
-    actor.load(actor_ckpt_dir if epoch == 0 else os.path.join(actor_save_dir, f"epoch-{epoch}"))
-    actor_buffer_collector = ActorGroupBufferCollector(
+    actor.load(actor_ckpt_dir if epoch == 0 else os.path.join(actor_save_dir, "epoch-%03d" % epoch))
+    actor_buffer_collector = ActorBufferCollector(
         actor=actor,
         tokenizer=actor_tokenizer,
         max_seq_len=max_seq_len,
         temperature=temperature,
         top_p=top_p,
-        num_samples_per_prompt=num_samples_per_prompt
     )
-    actor_rollout_buffer = ActorRolloutBuffer()
+    actor_rollout_buffer = RolloutBuffer()
     print('Actor buffer collecting ...')
     if use_chat_template:
         dataset = ChatTemplateDataset(dataset, actor_tokenizer)
-    dataloader = DataLoader(dataset, batch_size=max_generate_batch_size)
+    dataloader = ParallelDataLoader(dataset, batch_size=max_generate_batch_size)
     timer = Timer(len(dataloader))
     for data in dataloader:
         timer.step()
         actor_rollout_buffer.extend(actor_buffer_collector.forward(data['instruction']))
-        print(actor_rollout_buffer.instructions[-1], '\n', actor_rollout_buffer.responses[-1])
+        print(actor_rollout_buffer["instructions"][-1] + "\n" + actor_rollout_buffer["responses"][-1])
 
     actor.cpu()
     del actor
@@ -87,7 +93,7 @@ def collect_reference_buffer(
         actor_tokenizer_file: str,
         dtype: str,
         reference_ckpt_dir: str,
-        actor_rollout_buffer: ActorRolloutBuffer,
+        actor_rollout_buffer: RolloutBuffer,
         max_forward_batch_size: int,
 
 ) -> LogitsRolloutBuffer:
@@ -105,7 +111,7 @@ def collect_reference_buffer(
     )
     reference_rollout_buffer = LogitsRolloutBuffer()
     print('Reference buffer collecting ...')
-    timer = Timer(total=len(actor_rollout_buffer) // max_forward_batch_size, episode=10)
+    timer = Timer(total=actor_rollout_buffer.size() // max_forward_batch_size, episode=10)
     for data in actor_rollout_buffer.get(max_forward_batch_size):
         timer.step()
         reference_rollout_buffer.extend(
@@ -131,7 +137,7 @@ def collect_critic_buffer(
         critic_ckpt_dir: str,
         epoch: int,
         critic_save_dir: str,
-        actor_rollout_buffer: ActorRolloutBuffer,
+        actor_rollout_buffer: RolloutBuffer,
         max_forward_batch_size: int,
 ) -> CriticRolloutBuffer:
     epoch = 0 if epoch == 0 else 1  # TODO: for saving memory
@@ -143,13 +149,13 @@ def collect_critic_buffer(
         lora_rank=-1,
         dtype=dtype
     )
-    critic.load(critic_ckpt_dir if epoch == 0 else os.path.join(critic_save_dir, f"epoch-{epoch}"))
+    critic.load(critic_ckpt_dir if epoch == 0 else os.path.join(critic_save_dir, "epoch-%03d" % epoch))
     if epoch == 0:  # random initialize value head
         random_init_v_head(critic)
     critic_buffer_collector = CriticBufferCollector(critic, critic_tokenizer, max_seq_len)
     critic_rollout_buffer = CriticRolloutBuffer()
     print('Critic buffer collecting ...')
-    timer = Timer(total=len(actor_rollout_buffer) // max_forward_batch_size, episode=10)
+    timer = Timer(total=actor_rollout_buffer.size() // max_forward_batch_size, episode=10)
     for data in actor_rollout_buffer.get(max_forward_batch_size):
         timer.step()
         critic_rollout_buffer.extend(
@@ -175,7 +181,7 @@ def collect_verifier_buffer(
         verifier_tokenizer_file: str,
         dtype: str,
         verifier_ckpt_dir: str,
-        actor_rollout_buffer: ActorRolloutBuffer,
+        actor_rollout_buffer: RolloutBuffer,
         max_forward_batch_size: int,
 ) -> CriticRolloutBuffer:
     verifier, verifier_tokenizer = get_parallel_verifier(
@@ -190,7 +196,7 @@ def collect_verifier_buffer(
     verifier_buffer_collector = CriticBufferCollector(verifier, verifier_tokenizer, max_seq_len)
     verifier_rollout_buffer = CriticRolloutBuffer()
     print('Reward buffer collecting ...')
-    timer = Timer(total=len(actor_rollout_buffer) // max_forward_batch_size, episode=10)
+    timer = Timer(total=actor_rollout_buffer.size() // max_forward_batch_size, episode=10)
     for data in actor_rollout_buffer.get(max_forward_batch_size):
         timer.step()
         verifier_rollout_buffer.extend(
@@ -221,7 +227,7 @@ def train_actor(
         epoch: int,
         actor_ckpt_dir: str,
         actor_save_dir: str,
-        rollout_buffer: RolloutBuffer,
+        rollout_buffer: PolicyRolloutBuffer,
         actor_max_batch_size: int,
         inner_epochs: int,
         clip_range: float = 0.2
@@ -235,11 +241,11 @@ def train_actor(
         dtype=dtype,
         lora_dtype=actor_lora_dtype
     )
-    actor_optimizer = torch.optim.Adam(actor.parameters(), lr=0.075 * lr if epoch <= 1 else lr)
+    actor_optimizer = ParallelOptimizer(torch.optim.Adam(actor.parameters(), lr=0.075 * lr if epoch <= 1 else lr))
     actor_trainer = ParallelActorTrainerForCausalLM(actor, actor_optimizer, clip_range=clip_range)
     actor_trainer.load_model(actor_ckpt_dir) if (
             epoch == 0
-    ) else actor_trainer.load(os.path.join(actor_save_dir, f"epoch-{epoch}"))
+    ) else actor_trainer.load(os.path.join(actor_save_dir, "epoch-%03d" % epoch))
     print('Actor training ...')
     timer = Timer(total=(len(rollout_buffer) // actor_max_batch_size) * inner_epochs, episode=100)
     for inner_epoch in range(inner_epochs):
@@ -251,7 +257,7 @@ def train_actor(
                 print('Loss: ', trainer_outputs.loss)
                 print('Advantages: ', trainer_outputs.advantages)
                 print('KL Divergence: ', trainer_outputs.kl)
-    actor_trainer.save(os.path.join(actor_save_dir, f"epoch-{epoch + 1}"))
+    actor_trainer.save(os.path.join(actor_save_dir, "epoch-%03d" % (epoch + 1)))
 
     actor.cpu()
     del actor
@@ -274,7 +280,7 @@ def train_critic(
         critic_ckpt_dir: str,
         epoch: int,
         critic_save_dir: str,
-        rollout_buffer: RolloutBuffer,
+        rollout_buffer: PolicyRolloutBuffer,
         critic_max_batch_size: int,
         inner_epochs: int,
 ):
@@ -288,9 +294,9 @@ def train_critic(
         dtype=dtype,
         lora_dtype=critic_lora_dtype,
     )
-    critic_optimizer = torch.optim.Adam(critic.parameters(), lr=max(1e-5, lr))
+    critic_optimizer = ParallelOptimizer(torch.optim.Adam(critic.parameters(), lr=max(1e-5, lr)))
     critic_trainer = ParallelCriticTrainerForCausalLM(critic, critic_optimizer)
-    critic_trainer.load_model(critic_ckpt_dir if epoch == 0 else os.path.join(critic_save_dir, f"epoch-{epoch}"))
+    critic_trainer.load_model(critic_ckpt_dir if epoch == 0 else os.path.join(critic_save_dir, "epoch-%03d" % epoch))
     if epoch == 0:
         random_init_v_head(critic)
     print('Critic training ...')
@@ -301,11 +307,11 @@ def train_critic(
             trainer_outputs = critic_trainer.forward(data)
             if critic_trainer.step % 100 == 0:
                 print(f'--------- STEP {critic_trainer.step} OF {timer.total} ---------')
-                print('Loss: ', trainer_outputs.loss)
+                print(f'Loss: {trainer_outputs.loss}')
     if epoch == 0:  # TODO For saving memory
-        critic_trainer.save(os.path.join(critic_save_dir, f"epoch-{epoch + 1}"))
+        critic_trainer.save(os.path.join(critic_save_dir, "epoch-%03d" % (epoch + 1)))
     else:
-        critic_trainer.save(os.path.join(critic_save_dir, f"epoch-{epoch}"))
+        critic_trainer.save(os.path.join(critic_save_dir, "epoch-%03d" % epoch))
 
     critic.cpu()
     del critic
@@ -354,9 +360,10 @@ def run(
         kl_coef: float = 0.1,
         clip_range: float = 0.2,
         gamma: float = 0.9,
-        gae_lamda: float = 0.8,
+        gae_lambda: float = 0.8,
         use_chat_template: bool = False,
-        use_last_token_reward: bool = False
+        use_last_token_reward: bool = False,
+        reward_is_q: bool = False
 ):
     parallel_infos = setup_model_parallel()
     actor_config_file = actor_config_file or actor_ckpt_dir
@@ -437,32 +444,25 @@ def run(
                 max_forward_batch_size=max_forward_batch_size
             )
 
-            if use_last_token_reward:
-                rewards = []
-                for i in range(len(verifier_rollout_buffer)):
-                    nonzero_indices = np.nonzero(actor_rollout_buffer.action_masks[i])[0]
-                    if len(nonzero_indices) > 0:
-                        rewards.append(verifier_rollout_buffer.scores[i][nonzero_indices][-1].item())
-                print("Average Rewards: ", np.mean(rewards))
-            else:
-                print("Average Rewards: ", masked_mean(verifier_rollout_buffer.scores, actor_rollout_buffer.action_masks))
+            print(f"Average Rewards: {verifier_rollout_buffer.mean(use_last_token_reward=use_last_token_reward)}")
 
-            rollout_buffer = RolloutBuffer(
-                obs=actor_rollout_buffer.obs,
-                actions=actor_rollout_buffer.actions,
-                rewards=verifier_rollout_buffer.scores,
-                values=critic_rollout_buffer.scores,
-                action_logits=actor_rollout_buffer.action_logits,
-                action_masks=actor_rollout_buffer.action_masks,
-                action_logprobs=actor_rollout_buffer.action_logprobs,
+            rollout_buffer = PolicyRolloutBuffer(
+                obs=actor_rollout_buffer["obs"],
+                actions=actor_rollout_buffer["actions"],
+                rewards=verifier_rollout_buffer["scores"],
+                values=critic_rollout_buffer["scores"],
+                action_logits=actor_rollout_buffer["action_logits"],
+                action_masks=actor_rollout_buffer["action_masks"],
+                action_logprobs=actor_rollout_buffer["action_logprobs"],
                 ref_action_logprobs=reference_rollout_buffer.output_tokens_logps if (
                         reference_rollout_buffer is not None
                 ) else None,
                 use_last_token_reward=use_last_token_reward,
                 last_token_reward_only=use_last_token_reward,
+                reward_is_q=reward_is_q,  # Reward is Q-Value
                 kl_coef=kl_coef,
                 gamma=gamma,
-                gae_lambda=gae_lamda
+                gae_lambda=gae_lambda
             )
 
             # Actor training
@@ -488,12 +488,12 @@ def run(
                 torch.save({
                     'obs': rollout_buffer.obs,
                     'actions': rollout_buffer.actions,
-                    'values': rollout_buffer.values,
+                    'values': rollout_buffer.origin_values,
                     'rewards': rollout_buffer.origin_rewards,
                     'action_masks': rollout_buffer.action_masks,
                     'advantages': rollout_buffer.advantages,
                     'returns': rollout_buffer.returns
-                }, os.path.join(actor_save_dir, f"epoch-{epoch + 1}", "buffer.bin"))
+                }, os.path.join(actor_save_dir, "epoch-%03d" % (epoch + 1), "buffer.bin"))
 
             train_critic(
                 critic_model_type=critic_model_type,

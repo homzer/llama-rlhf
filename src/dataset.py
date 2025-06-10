@@ -1,7 +1,7 @@
 import random
+from copy import deepcopy
 from typing import List
 
-import torch
 import numpy as np
 from torch.utils.data import Dataset
 
@@ -18,6 +18,14 @@ class JsonDataset(Dataset):
             self.datalist = f
         self.check_for_none()
 
+    def repeat(self, n: int):
+        datalist = []
+        for data in self.datalist:
+            for _ in range(n):
+                datalist.append(deepcopy(data))
+        self.datalist = datalist
+        return self
+
     def check_for_none(self):
         for data in self.datalist:
             for key in data.keys():
@@ -28,12 +36,11 @@ class JsonDataset(Dataset):
         return len(self.datalist)
 
     def __getitem__(self, i):
-        return self.datalist[i].copy()
+        return deepcopy(self.datalist[i])
 
-    def shuffle(self) -> Dataset:
-        indices = torch.randperm(len(self))
-        dataset = torch.utils.data.Subset(self, indices)
-        return dataset
+    def shuffle(self) -> "JsonDataset":
+        random.shuffle(self.datalist)
+        return self
 
 
 class ChatTemplateDataset(Dataset):
@@ -51,7 +58,7 @@ class ChatTemplateDataset(Dataset):
         data = self.dataset.__getitem__(i)
         assert "instruction" in data
         if isinstance(data["instruction"], str):
-            data["origin_instruction"] = data["instruction"]
+            data["original_instruction"] = data["instruction"]
             data["instruction"] = [{"role": "user", "content": data["instruction"]}]
         assert isinstance(data["instruction"], list)
         assert isinstance(data["instruction"][0], dict)
@@ -79,10 +86,10 @@ class MultiOutputsDataset(JsonDataset):
 
     def __getitem__(self, i):
         if self.exhaustive:
-            data = self.datalist[i % len(self.datalist)].copy()
+            data = deepcopy(self.datalist[i % len(self.datalist)])
             data["output"] = data["output"][i // len(self.datalist)]
         else:
-            data = self.datalist[i].copy()
+            data = deepcopy(self.datalist[i])
             data['output'] = data['output'][0]
         return data
 
@@ -96,7 +103,7 @@ class MultiOutputsConsistentDataset(MultiOutputsDataset):
         assert type(self.datalist[0]['indices']) is list
 
     def __getitem__(self, i):
-        data = self.datalist[i].copy()
+        data = deepcopy(self.datalist[i])
         assert len(data['output']) == len(data['indices'])
         assert len(data['output']) >= 2
         id1, id2 = random.sample([j for j in range(len(data['output']))], 2)
@@ -133,7 +140,7 @@ class EvoMultiOutputsDataset(MultiOutputsDataset):
         return self.num_outputs() - cnt
 
     def __getitem__(self, i):
-        data = self.datalist[i].copy()
+        data = deepcopy(self.datalist[i])
         if 'output_extend' in data.keys():
             data.pop('output_extend')
         outputs = []
@@ -168,8 +175,7 @@ class PairwiseDataset(JsonDataset):
                 data["rejected"] = data["rejected"][0]
 
     def __getitem__(self, i):
-        data = self.datalist[i].copy()
-        return data
+        return deepcopy(self.datalist[i])
 
 
 class ReviseDataset(JsonDataset):
@@ -200,7 +206,7 @@ class ReviseDataset(JsonDataset):
             self.datalist[i]['teacher_output_extend'].extend(data['teacher_output'])
 
     def __getitem__(self, i):
-        data = self.datalist[i].copy()
+        data = deepcopy(self.datalist[i])
         if 'student_output_extend' in data.keys():
             data.pop('student_output_extend')
         if 'teacher_output_extend' in data.keys():

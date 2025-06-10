@@ -10,7 +10,7 @@ from src.dataset import PairwiseDataset, ChatTemplateDataset
 from src.entities import Timer
 from src.generator import GeneratorForVerifier
 from src.modeling import get_parallel_verifier
-from src.parallel import setup_model_parallel
+from src.parallel.initialize import setup_model_parallel
 from src.utils import json_dump
 
 
@@ -104,7 +104,8 @@ def main(
                 chosen_token_scores=chosen_token_scores.tolist(),
                 rejected_token_scores=rejected_token_scores.tolist()
             ))
-    json_dump(datalist, os.path.join(log_dir, "token-results.jsonl"))
+    if parallel_infos.local_rank == 0:
+        json_dump(datalist, os.path.join(log_dir, "token-results.jsonl"))
 
 
 if __name__ == '__main__':

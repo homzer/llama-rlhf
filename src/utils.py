@@ -1,4 +1,5 @@
 import collections
+import inspect
 import json
 import os
 import pickle
@@ -63,6 +64,13 @@ def apply_rotary_emb(
     return xq_out.type_as(xq), xk_out.type_as(xk)
 
 
+def apply_rotary_emb_(x: torch.Tensor, freqs_cis: torch.Tensor) -> torch.Tensor:
+    x_ = torch.view_as_complex(x.float().reshape(*x.shape[:-1], -1, 2))
+    freqs_cis = reshape_for_broadcast(freqs_cis, x_)
+    x_out = torch.view_as_real(x_ * freqs_cis).flatten(3)
+    return x_out.type_as(x)
+
+
 # Copied from Huggingface
 def rotate_half(x):
     """Rotates half the hidden dims of the input."""
@@ -73,13 +81,22 @@ def rotate_half(x):
 
 # Copied from Huggingface
 def apply_rotary_pos_emb(q, k, cos, sin, position_ids):
-    gather_indices = position_ids[:, None, :, None]  # [bs, 1, seq_len, 1]
-    gather_indices = gather_indices.repeat(1, cos.shape[1], 1, cos.shape[3])
+    gather_indices = position_ids[:, None, :, None]
+    gather_indices = gather_indices.repeat(1, cos.shape[1], 1, cos.shape[3])  # [1, 1, seq_len, head_dim]
     cos = torch.gather(cos.repeat(gather_indices.shape[0], 1, 1, 1), 2, gather_indices)
     sin = torch.gather(sin.repeat(gather_indices.shape[0], 1, 1, 1), 2, gather_indices)
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
     return q_embed, k_embed
+
+
+def apply_rotary_pos_emb_(x, cos, sin, position_ids):
+    gather_indices = position_ids[:, None, :, None]
+    gather_indices = gather_indices.repeat(1, cos.shape[1], 1, cos.shape[3])  # [1, 1, seq_len, head_dim]
+    cos = torch.gather(cos.repeat(gather_indices.shape[0], 1, 1, 1), 2, gather_indices)  # [1, 1, seq_len, head_dim]
+    sin = torch.gather(sin.repeat(gather_indices.shape[0], 1, 1, 1), 2, gather_indices)  # [1, 1, seq_len, head_dim]
+    x_embed = (x * cos) + (rotate_half(x) * sin)
+    return x_embed
 
 
 # Copied from Huggingface
@@ -88,7 +105,7 @@ def compute_position_ids(start_pos: int, seq_length: int):
         start_pos, seq_length + start_pos, dtype=torch.long
     )
     position_ids = position_ids.unsqueeze(0).view(-1, seq_length)
-    return position_ids
+    return position_ids  # [1, seq_len]
 
 
 def json_dump(obj, f, indent=None, ensure_ascii=False):
@@ -146,6 +163,7 @@ def sample_top_p(probs: torch.Tensor, p: float = 1.0, num_samples: int = 1):
     mask = probs_sum - probs_sort > p
     probs_sort[mask] = 0.0
     probs_sort.div_(probs_sort.sum(dim=-1, keepdim=True))
+    probs_sort.nan_to_num_(nan=0.001, posinf=0.001, neginf=0.001)
     next_tokens = torch.multinomial(probs_sort, num_samples=num_samples)
     next_tokens = torch.gather(probs_idx, -1, next_tokens)
     next_tokens = torch.reshape(next_tokens, shape=[*origin_shape, num_samples])
@@ -267,7 +285,7 @@ def masked_std(x, mask=None, dim: int = -1, keepdim: bool = False, eps: float = 
     if type(x) is torch.Tensor:
         if mask is None:
             mask = torch.full_like(x, fill_value=True)
-        mu = masked_mean(x, mask, dim, keepdim=True, eps=eps)
+        mu = masked_mean(x, mask, dim, keepdim=True)
         x = (x - mu) ** 2
         mask = mask.to(x.dtype)
         std = torch.sqrt(
@@ -279,7 +297,7 @@ def masked_std(x, mask=None, dim: int = -1, keepdim: bool = False, eps: float = 
     elif type(x) is np.ndarray:
         if mask is None:
             mask = np.full_like(x, fill_value=True)
-        mu = masked_mean(x, mask, dim, keepdim=True, eps=eps)
+        mu = masked_mean(x, mask, dim, keepdim=True)
         x = (x - mu) ** 2
         mask = mask.astype(x.dtype)
         std = np.sqrt(
@@ -295,6 +313,54 @@ def masked_std(x, mask=None, dim: int = -1, keepdim: bool = False, eps: float = 
 def logits_normalize(x: torch.Tensor, dim=-1):
     """ Avoid overflow and underflow """
     return x - torch.max(x, dim=dim, keepdim=True)[0].detach()
+
+
+class _Log1mSoftmax(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, input_):
+        a = torch.softmax(input_, dim=-1)
+        a = torch.clamp(a, max=1 - 2e-3)  # for bfloat16
+        ctx.save_for_backward(a)
+        return torch.log(1 - a)
+
+    @staticmethod
+    def backward(ctx, *grad_outputs):
+        a, = ctx.saved_tensors
+        grad_output = grad_outputs[0]
+        grad_input = (a / (a - 1) * grad_output).sum(dim=-1, keepdim=True) + grad_output / (1 - a)
+        grad_input = - a * grad_input
+        return grad_input
+
+
+def log1m_softmax(logits: torch.Tensor):
+    """
+    Stably compute `log(1 - softmax(logits))` along the last dim.
+    Args:
+        logits (torch.Tensor): Input tensor containing logits.
+    Returns:
+        torch.Tensor: A tensor containing `log(1 - softmax(logits))` values.
+    """
+    return _Log1mSoftmax.apply(logits)
+
+
+@torch.no_grad()
+def proxy_neg_distribution(logits: torch.Tensor, actions: torch.Tensor, delta: float = 0.01) -> torch.Tensor:
+    """
+    Construct a **proxy distribution** based on the original distribution by reducing the probability values at
+    the positions indexed by `actions`.
+    :param logits: [..., vocab_size] Original logits tensor.
+    :param actions: [...,] Token indices indicating positions to modify.
+    :param delta: Should be greater than 0. Controls the similarity between the proxy distribution and
+    the original distribution. A value closer to **0** results in higher similarity.
+    :return: log proxy distribution with adjusted probabilities.
+    """
+    assert delta >= 0
+    if delta > 0:
+        action_probs = torch.gather(torch.softmax(logits.float(), dim=-1), dim=-1, index=actions.unsqueeze(-1))
+        action_probs = torch.clamp(action_probs, max=1 - 1e-7)  # To avoid NaN
+        action_probs_addition = torch.log(1 - action_probs) - torch.log(1 + delta - action_probs)
+        logits = torch.scatter_add(logits, dim=-1, index=actions.unsqueeze(-1), src=action_probs_addition.type_as(logits))
+    return torch.log_softmax(logits, dim=-1)
 
 
 def load_safetensors(f: str) -> dict:
@@ -437,6 +503,13 @@ def logits_assignment(
     )
     logits[batch_indices, sequence_indices, indices] = targets
     return logits
+
+
+def print_current_func_args():
+    frame = inspect.currentframe().f_back
+    args, _, _, values = inspect.getargvalues(frame)
+    param_str = '\n'.join(['%30s = %s' % (arg, values[arg]) for arg in sorted(args)])
+    print('\n%30s   %s\n%s\n%s\n' % ('ATTRIBUTE', 'VALUE', '_' * 60, param_str))
 
 
 # ===============================================================
