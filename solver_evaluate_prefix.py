@@ -15,6 +15,8 @@ from src.utils import json_dump, print_current_func_args, json_load, convert_dat
 def process_prefix_file(label_file: str, ratio: float = 0.5) -> JsonDataset:
     datalist = json_load(label_file)
     for data in datalist:
+        if "original_instruction" in data:
+            data["instruction"] = data.pop("original_instruction")
         if isinstance(data["output"], str):
             response_tokens = data["output"].split(" ")
             data["prefix"] = " ".join(response_tokens[: int(ratio * len(response_tokens))])
