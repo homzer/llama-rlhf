@@ -54,6 +54,52 @@ def prepare_for_generation(
     return Outputs(tokens=tokens, input_masks=input_masks, start_pos=min_prompt_size)
 
 
+def prepare_for_generation_with_prefix(
+        instructions: List[str] | List[List[int]] | np.ndarray,
+        prefixes: List[str] | List[List[int]] | np.ndarray,
+        tokenizer: Tokenizer,
+        max_seq_len: int,
+):
+    assert len(instructions) == len(prefixes)
+    bsz = len(instructions)
+    if isinstance(instructions, np.ndarray):
+        instructions = instructions.tolist()
+    if isinstance(instructions[0], str):
+        prompt_tokens = []
+        for x in instructions:
+            x = tokenizer.encode(x, bos=True, eos=False)
+            prompt_tokens.append(x[: max_seq_len])
+    elif isinstance(instructions[0], list) and isinstance(instructions[0][0], int):
+        prompt_tokens = instructions
+    else:
+        raise TypeError(type(instructions))
+
+    prefix_masks = torch.full((bsz, max_seq_len), False)
+    if isinstance(prefixes, np.ndarray):
+        prefixes = prefixes.tolist()
+    if isinstance(prefixes[0], str):
+        for i, x in enumerate(prefixes):
+            x = tokenizer.encode(x, bos=False, eos=False)
+            prefix_masks[i][len(prompt_tokens[i]): len(prompt_tokens[i] + len(x))] = True
+            prompt_tokens[i].extend(x)
+    elif isinstance(prefixes[0], list) and isinstance(prefixes[0][0], int):
+        for i, x in enumerate(prefixes):
+            prefix_masks[i][len(prompt_tokens[i]): len(prompt_tokens[i] + len(x))] = True
+            prompt_tokens[i].extend(x)
+    else:
+        raise TypeError(type(prefixes))
+
+    min_prompt_size = min([len(t) for t in prompt_tokens])
+    tokens = torch.full((bsz, max_seq_len), tokenizer.pad_id).long()
+    for k, t in enumerate(prompt_tokens):
+        tokens[k, : len(t)] = torch.tensor(t).long()
+    input_masks = tokens != tokenizer.pad_id
+    Outputs = collections.namedtuple("Outputs", [
+        'tokens', 'input_masks', 'prefix_masks', 'start_pos'
+    ])
+    return Outputs(tokens=tokens, input_masks=input_masks, prefix_masks=prefix_masks, start_pos=min_prompt_size)
+
+
 def get_output_masks(tokens: torch.Tensor, input_masks: torch.Tensor, tokenizer: Tokenizer) -> torch.Tensor:
     prompt_lengths = torch.sum(input_masks, dim=-1)
     output_masks = torch.full_like(tokens, fill_value=True)
@@ -66,6 +112,17 @@ def get_output_masks(tokens: torch.Tensor, input_masks: torch.Tensor, tokenizer:
         else:
             output_masks[i][-1:] = False
     return output_masks.to(torch.bool)
+
+
+def get_output_masks_with_prefix(
+        tokens: torch.Tensor,
+        input_masks: torch.Tensor,
+        prefix_masks: torch.Tensor,
+        tokenizer: Tokenizer
+) -> torch.Tensor:
+    input_masks = torch.where(prefix_masks, False, input_masks)
+    return get_output_masks(tokens=tokens, input_masks=input_masks, tokenizer=tokenizer)
+
 
 
 class GeneratorForCausalLM:
@@ -155,6 +212,50 @@ class GeneratorForCausalLM:
             prep_outputs.tokens, prep_outputs.input_masks, prep_outputs.start_pos
         )
         output_masks = self.get_output_masks(forward_outputs.tokens, prep_outputs.input_masks)
+        responses = self.decode_response(forward_outputs.tokens, output_masks)
+        return responses
+
+
+class PrefixGeneratorForCausalLM(GeneratorForCausalLM):
+    def __init__(
+            self,
+            model: ModelForCausalLM | ParallelModelForCausalLM,
+            tokenizer: Tokenizer,
+            max_seq_len: int,
+            temperature: float = 0.0,
+            top_p: float = 1.0
+    ):
+        super().__init__(
+            model=model,
+            tokenizer=tokenizer,
+            max_seq_len=max_seq_len,
+            temperature=temperature,
+            top_p=top_p
+        )
+
+    def prepare_for_generation(self, instructions: List[str] | List[List[int]], prefixes: List[str] | List[List[int]]):
+        return prepare_for_generation_with_prefix(
+            instructions=instructions,
+            prefixes=prefixes,
+            tokenizer=self.tokenizer,
+            max_seq_len=self.max_seq_len
+        )
+
+    def get_output_masks(self, tokens, input_masks, prefix_masks):
+        return get_output_masks_with_prefix(
+            tokens=tokens,
+            input_masks=input_masks,
+            prefix_masks=prefix_masks,
+            tokenizer=self.tokenizer
+        )
+
+    def forward(self, instructions: List[str] | List[List[int]], prefixes: List[str] | List[List[int]]) -> List[str]:
+        self.model.eval()
+        prep_outputs = self.prepare_for_generation(instructions, prefixes)
+        forward_outputs = self.model_forward(
+            prep_outputs.tokens, prep_outputs.input_masks, prep_outputs.start_pos
+        )
+        output_masks = self.get_output_masks(forward_outputs.tokens, prep_outputs.input_masks, prep_outputs.prefix_masks)
         responses = self.decode_response(forward_outputs.tokens, output_masks)
         return responses
 
