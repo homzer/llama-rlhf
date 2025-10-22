@@ -129,9 +129,10 @@ class QwenAttention(AttentionForCausalLM):
 
 
 class QwenFeedForward(nn.Module):
-    def __init__(self, args: QwenArgs):
+    def __init__(self, args: QwenArgs, intermediate_size: int = None):
         super().__init__()
         self.args = args
+        self.intermediate_size = intermediate_size or args.intermediate_size
 
         self.gate_proj = None
         self.down_proj = None
@@ -142,19 +143,19 @@ class QwenFeedForward(nn.Module):
 
     def init_weights(self):
         self.gate_proj = ColumnParallelLinear(
-            self.args.hidden_size, self.args.intermediate_size,
+            self.args.hidden_size, self.intermediate_size,
             bias=False,
             gather_output=False,
             init_method=lambda x: x
         ).type(self.args.dtype)
         self.down_proj = RowParallelLinear(
-            self.args.intermediate_size, self.args.hidden_size,
+            self.intermediate_size, self.args.hidden_size,
             bias=False,
             input_is_parallel=True,
             init_method=lambda x: x
         ).type(self.args.dtype)
         self.up_proj = ColumnParallelLinear(
-            self.args.hidden_size, self.args.intermediate_size,
+            self.args.hidden_size, self.intermediate_size,
             bias=False,
             gather_output=False,
             init_method=lambda x: x

@@ -141,7 +141,11 @@ ParallelInfos = collections.namedtuple("ParallelInfos", [
 
 
 def setup_model_parallel(
-        model_parallel_size: int = None, sequence_parallel_size: int = 1, seed: int = None, log_dir: str = None
+        model_parallel_size: int = None,
+        sequence_parallel_size: int = 1,
+        seed: int = None,
+        log_dir: str = None,
+        log_mode: str = "w"
 ) -> ParallelInfos:
     sequence_parallel_size = sequence_parallel_size or 1
     global_rank: int = int(os.environ.get("RANK"))
@@ -166,7 +170,7 @@ def setup_model_parallel(
     if data_parallel_src_rank != 0:
         sys.stdout = open(os.devnull, "w")
     if global_rank == 0 and log_dir is not None:
-        sys.stdout = Logger(log_dir=log_dir)
+        sys.stdout = Logger(log_dir=log_dir, mode=log_mode)
 
     torch.cuda.set_device(local_rank)
     # seed must be the same in all processes
@@ -261,7 +265,7 @@ def get_sequence_parallel_src_rank() -> int:
 
 def set_barrier():
     """ make sure that all other processes cannot continue until reach this op. """
-    torch.distributed.barrier()
+    torch.distributed.barrier(device_ids=[torch.cuda.current_device()])
 
 
 def set_model_parallel_barrier():

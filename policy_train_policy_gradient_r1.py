@@ -12,7 +12,7 @@ from policy_train_ppo_with_evaluate import evaluate_actor
 from src.dataset import JsonDataset
 from src.evaluator import MATHEvaluator
 from src.parallel.initialize import setup_model_parallel
-from src.ppo.buffer import PolicyRolloutBuffer, RolloutBuffer, CriticRolloutBuffer
+from src.ppo.buffer import PPORolloutBuffer, RolloutBuffer, CriticRolloutBuffer
 from src.utils import json_load, masked_std, print_current_func_args
 
 
@@ -182,7 +182,7 @@ def run(
 
             print(f"Average Rewards: {verifier_rollout_buffer.mean(use_last_token_reward)}")
 
-            rollout_buffer = PolicyRolloutBuffer(
+            rollout_buffer = PPORolloutBuffer(
                 obs=policy_rollout_buffer["obs"],
                 actions=policy_rollout_buffer["actions"],
                 rewards=verifier_rollout_buffer["scores"],

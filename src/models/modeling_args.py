@@ -167,32 +167,32 @@ class LoraLlamaArgsHf(LlamaArgsHf):
     lora_dtype: str = "float32"
 
 
+# @dataclass
+# class MistralArgs(BaseParallelArgs):
+#     dim: int = None
+#     n_layers: int = None
+#     head_dim: int = None
+#     hidden_dim: int = None
+#     n_heads: int = None
+#     n_kv_heads: int = None
+#     norm_eps: float = None
+#     vocab_size: int = None
+#
+#     # For rotary embeddings. If not set, will be infered from sliding window.
+#     rope_theta: float = None
+#     # If this is set, use sliding window attention rotating cache.
+#     sliding_window: int = None
+#     # If this is set, we will use MoE layers instead of dense layers.
+#     moe = None
+#
+#     def from_json(self, filename: str):
+#         if not filename.endswith(".json"):
+#             filename = os.path.join(filename, "params.json")
+#         return super().from_json(filename)
+
+
 @dataclass
 class MistralArgs(BaseParallelArgs):
-    dim: int = None
-    n_layers: int = None
-    head_dim: int = None
-    hidden_dim: int = None
-    n_heads: int = None
-    n_kv_heads: int = None
-    norm_eps: float = None
-    vocab_size: int = None
-
-    # For rotary embeddings. If not set, will be infered from sliding window.
-    rope_theta: float = None
-    # If this is set, use sliding window attention rotating cache.
-    sliding_window: int = None
-    # If this is set, we will use MoE layers instead of dense layers.
-    moe = None
-
-    def from_json(self, filename: str):
-        if not filename.endswith(".json"):
-            filename = os.path.join(filename, "params.json")
-        return super().from_json(filename)
-
-
-@dataclass
-class MistralArgsHf(BaseParallelArgs):
     hidden_size: int = None
     num_hidden_layers: int = None
     intermediate_size: int = None
@@ -213,18 +213,6 @@ class MistralArgsHf(BaseParallelArgs):
         if not filename.endswith(".json"):
             filename = os.path.join(filename, "config.json")
         return super().from_json(filename)
-
-
-@dataclass
-class LoraMistralArgs(MistralArgs):
-    r: int = None
-    lora_dtype: str = "float32"
-
-
-@dataclass
-class LoraMistralArgsHf(MistralArgsHf):
-    r: int = None
-    lora_dtype: str = "float32"
 
 
 @dataclass
@@ -243,6 +231,9 @@ class QwenArgs(BaseParallelArgs):
     use_sliding_window: bool = None
     vocab_size: int = None
 
+    # For Qwen3
+    head_dim: int = None
+
     def from_json(self, filename: str):
         if not filename.endswith(".json"):
             filename = os.path.join(filename, "config.json")
@@ -253,6 +244,14 @@ class QwenArgs(BaseParallelArgs):
 class LoraQwenArgs(QwenArgs):
     r: int = None  # Rank of lora
     lora_dtype: str = "float32"
+
+
+@dataclass
+class QwenMoeArgs(QwenArgs):
+    moe_intermediate_size: int = None
+    norm_topk_prob: bool = True
+    num_experts: int = None
+    num_experts_per_tok: int = None
 
 
 @dataclass
@@ -324,9 +323,24 @@ class InternLMArgs(BaseParallelArgs):
         return super().from_json(filename)
 
 
-class MistralMoeArgsHf(MistralArgsHf):
-    num_local_experts: int
-    num_experts_per_tok: int
+@dataclass
+class InternLM3Args(BaseParallelArgs):
+    head_dim: int = None
+    hidden_size: int = None
+    intermediate_size: int = None
+    max_position_embeddings: int = None
+    num_attention_heads: int = None
+    num_hidden_layers: int = None
+    num_key_value_heads: int = None
+    rms_norm_eps: float = None
+    rope_scaling_factor: float = None
+    rope_theta: float = None
+    vocab_size: int = None
+
+    def from_json(self, filename: str):
+        if not filename.endswith(".json"):
+            filename = os.path.join(filename, "config.json")
+        return super().from_json(filename)
 
 
 class T5Config(transformers.T5Config):

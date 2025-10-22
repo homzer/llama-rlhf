@@ -56,12 +56,29 @@ def prepare_for_forward(
 
 
 class Trainer:
-    def __init__(self, model: Module, optimizer: torch.optim.Optimizer):
+    def __init__(
+            self,
+            model: Module,
+            optimizer: torch.optim.Optimizer,
+            save_optim: bool = False,
+            accumulation_steps: int = 1
+    ):
         self.model = model
         self.optimizer = optimizer
+        self.save_optim = save_optim
+        self.accumulation_steps = accumulation_steps
+        self.step = 0
 
     def forward(self, *args, **kwargs):
         raise NotImplementedError
+
+    def backward(self, loss: torch.Tensor):
+        self.step += 1
+        loss = loss / self.accumulation_steps
+        loss.backward()
+        if self.step % self.accumulation_steps == 0:
+            self.optimizer.step()
+            self.optimizer.zero_grad()
 
     def save_optimizer(self, save_path: str):
         os.makedirs(save_path, exist_ok=True)
@@ -89,14 +106,16 @@ class Trainer:
         if save_path is None or save_path.lower() == "none":
             print("WARNING: Not loading model because `save_path` is None")
             return
-        # self.load_optimizer(save_path)  # TODO: for saving memory
+        if self.save_optim:
+            self.load_optimizer(save_path)
         self.load_model(save_path)
 
     def save(self, save_path: str):
         if save_path is None or save_path.lower() == "none":
             print("WARNING: Not saving model because `save_path` is None")
             return
-        # self.save_optimizer(save_path)  # TODO: for saving memory
+        if self.save_optim:
+            self.save_optimizer(save_path)
         self.save_model(save_path)
 
 
@@ -104,9 +123,11 @@ class ParallelTrainer(Trainer):
     def __init__(
             self,
             model: ParallelModule,
-            optimizer: torch.optim.Optimizer
+            optimizer: torch.optim.Optimizer,
+            save_optim: bool = False,
+            accumulation_steps: int = 1
     ):
-        super().__init__(model, optimizer)
+        super().__init__(model, optimizer, save_optim=save_optim, accumulation_steps=accumulation_steps)
         self.model_parallel_world_size = model.model_parallel_world_size
         self.model_parallel_rank = model.model_parallel_rank
         self.model_parallel_src_rank = model.model_parallel_src_rank
@@ -134,12 +155,8 @@ class ParallelTrainer(Trainer):
             checkpoints
         ), f"Loading a optimizer for MP={len(checkpoints)} but world size is {self.model_parallel_world_size}"
         optim_file = checkpoints[self.model_parallel_rank]
-        state_dict = torch.load(str(optim_file))
+        state_dict = torch.load(str(optim_file), map_location=f"cuda:{self.model_parallel_rank}")
         self.optimizer.load_state_dict(state_dict)
-        for state in self.optimizer.state.values():
-            for k, v in state.items():
-                if torch.is_tensor(v):
-                    state[k] = v.cuda()
         set_barrier()
         print(f'Loading done !')
 
@@ -151,23 +168,12 @@ class ParallelModelTrainer(ParallelTrainer):
             tokenizer: Tokenizer,
             optimizer: torch.optim.Optimizer,
             max_seq_len: int,
-            accumulation_steps: int = 1
+            accumulation_steps: int = 1,
+            save_optim: bool = False
     ):
-        super().__init__(model, optimizer)
-        self.model = model
+        super().__init__(model, optimizer, save_optim=save_optim, accumulation_steps=accumulation_steps)
         self.max_seq_len = max_seq_len
         self.tokenizer = tokenizer
-        self.optimizer = optimizer
-        self.accumulation_steps = accumulation_steps
-        self.step = 0
-
-    def _back_propagation(self, loss: torch.Tensor):
-        self.step += 1
-        loss = loss / self.accumulation_steps
-        loss.backward()
-        if self.step % self.accumulation_steps == 0:
-            self.optimizer.step()
-            self.optimizer.zero_grad()
 
     def prepare_for_forward(
             self,
@@ -201,14 +207,16 @@ class ParallelSolverTrainer(ParallelModelTrainer):
             tokenizer: Tokenizer,
             optimizer: torch.optim.Optimizer,
             max_seq_len: int,
-            accumulation_steps: int = 1
+            accumulation_steps: int = 1,
+            save_optim: bool = False
     ):
         super().__init__(
             model=model,
             tokenizer=tokenizer,
             optimizer=optimizer,
             max_seq_len=max_seq_len,
-            accumulation_steps=accumulation_steps
+            accumulation_steps=accumulation_steps,
+            save_optim=save_optim
         )
         self.criterion = nn.CrossEntropyLoss(ignore_index=-100)
 
@@ -221,7 +229,7 @@ class ParallelSolverTrainer(ParallelModelTrainer):
             input=logits.view(-1, logits.size(-1)),
             target=example.labels.view(-1).to(logits.device)
         )
-        self._back_propagation(loss)
+        self.backward(loss)
         Output = collections.namedtuple('Output', ['loss', 'logits'])
         return Output(logits=logits, loss=loss.item())
 
@@ -259,7 +267,7 @@ class ParallelSolverLossThresholdTrainer(ParallelSolverTrainer):
         loss = masked_mean(loss, example.labels.to(logits.device) != -100, dim=-1)
         origin_loss = loss.mean()
         loss = masked_mean(loss, loss < self.loss_threshold)
-        self._back_propagation(loss)
+        self.backward(loss)
         Output = collections.namedtuple('Output', ['loss', 'logits', 'origin_loss'])
         return Output(logits=logits, loss=loss.item(), origin_loss=origin_loss.item())
 
@@ -320,7 +328,7 @@ class ParallelSolverDistillTrainer(ParallelModelTrainer):
                 temperature=temperature
             )
         loss = loss_ce + loss_kl
-        self._back_propagation(loss)
+        self.backward(loss)
         Output = collections.namedtuple('Output', ['loss', 'logits', 'loss_kl', 'loss_ce'])
         return Output(
             logits=logits,
@@ -377,7 +385,7 @@ class ParallelSolverTripleDistillTrainer(ParallelModelTrainer):
             masks=example.masks
         )
         loss = loss_ce + alpha * loss_kl + beta * loss_kl_
-        self._back_propagation(loss)
+        self.backward(loss)
         Output = collections.namedtuple('Output', ['loss', 'logits', 'loss_kl', 'loss_ce', 'loss_kl_'])
         return Output(logits=logits, loss=loss, loss_kl=loss_kl, loss_ce=loss_ce, loss_kl_=loss_kl_)
 
@@ -463,7 +471,7 @@ class ParallelSolverMccDistillTrainer(ParallelModelTrainer):
         kl_loss = alpha * self.compute_kl_for_mcc(indices_a, indices_b, logits_a, logits_b, T)
 
         loss = ce_loss + kl_loss
-        self._back_propagation(loss)
+        self.backward(loss)
         Output = collections.namedtuple('Output', ['logits_a', 'logits_b', 'loss', 'loss_kl', 'loss_ce'])
         return Output(logits_a=logits_a, logits_b=logits_b, loss=loss, loss_kl=kl_loss, loss_ce=ce_loss)
 
@@ -554,7 +562,7 @@ class ParallelSolverReferenceDistillTrainer(ParallelModelTrainer):
         )
         loss_kl = kl_coef * kl_loss_outputs.loss
         loss = loss_ce + loss_kl
-        self._back_propagation(loss)
+        self.backward(loss)
         Output = collections.namedtuple('Output', ['loss', 'logits', 'loss_kl', 'loss_ce', 'refs'])
         return Output(logits=logits, loss=loss, loss_kl=loss_kl, loss_ce=loss_ce, refs=kl_loss_outputs.refs)
 
@@ -619,7 +627,7 @@ class ParallelSolverDPOTrainer(ParallelModelTrainer):
             )
             loss += ce_loss
 
-        self._back_propagation(loss)
+        self.backward(loss)
 
         Output = collections.namedtuple('Output', ['logits', 'loss', 'loss_dpo', 'loss_ce'])
         return Output(
@@ -678,7 +686,7 @@ class ParallelSolverSimPOTrainer(ParallelModelTrainer):
             )
             loss += ce_loss
 
-        self._back_propagation(loss)
+        self.backward(loss)
 
         Output = collections.namedtuple('Output', ['logits', 'loss', 'loss_simpo', 'loss_ce'])
         return Output(
@@ -721,7 +729,7 @@ class ParallelSolverORPOTrainer(ParallelModelTrainer):
             rejected_masks=rejected_examples.masks,
         )
 
-        self._back_propagation(loss)
+        self.backward(loss)
 
         Output = collections.namedtuple('Output', ['logits', 'loss'])
         return Output(logits=chosen_logits, loss=loss.item())
@@ -832,4 +840,3 @@ class ParallelVerifierPointwiseTrainer(ParallelVerifierTrainer):
 
         Output = collections.namedtuple('Output', ['loss'])
         return Output(loss=loss)
-

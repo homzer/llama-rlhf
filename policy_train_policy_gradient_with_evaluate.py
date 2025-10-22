@@ -1,14 +1,14 @@
 import os
 
 import fire
-import torch
 
 from policy_train_policy_gradient import re_scoring_eos_rewards, train_policy_gradient
 from policy_train_ppo import collect_actor_buffer, collect_verifier_buffer
 from policy_train_ppo_with_evaluate import evaluate_actor
 from src.dataset import JsonDataset
+from src.entities import IterationHandler
 from src.parallel.initialize import setup_model_parallel
-from src.ppo.buffer import PolicyRolloutBuffer
+from src.ppo.buffer import RolloutBuffer
 from src.utils import json_load, print_current_func_args
 
 
@@ -44,8 +44,10 @@ def run(
         use_chat_template: bool = False,
         seed: int = None,
         use_last_token_reward: bool = False,
+        last_token_reward_only: bool = False,
         train_strategy: str = "vanilla",
-        delta: float = 0.01,
+        rho_pos: float = 1.8,
+        rho_neg: float = 0.9,
         reward_sub_mean: bool = False,
         model_parallel_size: int = None,
         sequence_parallel_size: int = 1
@@ -62,104 +64,92 @@ def run(
     verifier_config_file = verifier_config_file or verifier_ckpt_dir
     verifier_tokenizer_file = verifier_tokenizer_file or verifier_ckpt_dir
 
-    datalist = json_load(train_file)
-    chunk_size = chunk_size or len(datalist)
-    local_epochs = len(datalist) // chunk_size
-    begin_global_epoch = begin_epoch // local_epochs
-    begin_local_epoch = begin_epoch % local_epochs
-    for global_epoch in range(begin_global_epoch, epochs):
-        for local_epoch in range(begin_local_epoch, local_epochs):
-            epoch = local_epoch + global_epoch * local_epochs
-            print(f"Epoch - {epoch} of {local_epochs * epochs}")
-            dataset = JsonDataset(f=datalist[local_epoch * chunk_size: (local_epoch + 1) * chunk_size])
-            if len(dataset) == 0:
-                continue
+    for epoch, datalist in IterationHandler(json_load(train_file), epochs, chunk_size, begin_epoch):
+        dataset = JsonDataset(datalist)
+        if len(dataset) == 0:
+            continue
 
-            # Collecting policy buffer
-            policy_rollout_buffer = collect_actor_buffer(
-                actor_model_type=policy_model_type,
-                actor_config_file=policy_config_file,
-                max_seq_len=max_seq_len,
-                actor_tokenizer_file=policy_tokenizer_file,
-                dtype=dtype,
-                actor_ckpt_dir=policy_ckpt_dir,
-                epoch=epoch,
-                actor_save_dir=save_dir,
-                use_chat_template=use_chat_template,
-                dataset=dataset,
-                max_generate_batch_size=max_generate_batch_size,
-                temperature=temperature,
-                top_p=top_p,
-                num_samples_per_prompt=num_samples_per_prompt
-            )
+        # Collecting policy buffer
+        policy_rollout_buffer = collect_actor_buffer(
+            actor_model_type=policy_model_type,
+            actor_config_file=policy_config_file,
+            max_seq_len=max_seq_len,
+            actor_tokenizer_file=policy_tokenizer_file,
+            dtype=dtype,
+            actor_ckpt_dir=policy_ckpt_dir,
+            epoch=epoch,
+            actor_save_dir=save_dir,
+            use_chat_template=use_chat_template,
+            dataset=dataset,
+            max_generate_batch_size=max_generate_batch_size,
+            temperature=temperature,
+            top_p=top_p,
+            num_samples_per_prompt=num_samples_per_prompt
+        )
 
-            verifier_rollout_buffer = collect_verifier_buffer(
-                verifier_model_type=verifier_model_type,
-                verifier_config_file=verifier_config_file,
-                max_seq_len=max_seq_len,
-                verifier_tokenizer_file=verifier_tokenizer_file,
-                dtype=dtype,
-                verifier_ckpt_dir=verifier_ckpt_dir,
-                actor_rollout_buffer=policy_rollout_buffer,
-                max_forward_batch_size=max_forward_batch_size
-            )
+        verifier_rollout_buffer = collect_verifier_buffer(
+            verifier_model_type=verifier_model_type,
+            verifier_config_file=verifier_config_file,
+            max_seq_len=max_seq_len,
+            verifier_tokenizer_file=verifier_tokenizer_file,
+            dtype=dtype,
+            verifier_ckpt_dir=verifier_ckpt_dir,
+            actor_rollout_buffer=policy_rollout_buffer,
+            max_forward_batch_size=max_forward_batch_size,
+            use_last_token_reward=use_last_token_reward,
+            last_token_reward_only=last_token_reward_only
+        )
+        print(f"Average Rewards: {verifier_rollout_buffer.mean()}")
+        verifier_rollout_buffer.normalize(reward_sub_mean=reward_sub_mean)
 
-            print(f"Average Rewards: {verifier_rollout_buffer.mean(use_last_token_reward=use_last_token_reward)}")
+        rollout_buffer = RolloutBuffer(
+            obs=policy_rollout_buffer["obs"],
+            actions=policy_rollout_buffer["actions"],
+            rewards=verifier_rollout_buffer["scores"],
+            action_logits=policy_rollout_buffer["action_logits"],
+            action_masks=policy_rollout_buffer["action_masks"],
+            action_logprobs=policy_rollout_buffer["action_logprobs"],
 
-            rollout_buffer = PolicyRolloutBuffer(
-                obs=policy_rollout_buffer["obs"],
-                actions=policy_rollout_buffer["actions"],
-                rewards=verifier_rollout_buffer["scores"],
-                values=verifier_rollout_buffer["scores"],  # pseudo
-                action_logits=policy_rollout_buffer["action_logits"],
-                action_masks=policy_rollout_buffer["action_masks"],
-                action_logprobs=policy_rollout_buffer["action_logprobs"],
-                use_last_token_reward=use_last_token_reward,
-                reward_sub_mean=reward_sub_mean
-            )
-            rollout_buffer = re_scoring_eos_rewards(rollout_buffer)
+        )
+        rollout_buffer = re_scoring_eos_rewards(rollout_buffer)
 
-            train_policy_gradient(
-                rollout_buffer=rollout_buffer,
-                policy_ckpt_dir=policy_ckpt_dir,
-                policy_model_type=policy_model_type,
-                policy_config_file=policy_config_file,
-                policy_tokenizer_file=policy_tokenizer_file,
-                max_seq_len=max_seq_len,
-                lora_rank=lora_rank,
-                dtype=dtype,
-                lora_dtype=lora_dtype,
-                lr=lr,
-                epoch=epoch,
-                inner_epochs=inner_epochs,
-                save_dir=save_dir,
-                max_batch_size=max_batch_size,
-                train_strategy=train_strategy,
-                delta=delta
-            )
+        train_policy_gradient(
+            rollout_buffer=rollout_buffer,
+            policy_ckpt_dir=policy_ckpt_dir,
+            policy_model_type=policy_model_type,
+            policy_config_file=policy_config_file,
+            policy_tokenizer_file=policy_tokenizer_file,
+            max_seq_len=max_seq_len,
+            lora_rank=lora_rank,
+            dtype=dtype,
+            lora_dtype=lora_dtype,
+            lr=lr,
+            epoch=epoch,
+            inner_epochs=inner_epochs,
+            save_dir=save_dir,
+            max_batch_size=max_batch_size,
+            train_strategy=train_strategy,
+            rho_pos=rho_pos,
+            rho_neg=rho_neg
+        )
 
-            if parallel_infos.global_rank == 0:
-                torch.save({
-                    'obs': rollout_buffer.obs,
-                    'actions': rollout_buffer.actions,
-                    'rewards': rollout_buffer.origin_rewards,
-                    'action_masks': rollout_buffer.action_masks
-                }, os.path.join(save_dir, "epoch-%03d" % (epoch + 1), f"buffer.bin"))
+        if parallel_infos.global_rank == 0:
+            rollout_buffer.save(os.path.join(save_dir, "epoch-%03d" % (epoch + 1)))
 
-            evaluate_actor(
-                task=task,
-                label_file=label_file,
-                log_dir=log_dir,
-                actor_model_type=policy_model_type,
-                actor_config_file=policy_config_file,
-                max_seq_len=max_seq_len,
-                actor_tokenizer_file=policy_tokenizer_file,
-                dtype=dtype,
-                epoch=epoch,
-                actor_save_dir=save_dir,
-                max_generate_batch_size=max_generate_batch_size,
-                use_chat_template=use_chat_template
-            )
+        evaluate_actor(
+            task=task,
+            label_file=label_file,
+            log_dir=log_dir,
+            actor_model_type=policy_model_type,
+            actor_config_file=policy_config_file,
+            max_seq_len=max_seq_len,
+            actor_tokenizer_file=policy_tokenizer_file,
+            dtype=dtype,
+            epoch=epoch,
+            actor_save_dir=save_dir,
+            max_generate_batch_size=max_generate_batch_size,
+            use_chat_template=use_chat_template
+        )
 
 
 if __name__ == '__main__':

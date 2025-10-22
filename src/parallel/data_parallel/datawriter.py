@@ -6,7 +6,7 @@ from src.parallel.initialize import get_data_parallel_src_rank, get_data_paralle
 
 
 class ParallelDataWriter:
-    def __init__(self, file: str, mode: str = 'w'):
+    def __init__(self, file: str, mode: str = 'w', final_gather: bool = True):
         self.global_rank = int(os.environ.get("RANK"))
         self.data_parallel_src_rank = get_data_parallel_src_rank()
         self.worker_id = get_data_parallel_rank()
@@ -15,6 +15,7 @@ class ParallelDataWriter:
         self.writer = None
         if self.data_parallel_src_rank == 0:
             self.writer = open(self.worker_file, mode=mode, encoding="utf-8")
+        self.final_gather = final_gather
 
     def format_file(self, file: str) -> str:
         match = re.search(r".+(\..+)$", file)
@@ -25,14 +26,15 @@ class ParallelDataWriter:
     def __del__(self):
         self.flush()
 
-        # Gather data from data parallel region
-        with open(self.worker_file, mode='r', encoding="utf-8") as reader:
-            s = [line.strip() for line in reader]
-        ss = gather_object_from_data_parallel_region(s)
-        if self.global_rank == 0:
-            with open(self.file, "w", encoding="utf-8") as writer:
-                for s in ss:
-                    writer.write(s + '\n')
+        if self.final_gather:
+            # Gather data from data parallel region
+            with open(self.worker_file, mode='r', encoding="utf-8") as reader:
+                s = [line.strip() for line in reader]
+            ss = gather_object_from_data_parallel_region(s)
+            if self.global_rank == 0:
+                with open(self.file, "w", encoding="utf-8") as writer:
+                    for s in ss:
+                        writer.write(s + '\n')
 
         if self.writer:
             self.writer.close()

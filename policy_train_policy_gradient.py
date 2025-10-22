@@ -7,41 +7,37 @@ import torch
 
 from policy_train_ppo import collect_actor_buffer, collect_verifier_buffer
 from src.dataset import JsonDataset
-from src.entities import Timer
+from src.entities import Timer, IterationHandler
 from src.modeling import get_parallel_model
 from src.parallel.initialize import setup_model_parallel, set_barrier
 from src.parallel.optimizer import ParallelOptimizer
-from src.ppo.buffer import PolicyRolloutBuffer
+from src.ppo.buffer import PPORolloutBuffer, RolloutBuffer
 from src.ppo.trainer import (
     ParallelPolicyGradientTrainerForCausalLM,
     ParallelGRPOTrainerForCausalLM,
-    ParallelPolicyGradientConvexTrainerForCausalLM
 )
+from src.ppo.trainer_logits_convex import ParallelPolicyGradientLogitsConvexTrainerForCausalLM
 from src.utils import json_load, print_current_func_args
 
 
-def re_scoring_eos_rewards(buffer: PolicyRolloutBuffer) -> PolicyRolloutBuffer:
+def re_scoring_eos_rewards(buffer: PPORolloutBuffer | RolloutBuffer):
     # Setting the reward of [EOS] token to average reward of the sequence.
-    for i, action_mask in enumerate(buffer.action_masks):
-        nonzero_indices = np.nonzero(action_mask)[0]
-        if len(nonzero_indices) > 0:
-            buffer.rewards[i][nonzero_indices[-1]] = np.mean(buffer.rewards[i][action_mask])
-
-    return buffer
-
-
-def re_scoring_token_rewards(buffer: PolicyRolloutBuffer) -> PolicyRolloutBuffer:
-    # Setting the rewards of every token to be the same as the [EOS] token reward.
-    for i, action_mask in enumerate(buffer.action_masks):
-        nonzero_indices = np.nonzero(action_mask)[0]
-        if len(nonzero_indices) > 0:
-            buffer.rewards[i][action_mask] = buffer.rewards[i][nonzero_indices[-1]]
+    if isinstance(buffer, PPORolloutBuffer):
+        for i, action_mask in enumerate(buffer.action_masks):
+            nonzero_indices = np.nonzero(action_mask)[0]
+            if len(nonzero_indices) > 0:
+                buffer.rewards[i][nonzero_indices[-1]] = np.mean(buffer.rewards[i][action_mask])
+    elif isinstance(buffer, RolloutBuffer):
+        for i, action_mask in enumerate(buffer["action_masks"]):
+            nonzero_indices = np.nonzero(action_mask)[0]
+            if len(nonzero_indices) > 0:
+                buffer["rewards"][i][nonzero_indices[-1]] = np.mean(buffer["rewards"][i][action_mask])
 
     return buffer
 
 
 def train_policy_gradient(
-        rollout_buffer: PolicyRolloutBuffer,
+        rollout_buffer: RolloutBuffer,
         policy_ckpt_dir: str,
         policy_model_type: str,
         policy_config_file: str,
@@ -56,7 +52,11 @@ def train_policy_gradient(
         save_dir: str,
         max_batch_size: int,
         train_strategy: str = "vanilla",  # "ratio" or "convex"
-        delta: float = 0.01
+        rho_pos: float = 1.8,
+        rho_neg: float = 0.9,
+        clip_range: float = 0.2,
+        save_optim: bool = False,
+        accumulation_steps: int = 1
 ):
     policy, policy_tokenizer = get_parallel_model(
         model_type=policy_model_type,
@@ -70,13 +70,16 @@ def train_policy_gradient(
     optimizer = ParallelOptimizer(torch.optim.Adam(policy.parameters(), lr=lr))
     if train_strategy == "vanilla":
         print("Using ParallelPolicyGradientTrainerForCausalLM")
-        trainer = ParallelPolicyGradientTrainerForCausalLM(policy, optimizer)
+        trainer = ParallelPolicyGradientTrainerForCausalLM(
+            policy, optimizer, save_optim=save_optim, accumulation_steps=accumulation_steps)
     elif train_strategy == "ratio":
         print("Using ParallelGRPOTrainerForCausalLM")
-        trainer = ParallelGRPOTrainerForCausalLM(policy, optimizer)
+        trainer = ParallelGRPOTrainerForCausalLM(
+            policy, optimizer, clip_range=clip_range, save_optim=save_optim, accumulation_steps=accumulation_steps)
     elif train_strategy == "convex":
-        print("Using ParallelPolicyGradientConvexTrainerForCausalLM")
-        trainer = ParallelPolicyGradientConvexTrainerForCausalLM(policy, optimizer, delta)
+        print("Using ParallelPolicyGradientConvexBoundedTrainerForCausalLM")
+        trainer = ParallelPolicyGradientLogitsConvexTrainerForCausalLM(
+            policy, optimizer, rho_pos=rho_pos, rho_neg=rho_neg, save_optim=save_optim, accumulation_steps=accumulation_steps)
     else:
         raise ValueError(train_strategy)
 
@@ -84,9 +87,9 @@ def train_policy_gradient(
             epoch == 0
     ) else trainer.load(os.path.join(save_dir, "epoch-%03d" % epoch))
     print('Policy training ...')
-    timer = Timer(total=(len(rollout_buffer) // max_batch_size) * inner_epochs, episode=100)
+    timer = Timer(total=(rollout_buffer.size() // max_batch_size) * inner_epochs, episode=100)
     for inner_epoch in range(inner_epochs):
-        for data in rollout_buffer.get(max_batch_size):
+        for data in rollout_buffer.get(max_batch_size, shuffle=True, output_tensor=True):
             timer.step()
             trainer_outputs = trainer.forward(data)
             if trainer.step % 100 == 0:
@@ -135,6 +138,9 @@ def run(
         seed: int = None,
         train_strategy: str = "vanilla",
         use_last_token_reward: bool = False,
+        last_token_reward_only: bool = False,
+        save_optim: bool = False,
+        accumulation_steps: int = 1,
         model_parallel_size: int = None,
         sequence_parallel_size: int = 1,
 ):
@@ -150,87 +156,75 @@ def run(
     verifier_config_file = verifier_config_file or verifier_ckpt_dir
     verifier_tokenizer_file = verifier_tokenizer_file or verifier_ckpt_dir
 
-    datalist = json_load(train_file)
-    chunk_size = chunk_size or len(datalist)
-    local_epochs = len(datalist) // chunk_size
-    begin_global_epoch = begin_epoch // local_epochs
-    begin_local_epoch = begin_epoch % local_epochs
-    for global_epoch in range(begin_global_epoch, epochs):
-        for local_epoch in range(begin_local_epoch, local_epochs):
-            epoch = local_epoch + global_epoch * local_epochs
-            print(f"Epoch - {epoch} of {local_epochs * epochs}")
-            dataset = JsonDataset(f=datalist[local_epoch * chunk_size: (local_epoch + 1) * chunk_size])
-            if len(dataset) == 0:
-                continue
+    for epoch, datalist in IterationHandler(json_load(train_file), epochs, chunk_size, begin_epoch):
+        dataset = JsonDataset(datalist)
+        if len(dataset) == 0:
+            continue
 
-            # Collecting policy buffer
-            policy_rollout_buffer = collect_actor_buffer(
-                actor_model_type=policy_model_type,
-                actor_config_file=policy_config_file,
-                max_seq_len=max_seq_len,
-                actor_tokenizer_file=policy_tokenizer_file,
-                dtype=dtype,
-                actor_ckpt_dir=policy_ckpt_dir,
-                epoch=epoch,
-                actor_save_dir=save_dir,
-                use_chat_template=use_chat_template,
-                dataset=dataset,
-                max_generate_batch_size=max_generate_batch_size,
-                temperature=temperature,
-                top_p=top_p,
-                num_samples_per_prompt=num_samples_per_prompt
-            )
+        # Collecting policy buffer
+        policy_rollout_buffer = collect_actor_buffer(
+            actor_model_type=policy_model_type,
+            actor_config_file=policy_config_file,
+            max_seq_len=max_seq_len,
+            actor_tokenizer_file=policy_tokenizer_file,
+            dtype=dtype,
+            actor_ckpt_dir=policy_ckpt_dir,
+            epoch=epoch,
+            actor_save_dir=save_dir,
+            use_chat_template=use_chat_template,
+            dataset=dataset,
+            max_generate_batch_size=max_generate_batch_size,
+            temperature=temperature,
+            top_p=top_p,
+            num_samples_per_prompt=num_samples_per_prompt
+        )
 
-            verifier_rollout_buffer = collect_verifier_buffer(
-                verifier_model_type=verifier_model_type,
-                verifier_config_file=verifier_config_file,
-                max_seq_len=max_seq_len,
-                verifier_tokenizer_file=verifier_tokenizer_file,
-                dtype=dtype,
-                verifier_ckpt_dir=verifier_ckpt_dir,
-                actor_rollout_buffer=policy_rollout_buffer,
-                max_forward_batch_size=max_forward_batch_size
-            )
+        verifier_rollout_buffer = collect_verifier_buffer(
+            verifier_model_type=verifier_model_type,
+            verifier_config_file=verifier_config_file,
+            max_seq_len=max_seq_len,
+            verifier_tokenizer_file=verifier_tokenizer_file,
+            dtype=dtype,
+            verifier_ckpt_dir=verifier_ckpt_dir,
+            actor_rollout_buffer=policy_rollout_buffer,
+            max_forward_batch_size=max_forward_batch_size,
+            use_last_token_reward=use_last_token_reward,
+            last_token_reward_only=last_token_reward_only
+        )
+        print(f"Average Rewards: {verifier_rollout_buffer.mean()}")
+        verifier_rollout_buffer.normalize()
 
-            print(f"Average Rewards: {verifier_rollout_buffer.mean(use_last_token_reward)}")
+        rollout_buffer = RolloutBuffer(
+            obs=policy_rollout_buffer["obs"],
+            actions=policy_rollout_buffer["actions"],
+            rewards=verifier_rollout_buffer["scores"],
+            action_masks=policy_rollout_buffer["action_masks"],
+            action_logprobs=policy_rollout_buffer["action_logprobs"]
+        )
+        rollout_buffer = re_scoring_eos_rewards(rollout_buffer)
 
-            rollout_buffer = PolicyRolloutBuffer(
-                obs=policy_rollout_buffer["obs"],
-                actions=policy_rollout_buffer["actions"],
-                rewards=verifier_rollout_buffer["scores"],
-                values=verifier_rollout_buffer["scores"],  # pseudo
-                action_logits=policy_rollout_buffer["action_logits"],
-                action_masks=policy_rollout_buffer["action_masks"],
-                action_logprobs=policy_rollout_buffer["action_logprobs"],
-                use_last_token_reward=use_last_token_reward
-            )
-            rollout_buffer = re_scoring_eos_rewards(rollout_buffer)
+        train_policy_gradient(
+            rollout_buffer=rollout_buffer,
+            policy_ckpt_dir=policy_ckpt_dir,
+            policy_model_type=policy_model_type,
+            policy_config_file=policy_config_file,
+            policy_tokenizer_file=policy_tokenizer_file,
+            max_seq_len=max_seq_len,
+            lora_rank=lora_rank,
+            dtype=dtype,
+            lora_dtype=lora_dtype,
+            lr=lr,
+            epoch=epoch,
+            inner_epochs=inner_epochs,
+            save_dir=save_dir,
+            max_batch_size=max_batch_size,
+            train_strategy=train_strategy,
+            accumulation_steps=accumulation_steps,
+            save_optim=save_optim
+        )
 
-            train_policy_gradient(
-                rollout_buffer=rollout_buffer,
-                policy_ckpt_dir=policy_ckpt_dir,
-                policy_model_type=policy_model_type,
-                policy_config_file=policy_config_file,
-                policy_tokenizer_file=policy_tokenizer_file,
-                max_seq_len=max_seq_len,
-                lora_rank=lora_rank,
-                dtype=dtype,
-                lora_dtype=lora_dtype,
-                lr=lr,
-                epoch=epoch,
-                inner_epochs=inner_epochs,
-                save_dir=save_dir,
-                max_batch_size=max_batch_size,
-                train_strategy=train_strategy
-            )
-
-            if parallel_infos.local_rank == 0:
-                torch.save({
-                    'obs': rollout_buffer.obs,
-                    'actions': rollout_buffer.actions,
-                    'rewards': rollout_buffer.origin_rewards,
-                    'action_masks': rollout_buffer.action_masks
-                }, os.path.join(save_dir, "epoch-%03d" % (epoch + 1), f"buffer.bin"))
+        if parallel_infos.local_rank == 0:
+            rollout_buffer.save(os.path.join(save_dir, "epoch-%03d" % (epoch + 1)))
 
 
 if __name__ == '__main__':

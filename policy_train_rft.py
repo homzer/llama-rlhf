@@ -7,7 +7,7 @@ import torch.optim
 from policy_train_ppo import collect_actor_buffer, collect_verifier_buffer
 from policy_train_ppo_best_of_n import select_best_of_n_buffer
 from src.dataset import JsonDataset
-from src.entities import Timer
+from src.entities import Timer, IterationHandler
 from src.modeling import get_parallel_model
 from src.parallel.initialize import setup_model_parallel, set_barrier
 from src.parallel.optimizer import ParallelOptimizer
@@ -30,7 +30,8 @@ def train_rft_policy(
         epoch: int,
         save_dir: str,
         max_batch_size: int,
-        inner_epochs: int
+        inner_epochs: int,
+        accumulation_steps: int = 1
 ):
     model, tokenizer = get_parallel_model(
         model_type=policy_model_type,
@@ -46,14 +47,15 @@ def train_rft_policy(
         model=model,
         tokenizer=tokenizer,
         optimizer=optimizer,
-        max_seq_len=max_seq_len
+        max_seq_len=max_seq_len,
+        accumulation_steps=accumulation_steps
     )
     trainer.load_model(policy_ckpt_dir) if (
             epoch == 0
     ) else trainer.load(os.path.join(save_dir, "epoch-%03d" % epoch))
     timer = Timer(total=(policy_rollout_buffer.size() // max_batch_size) * inner_epochs, episode=100)
     for inner_epoch in range(inner_epochs):
-        for data in policy_rollout_buffer.get(max_batch_size):
+        for data in policy_rollout_buffer.get(max_batch_size, shuffle=True, output_tensor=True):
             timer.step()
             trainer_outputs = trainer.forward(
                 instructions=data.instructions,
@@ -99,84 +101,89 @@ def run(
         num_samples_per_prompt: int = 4,
         num_samples_keep_per_prompt: int = 1,
         use_last_token_reward: bool = False,
+        accumulation_steps: int = 1,
         dtype: str = "bfloat16",
         begin_epoch: int = 0,
         use_chat_template: bool = False,
+        log_dir: str = None,
+        seed: int = None,
+        model_parallel_size: int = None,
+        sequence_parallel_size: int = 1
 ):
-    setup_model_parallel()
+    setup_model_parallel(
+        seed=seed,
+        log_dir=log_dir,
+        model_parallel_size=model_parallel_size,
+        sequence_parallel_size=sequence_parallel_size
+    )
     policy_config_file = policy_config_file or policy_ckpt_dir
     policy_tokenizer_file = policy_tokenizer_file or policy_ckpt_dir
     verifier_config_file = verifier_config_file or verifier_ckpt_dir
     verifier_tokenizer_file = verifier_tokenizer_file or verifier_ckpt_dir
 
-    datalist = json_load(train_file)
-    chunk_size = chunk_size or len(datalist)
-    local_epochs = len(datalist) // chunk_size
-    begin_global_epoch = begin_epoch // local_epochs
-    begin_local_epoch = begin_epoch % local_epochs
-    for global_epoch in range(begin_global_epoch, epochs):
-        for local_epoch in range(begin_local_epoch, local_epochs):
-            epoch = local_epoch + global_epoch * local_epochs
-            print(f"Epoch - {epoch} of {local_epochs * epochs}")
-            dataset = JsonDataset(f=datalist[local_epoch * chunk_size: (local_epoch + 1) * chunk_size])
-            if len(dataset) == 0:
-                continue
+    for epoch, datalist in IterationHandler(json_load(train_file), epochs, chunk_size, begin_epoch):
+        dataset = JsonDataset(datalist)
+        if len(dataset) == 0:
+            continue
 
-            # Collecting policy buffer
-            policy_rollout_buffer = collect_actor_buffer(
-                actor_model_type=policy_model_type,
-                actor_config_file=policy_config_file,
-                max_seq_len=max_seq_len,
-                actor_tokenizer_file=policy_tokenizer_file,
-                dtype=dtype,
-                actor_ckpt_dir=policy_ckpt_dir,
-                epoch=epoch,
-                actor_save_dir=save_dir,
-                use_chat_template=use_chat_template,
-                dataset=dataset,
-                max_generate_batch_size=max_generate_batch_size,
-                temperature=temperature,
-                top_p=top_p,
-                num_samples_per_prompt=num_samples_per_prompt,
-            )
+        # Collecting policy buffer
+        policy_rollout_buffer = collect_actor_buffer(
+            actor_model_type=policy_model_type,
+            actor_config_file=policy_config_file,
+            max_seq_len=max_seq_len,
+            actor_tokenizer_file=policy_tokenizer_file,
+            dtype=dtype,
+            actor_ckpt_dir=policy_ckpt_dir,
+            epoch=epoch,
+            actor_save_dir=save_dir,
+            use_chat_template=use_chat_template,
+            dataset=dataset,
+            max_generate_batch_size=max_generate_batch_size,
+            temperature=temperature,
+            top_p=top_p,
+            num_samples_per_prompt=num_samples_per_prompt,
+        )
 
-            # Collecting verifier buffer
-            verifier_rollout_buffer = collect_verifier_buffer(
-                verifier_model_type=verifier_model_type,
-                verifier_config_file=verifier_config_file,
-                max_seq_len=max_seq_len,
-                verifier_tokenizer_file=verifier_tokenizer_file,
-                dtype=dtype,
-                verifier_ckpt_dir=verifier_ckpt_dir,
-                actor_rollout_buffer=policy_rollout_buffer,
-                max_forward_batch_size=max_forward_batch_size
-            )
+        # Collecting verifier buffer
+        verifier_rollout_buffer = collect_verifier_buffer(
+            verifier_model_type=verifier_model_type,
+            verifier_config_file=verifier_config_file,
+            max_seq_len=max_seq_len,
+            verifier_tokenizer_file=verifier_tokenizer_file,
+            dtype=dtype,
+            verifier_ckpt_dir=verifier_ckpt_dir,
+            actor_rollout_buffer=policy_rollout_buffer,
+            max_forward_batch_size=max_forward_batch_size,
+            use_last_token_reward=use_last_token_reward
+        )
+        print(f"Average Rewards: {verifier_rollout_buffer.mean()}")
 
-            policy_rollout_buffer, _ = select_best_of_n_buffer(
-                actor_rollout_buffer=policy_rollout_buffer,
-                verifier_rollout_buffer=verifier_rollout_buffer,
-                num_samples_per_prompt=num_samples_per_prompt,
-                num_samples_keep_per_prompt=num_samples_keep_per_prompt,
-                use_last_token_reward=use_last_token_reward
-            )
+        policy_rollout_buffer, _ = select_best_of_n_buffer(
+            actor_rollout_buffer=policy_rollout_buffer,
+            verifier_rollout_buffer=verifier_rollout_buffer,
+            num_samples_per_prompt=num_samples_per_prompt,
+            num_samples_keep_per_prompt=num_samples_keep_per_prompt,
+            use_last_token_reward=use_last_token_reward
+        )
 
-            print("Training policy ......")
-            train_rft_policy(
-                policy_rollout_buffer=policy_rollout_buffer,
-                policy_model_type=policy_model_type,
-                policy_config_file=policy_config_file,
-                max_seq_len=max_seq_len,
-                policy_tokenizer_file=policy_tokenizer_file,
-                lora_dtype=lora_dtype,
-                lora_rank=lora_rank,
-                dtype=dtype,
-                lr=lr,
-                policy_ckpt_dir=policy_ckpt_dir,
-                epoch=epoch,
-                save_dir=save_dir,
-                max_batch_size=max_batch_size,
-                inner_epochs=inner_epochs
-            )
+        print("Training policy ......")
+        train_rft_policy(
+            policy_rollout_buffer=policy_rollout_buffer,
+            policy_model_type=policy_model_type,
+            policy_config_file=policy_config_file,
+            max_seq_len=max_seq_len,
+            policy_tokenizer_file=policy_tokenizer_file,
+            lora_dtype=lora_dtype,
+            lora_rank=lora_rank,
+            dtype=dtype,
+            lr=lr,
+            policy_ckpt_dir=policy_ckpt_dir,
+            epoch=epoch,
+            save_dir=save_dir,
+            max_batch_size=max_batch_size,
+            inner_epochs=inner_epochs,
+            accumulation_steps=accumulation_steps
+        )
 
 
 if __name__ == '__main__':

@@ -63,6 +63,7 @@ def main(
         use_chat_template: bool = False,
         dtype: str = "bfloat16",
         seed: int = None,
+        eval_greedy: bool = False,
         model_parallel_size: int = None,
         sequence_parallel_size: int = 1,
 ):
@@ -85,21 +86,33 @@ def main(
         dtype=dtype
     )
     model.load(ckpt_dir)
+
+    # greedy results
     dataset = JsonDataset(label_file)
-    dataset.repeat(n=num_samples_per_prompt).shuffle()
     if use_chat_template:
         dataset = ChatTemplateDataset(dataset, tokenizer)
-
     evaluator = DataParallelPolicyEvaluator(
         model=model,
         tokenizer=tokenizer,
         batch_size=max_batch_size,
         max_seq_len=max_seq_len,
-        temperature=temperature,
-        top_p=top_p
+        temperature=-1,
     )
-    evaluator_outputs = evaluator.forward(task=task, dataset=dataset)
+    if eval_greedy:
+        evaluator_outputs = evaluator.forward(task=task, dataset=dataset)
+        if parallel_infos.global_rank == 0:
+            os.makedirs(os.path.join(log_dir, task), exist_ok=True)
+            json_dump(evaluator_outputs.datalist, os.path.join(
+                log_dir, task, f'results-{round(evaluator_outputs.acc, 4)}.jsonl'))
 
+    dataset = JsonDataset(label_file)
+    dataset.repeat(n=num_samples_per_prompt).shuffle()
+    if use_chat_template:
+        dataset = ChatTemplateDataset(dataset, tokenizer)
+    # pass-of-n results
+    evaluator.generator.temperature = temperature
+    evaluator.generator.top_p = top_p
+    evaluator_outputs = evaluator.forward(task=task, dataset=dataset)
     results = process_results(evaluator_outputs.datalist, num_samples_per_prompt)
     result_dict = compute_pass_of_n(results, num_samples_per_prompt)
     result_name = []

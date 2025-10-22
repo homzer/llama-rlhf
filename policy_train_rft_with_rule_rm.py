@@ -4,14 +4,12 @@ import fire
 import numpy as np
 import torch.optim
 
-from policy_train_policy_gradient_with_rule_rm import (
-    collect_rule_based_verifier_buffer,
-    collect_actor_buffer_with_label
-)
+from policy_train_ppo_with_rule_rm import collect_actor_buffer_with_label, collect_rule_based_verifier_buffer
 from policy_train_ppo_best_of_n import select_best_of_n_buffer
 from policy_train_ppo_with_evaluate import evaluate_actor
 from policy_train_rft import train_rft_policy
 from src.dataset import JsonDataset
+from src.entities import IterationHandler
 from src.parallel.initialize import setup_model_parallel
 from src.ppo.buffer import CriticRolloutBuffer, RolloutBuffer
 from src.ppo.parallel_buffer import ParallelRolloutBuffer
@@ -89,7 +87,6 @@ def select_lowest_confidence_of_n_buffer(
 
 def run(
         task: str,
-        label_file: str,
         log_dir: str,
         train_file: str,
         save_dir: str,
@@ -97,6 +94,7 @@ def run(
         policy_model_type: str,
         policy_config_file: str = None,
         policy_tokenizer_file: str = None,
+        label_file: str = None,
         lora_rank: int = -1,
         lora_dtype: str = "bfloat16",
         max_batch_size: int = 1,
@@ -111,8 +109,10 @@ def run(
         num_samples_per_prompt: int = 4,
         num_samples_keep_per_prompt: int = 1,
         select_low_confidence_sample: bool = False,
+        accumulation_steps: int = 1,
         dtype: str = "bfloat16",
         begin_epoch: int = 0,
+        score_threshold: float = None,
         use_chat_template: bool = False,
         model_parallel_size: int = None,
         sequence_parallel_size: int = 1,
@@ -121,88 +121,84 @@ def run(
     setup_model_parallel(
         model_parallel_size=model_parallel_size,
         sequence_parallel_size=sequence_parallel_size,
-        log_dir=log_dir
+        log_dir=log_dir,
+        log_mode='w' if begin_epoch == 0 else 'a'
     )
     print_current_func_args()
     policy_config_file = policy_config_file or policy_ckpt_dir
     policy_tokenizer_file = policy_tokenizer_file or policy_ckpt_dir
 
-    datalist = json_load(train_file)
-    chunk_size = chunk_size or len(datalist)
-    local_epochs = len(datalist) // chunk_size
-    begin_global_epoch = begin_epoch // local_epochs
-    begin_local_epoch = begin_epoch % local_epochs
-    for global_epoch in range(begin_global_epoch, epochs):
-        for local_epoch in range(begin_local_epoch, local_epochs):
-            epoch = local_epoch + global_epoch * local_epochs
-            print(f"Epoch - {epoch} of {local_epochs * epochs}")
-            dataset = JsonDataset(f=datalist[local_epoch * chunk_size: (local_epoch + 1) * chunk_size])
-            if len(dataset) == 0:
-                continue
+    for epoch, datalist in IterationHandler(json_load(train_file), epochs, chunk_size, begin_epoch):
+        dataset = JsonDataset(datalist)
+        if len(dataset) == 0:
+            continue
 
-            if reuse_buffer and os.path.exists(os.path.join(save_dir, "epoch-%03d" % epoch)):
-                policy_rollout_buffer = ParallelRolloutBuffer.load(os.path.join(save_dir, "epoch-%03d" % epoch))
-            else:
-                # Collecting policy buffer
-                policy_rollout_buffer = collect_actor_buffer_with_label(
-                    actor_model_type=policy_model_type,
-                    actor_config_file=policy_config_file,
-                    max_seq_len=max_seq_len,
-                    actor_tokenizer_file=policy_tokenizer_file,
-                    dtype=dtype,
-                    actor_ckpt_dir=policy_ckpt_dir,
-                    epoch=epoch,
-                    actor_save_dir=save_dir,
-                    use_chat_template=use_chat_template,
-                    dataset=dataset,
-                    max_generate_batch_size=max_generate_batch_size,
-                    temperature=temperature,
-                    top_p=top_p,
-                    num_samples_per_prompt=num_samples_per_prompt
-                )
-                ParallelRolloutBuffer(**policy_rollout_buffer).save(os.path.join(save_dir, "epoch-%03d" % epoch))
-
-            verifier_rollout_buffer = collect_rule_based_verifier_buffer(
-                policy_rollout_buffer=policy_rollout_buffer, task=task
-            )
-
-            print(f"Average Rewards: {verifier_rollout_buffer.mean(use_last_token_reward=True)}")
-
-            if select_low_confidence_sample:
-                policy_rollout_buffer_filtered, _ = select_lowest_confidence_of_n_buffer(
-                    actor_rollout_buffer=policy_rollout_buffer,
-                    verifier_rollout_buffer=verifier_rollout_buffer,
-                    num_samples_per_prompt=num_samples_per_prompt,
-                    num_samples_keep_per_prompt=num_samples_keep_per_prompt,
-                    use_last_token_reward=True
-                )
-            else:
-                policy_rollout_buffer_filtered, _ = select_best_of_n_buffer(
-                    actor_rollout_buffer=policy_rollout_buffer,
-                    verifier_rollout_buffer=verifier_rollout_buffer,
-                    num_samples_per_prompt=num_samples_per_prompt,
-                    num_samples_keep_per_prompt=num_samples_keep_per_prompt,
-                    use_last_token_reward=True
-                )
-
-            print("Training policy ......")
-            train_rft_policy(
-                policy_rollout_buffer=policy_rollout_buffer_filtered,
-                policy_model_type=policy_model_type,
-                policy_config_file=policy_config_file,
+        if reuse_buffer and os.path.exists(os.path.join(save_dir, "epoch-%03d" % epoch)):
+            policy_rollout_buffer = ParallelRolloutBuffer.load(os.path.join(save_dir, "epoch-%03d" % epoch))
+        else:
+            # Collecting policy buffer
+            policy_rollout_buffer = collect_actor_buffer_with_label(
+                actor_model_type=policy_model_type,
+                actor_config_file=policy_config_file,
                 max_seq_len=max_seq_len,
-                policy_tokenizer_file=policy_tokenizer_file,
-                lora_dtype=lora_dtype,
-                lora_rank=lora_rank,
+                actor_tokenizer_file=policy_tokenizer_file,
                 dtype=dtype,
-                lr=lr,
-                policy_ckpt_dir=policy_ckpt_dir,
+                actor_ckpt_dir=policy_ckpt_dir,
                 epoch=epoch,
-                save_dir=save_dir,
-                max_batch_size=max_batch_size,
-                inner_epochs=inner_epochs
+                actor_save_dir=save_dir,
+                use_chat_template=use_chat_template,
+                dataset=dataset,
+                max_generate_batch_size=max_generate_batch_size,
+                temperature=temperature,
+                top_p=top_p,
+                num_samples_per_prompt=num_samples_per_prompt
+            )
+            ParallelRolloutBuffer(**policy_rollout_buffer).save(os.path.join(save_dir, "epoch-%03d" % epoch))
+
+        verifier_rollout_buffer = collect_rule_based_verifier_buffer(
+            actor_rollout_buffer=policy_rollout_buffer, task=task
+        )
+
+        print(f"Average Rewards: {verifier_rollout_buffer.mean()}")
+
+        if select_low_confidence_sample:
+            policy_rollout_buffer_filtered, _ = select_lowest_confidence_of_n_buffer(
+                actor_rollout_buffer=policy_rollout_buffer,
+                verifier_rollout_buffer=verifier_rollout_buffer,
+                num_samples_per_prompt=num_samples_per_prompt,
+                num_samples_keep_per_prompt=num_samples_keep_per_prompt,
+                use_last_token_reward=True
+            )
+        else:
+            policy_rollout_buffer_filtered, _ = select_best_of_n_buffer(
+                actor_rollout_buffer=policy_rollout_buffer,
+                verifier_rollout_buffer=verifier_rollout_buffer,
+                num_samples_per_prompt=num_samples_per_prompt,
+                num_samples_keep_per_prompt=num_samples_keep_per_prompt,
+                use_last_token_reward=True,
+                score_threshold=score_threshold
             )
 
+        print("Training policy ......")
+        train_rft_policy(
+            policy_rollout_buffer=policy_rollout_buffer_filtered,
+            policy_model_type=policy_model_type,
+            policy_config_file=policy_config_file,
+            max_seq_len=max_seq_len,
+            policy_tokenizer_file=policy_tokenizer_file,
+            lora_dtype=lora_dtype,
+            lora_rank=lora_rank,
+            dtype=dtype,
+            lr=lr,
+            policy_ckpt_dir=policy_ckpt_dir,
+            epoch=epoch,
+            save_dir=save_dir,
+            max_batch_size=max_batch_size,
+            inner_epochs=inner_epochs,
+            accumulation_steps=accumulation_steps
+        )
+
+        if label_file is not None:
             evaluate_actor(
                 task=task,
                 label_file=label_file,

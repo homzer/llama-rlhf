@@ -25,6 +25,8 @@ def evaluate_policy(
         temperature: float,
         top_p: float,
 ):
+    if label_file is None:
+        return
     for file in label_file.split("++"):
         task = os.path.basename(file).split("_")[0]
         dataset = JsonDataset(file)
@@ -43,10 +45,10 @@ def evaluate_policy(
 
 
 def main(
-        label_file: str,
         ckpt_dir: str,
         save_dir: str,
         train_file: str,
+        label_file: str = None,
         log_dir: str = None,
         model_type: str = "llama",
         tokenizer_file: str = None,
@@ -65,6 +67,7 @@ def main(
         begin_epoch: int = 0,
         use_chat_template: bool = False,
         seed: int = None,
+        save_optim: bool = False,
         model_parallel_size: int = None,
         sequence_parallel_size: int = 1
 ):
@@ -100,7 +103,8 @@ def main(
         model=model,
         tokenizer=tokenizer,
         optimizer=optimizer,
-        max_seq_len=max_seq_len
+        max_seq_len=max_seq_len,
+        save_optim=save_optim
     )
     trainer.load(ckpt_dir if (begin_epoch == 0) else os.path.join(save_dir, f"epoch-{begin_epoch}"))
     for epoch in range(begin_epoch, epochs):

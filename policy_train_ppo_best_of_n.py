@@ -14,7 +14,7 @@ from policy_train_ppo import (
 )
 from src.dataset import JsonDataset
 from src.parallel.initialize import setup_model_parallel
-from src.ppo.buffer import PolicyRolloutBuffer, CriticRolloutBuffer, RolloutBuffer
+from src.ppo.buffer import PPORolloutBuffer, CriticRolloutBuffer, RolloutBuffer
 from src.ppo.parallel_buffer import ParallelRolloutBuffer
 from src.utils import masked_mean, json_load
 
@@ -24,7 +24,8 @@ def select_best_of_n_buffer(
         verifier_rollout_buffer: CriticRolloutBuffer,
         num_samples_per_prompt: int,
         num_samples_keep_per_prompt: int,
-        use_last_token_reward: bool
+        use_last_token_reward: bool,
+        score_threshold: float = None
 ) -> (RolloutBuffer, CriticRolloutBuffer):
     actor_rollout_buffer = ParallelRolloutBuffer(**actor_rollout_buffer)
     actor_rollout_buffer.gather_from_data_parallel_region()
@@ -59,7 +60,10 @@ def select_best_of_n_buffer(
         k=num_samples_keep_per_prompt,
     )
     scores_indices += (torch.arange(0, len(scores_indices)) * num_samples_per_prompt).unsqueeze(-1)
+    if score_threshold is not None:
+        scores_indices = scores_indices[scores_values.reshape(-1) > score_threshold]
     scores_indices = scores_indices.reshape(-1).tolist()
+    print(f"Selected {len(scores_indices)} samples from {len(scores.reshape(-1))} total samples.")
 
     # update actor rollout buffer
     actor_rollout_buffer.rearrange(scores_indices)
@@ -200,7 +204,7 @@ def run(
 
         print(f"Average Rewards: {verifier_rollout_buffer.mean(use_last_token_reward)}")
 
-        rollout_buffer = PolicyRolloutBuffer(
+        rollout_buffer = PPORolloutBuffer(
             obs=actor_rollout_buffer["obs"],
             actions=actor_rollout_buffer["actions"],
             rewards=verifier_rollout_buffer["scores"],

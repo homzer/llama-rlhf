@@ -7,4 +7,5 @@ from src.tokenizers.tokenizer_qwen import QwenTokenizer
 from src.tokenizers.tokenizer_openchat import OpenChatTokenizer
 from src.tokenizers.tokenizer_baichuan import BaichuanTokenizer
 from src.tokenizers.tokenizer_internlm import InternLMTokenizer
+from src.tokenizers.tokenizer_internlm3 import InternLM3Tokenizer
 from src.tokenizers.tokenizer_gemma import GemmaTokenizer

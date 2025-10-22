@@ -7,11 +7,11 @@ import numpy as np
 import torch
 
 from src.entities import SlimLogits
-from src.utils import masked_mean
+from src.utils import masked_mean, can_convert_to_tensor
 
-PolicyRolloutBufferSample = collections.namedtuple(
+PPORolloutBufferSample = collections.namedtuple(
     "RolloutBufferSample", [
-        "observations",
+        "obs",
         "actions",
         "old_values",
         "old_action_logits",
@@ -98,10 +98,13 @@ class RolloutBuffer(dict):
         for key, value in kwargs.items():
             self[key] = value.copy() if isinstance(value, np.ndarray) else np.array(value)
 
+    def copy(self) -> "RolloutBuffer":
+        return RolloutBuffer(**self)
+
     def size(self) -> int:
         """Return the size of the rollout buffer"""
         if len(self) == 0:
-            raise RuntimeError("Rollout buffer is not initialized.")
+            return 0
         for key in self.keys():
             assert len(self[key]) == len(self[next(iter(self))])
         return len(self[next(iter(self))])
@@ -126,7 +129,7 @@ class RolloutBuffer(dict):
         print("Saving done!")
 
     @classmethod
-    def load(cls, buffer_dir: str, start: int = 0, stop: int = None) -> "RolloutBuffer":
+    def load(cls, buffer_dir: str, start: int = 0, stop: int = None, **kwargs) -> "RolloutBuffer":
         buffer_file = os.path.join(buffer_dir, "buffer.jsonl")
         print(f"Loading buffer from {buffer_file} ......")
         kwargs = dict()
@@ -154,9 +157,9 @@ class RolloutBuffer(dict):
                 self[key] = np.concatenate([self[key], rollout_buffer[key]], axis=0)
         return self
 
-    def get(self, batch_size: int) -> Generator:
-        indices = np.arange(self.size())
+    def get(self, batch_size: int, shuffle: bool = False, output_tensor: bool = False) -> Generator:
         start_idx = 0
+        indices = np.random.permutation(self.size()) if shuffle else np.arange(self.size())
         RolloutBufferSample = collections.namedtuple(
             "RolloutBufferSample", field_names=[key for key in self.keys()]
         )
@@ -164,12 +167,13 @@ class RolloutBuffer(dict):
             batch_indices = indices[start_idx: start_idx + batch_size]
             data = dict()
             for key in self.keys():
-                data[key] = self[key][batch_indices]
+                value = self[key][batch_indices]
+                data[key] = torch.from_numpy(value) if output_tensor and can_convert_to_tensor(value) else value
             yield RolloutBufferSample(**data)
             start_idx += batch_size
 
 
-class PolicyRolloutBuffer:
+class PPORolloutBuffer:
     def __init__(
             self,
             obs: np.ndarray,
@@ -180,9 +184,10 @@ class PolicyRolloutBuffer:
             action_masks: np.ndarray,
             action_logprobs: np.ndarray,
             ref_action_logprobs: np.ndarray = None,
-            gamma: float = 0.9,
-            gae_lambda: float = 0.8,
-            kl_coef: float = 0.1,
+            gamma: float = 0.99,
+            gae_lambda: float = 0.95,
+            kl_coef: float = 0.01,
+            vf_coef: float = 0.1,
             mu: float = 0.0,
             reward_normalize: bool = True,
             reward_sub_mean: bool = False,
@@ -204,6 +209,7 @@ class PolicyRolloutBuffer:
         self.gamma = gamma
         self.gae_lambda = gae_lambda
         self.kl_coef = kl_coef
+        self.vf_coef = vf_coef
         self.mu = mu
         self.reward_normalize = reward_normalize
         self.reward_sub_mean = reward_sub_mean
@@ -250,6 +256,7 @@ class PolicyRolloutBuffer:
                     self.rewards[self.action_masks])) / np.std(self.rewards[self.action_masks])
             else:
                 self.rewards = self.rewards / np.std(self.rewards[self.action_masks])
+        self.values = self.vf_coef * self.values / np.std(self.values[self.action_masks])  # for stable training
 
         if self.last_token_reward_only:
             for i in range(self.buffer_size):
@@ -277,7 +284,7 @@ class PolicyRolloutBuffer:
                         self.values[self.action_masks])) / np.std(self.values[self.action_masks])
                 else:
                     self.values = self.values / np.std(self.values[self.action_masks])
-            self.advantages = self.rewards - (1 - self.gae_lambda) * self.values
+            self.advantages = self.rewards - self.vf_coef * self.values
             self.returns = self.rewards
         else:
             last_gae_lam = 0
@@ -288,14 +295,14 @@ class PolicyRolloutBuffer:
                 self.advantages[:, step] = last_gae_lam
             self.returns = self.advantages + self.values
 
-    def get(self, batch_size: int, shuffle: bool = True) -> Generator[PolicyRolloutBufferSample, None, None]:
+    def get(self, batch_size: int, shuffle: bool = True) -> Generator[PPORolloutBufferSample, None, None]:
         size = self.obs.shape[0]
         indices = np.random.permutation(size) if shuffle else np.arange(size)
         start_idx = 0
         while start_idx < size:
             batch_indices = indices[start_idx: start_idx + batch_size]
-            yield PolicyRolloutBufferSample(
-                observations=torch.tensor(self.obs[batch_indices]),
+            yield PPORolloutBufferSample(
+                obs=torch.tensor(self.obs[batch_indices]),
                 actions=torch.tensor(self.actions[batch_indices]),
                 old_values=torch.tensor(self.values[batch_indices]),
                 old_action_logits=torch.tensor(self.action_logits[batch_indices]),
@@ -468,8 +475,16 @@ class LogitsRolloutBuffer:
 
 
 class CriticRolloutBuffer(RolloutBuffer):
-    def __init__(self, scores: np.ndarray | List[float] = None, action_masks: np.ndarray = None):
+    def __init__(
+            self,
+            scores: np.ndarray | List[float] = None,
+            action_masks: np.ndarray = None,
+            use_last_token_reward: bool = False,
+            last_token_reward_only: bool = False
+    ):
         super().__init__()
+        self.use_last_token_reward = use_last_token_reward
+        self.last_token_reward_only = last_token_reward_only
         self.set(scores=scores, action_masks=action_masks)
 
     def set(self, scores=None, action_masks=None):
@@ -481,9 +496,21 @@ class CriticRolloutBuffer(RolloutBuffer):
                 for i in range(len(action_masks)):
                     self["scores"][i, :][action_masks[i]] = scores[i]
             self["action_masks"] = action_masks.copy()
+            if self.use_last_token_reward:
+                for i in range(len(self["action_masks"])):
+                    nonzero_indices = np.nonzero(self["action_masks"][i])[0]
+                    if len(nonzero_indices) > 0:
+                        self["scores"][i][self["action_masks"][i]] = self["scores"][i][nonzero_indices[-1]]
+            if self.last_token_reward_only:
+                for i in range(len(self["action_masks"])):
+                    nonzero_indices = np.nonzero(self["action_masks"][i])[0]
+                    if len(nonzero_indices) > 0:
+                        score = self["scores"][i][nonzero_indices[-1]]
+                        self["scores"][i] = 0.0
+                        self["scores"][i][nonzero_indices[-1]] = score
 
-    def mean(self, use_last_token_reward: bool) -> float:
-        if use_last_token_reward:
+    def mean(self) -> float:
+        if self.use_last_token_reward:
             rewards = []
             for i in range(self.size()):
                 nonzero_indices = np.nonzero(self["action_masks"][i])[0]
@@ -493,6 +520,36 @@ class CriticRolloutBuffer(RolloutBuffer):
         else:
             return masked_mean(self["scores"], self["action_masks"])
 
+    def normalize(self, reward_sub_mean: bool = True):
+        """ normalize scores """
+        if self.size() == 0:
+            return
+
+        reward_masks = self["action_masks"]
+        if self.last_token_reward_only:
+            reward_masks = np.full_like(self["action_masks"], fill_value=False)
+            for i in range(len(self["action_masks"])):
+                nonzero_indices = np.nonzero(self["action_masks"][i])[0]
+                if len(nonzero_indices) > 0:
+                    reward_masks[i][nonzero_indices[-1]] = True
+
+        if reward_sub_mean:
+            self["scores"] = self["scores"] - np.mean(self["scores"][reward_masks])
+        self["scores"] = self["scores"] / np.std(self["scores"][reward_masks])
+
+        self["scores"][~reward_masks] = 0.0
+
     @classmethod
-    def load(cls, buffer_dir: str, start: int = 0, stop: int = None) -> "CriticRolloutBuffer":
-        return CriticRolloutBuffer(**super().load(buffer_dir=buffer_dir, start=start, stop=stop))
+    def load(
+            cls,
+            buffer_dir: str,
+            start: int = 0,
+            stop: int = None,
+            use_last_token_reward: bool = False,
+            last_token_reward_only: bool = False
+    ) -> "CriticRolloutBuffer":
+        return CriticRolloutBuffer(
+            **super().load(buffer_dir=buffer_dir, start=start, stop=stop),
+            use_last_token_reward=use_last_token_reward,
+            last_token_reward_only=last_token_reward_only
+        )

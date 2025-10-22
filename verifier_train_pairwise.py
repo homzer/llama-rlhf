@@ -4,6 +4,8 @@ import fire
 import torch
 from torch.utils.data import DataLoader
 
+from src.parallel.data_parallel.dataloader import ParallelDataLoader
+from src.parallel.optimizer import ParallelOptimizer
 from src.rewards.trainer import (
     ParallelVerifierTrainerForLastToken,
     ParallelVerifierTrainerForMeanScore,
@@ -36,11 +38,18 @@ def main(
         seed: int = None,
         beta: float = 1.0,
         gamma: float = 0.0,
-        log_dir: str = None
+        log_dir: str = None,
+        model_parallel_size: int = None,
+        sequence_parallel_size: int = 1,
 ):
-    tokenizer_file = ckpt_dir if tokenizer_file is None else tokenizer_file
-    config_file = ckpt_dir if config_file is None else config_file
-    setup_model_parallel(seed=seed, log_dir=log_dir)
+    tokenizer_file = tokenizer_file or ckpt_dir
+    config_file = config_file or ckpt_dir
+    setup_model_parallel(
+        seed=seed,
+        log_dir=log_dir,
+        model_parallel_size=model_parallel_size,
+        sequence_parallel_size=sequence_parallel_size
+    )
     print_current_func_args()
     model, tokenizer = get_parallel_verifier(
         model_type=model_type,
@@ -55,8 +64,8 @@ def main(
     dataset = PairwiseDataset(f=train_file)
     if use_chat_template:
         dataset = ChatTemplateDataset(dataset, tokenizer)
-    dataloader = DataLoader(dataset, batch_size=max_batch_size)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    dataloader = ParallelDataLoader(dataset, batch_size=max_batch_size)
+    optimizer = ParallelOptimizer(torch.optim.Adam(model.parameters(), lr=lr))
     if "last-token" in strategy:
         trainer = ParallelVerifierTrainerForLastToken(
             model=model,

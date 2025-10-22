@@ -30,6 +30,7 @@ def main(
         begin_epoch: int = 0,
         use_chat_template: bool = False,
         seed: int = None,
+        save_optim: bool = False,
         model_parallel_size: int = None,
         sequence_parallel_size: int = 1,
 ):
@@ -59,7 +60,8 @@ def main(
         model=model,
         tokenizer=tokenizer,
         optimizer=optimizer,
-        max_seq_len=max_seq_len
+        max_seq_len=max_seq_len,
+        save_optim=save_optim
     )
     trainer.load(ckpt_dir if (begin_epoch == 0) else os.path.join(save_dir, f"epoch-{begin_epoch}"))
     for epoch in range(begin_epoch, epochs):

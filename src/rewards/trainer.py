@@ -180,7 +180,7 @@ class ParallelPointwiseVerifierTrainerForImplicitPRM(ParallelModelTrainer):
             labels=labels,
             ref_log_probs=ref_log_probs
         )
-        self._back_propagation(loss)
+        self.backward(loss)
 
         predicts = self.strategy.generator_forward(
             logits=logits,
@@ -359,7 +359,7 @@ class ParallelVerifierTrainerForSimPO(ParallelModelTrainer):
             chosen_masks=examples.masks[:bsz],
             rejected_masks=examples.masks[bsz:],
         )
-        self._back_propagation(loss)
+        self.backward(loss)
 
         chosen_scores = self.strategy.generator_forward(
             logits=logits[:bsz],
@@ -425,7 +425,7 @@ class ParallelVerifierTrainerForDPO(ParallelModelTrainer):
             ref_chosen_log_probs=reference_chosen_log_probs,
             ref_rejected_log_probs=reference_rejected_log_probs,
         )
-        self._back_propagation(loss)
+        self.backward(loss)
 
         chosen_scores = self.strategy.generator_forward(
             logits=logits[:bsz],

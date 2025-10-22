@@ -122,7 +122,7 @@ class Llama3Tokenizer(Tokenizer):
         return s
 
     def encode(self, s: str, bos: bool = False, eos: bool = False) -> List[int]:
-        assert type(s) is str
+        assert isinstance(s, str)
 
         substrs = (substr for i in range(0, len(s), TIKTOKEN_MAX_ENCODE_CHARS)
                    for substr in _split_whitespaces_or_non_whitespaces(

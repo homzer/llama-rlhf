@@ -3,12 +3,12 @@ import fire
 import numpy as np
 
 from policy_train_policy_gradient import train_policy_gradient
-from policy_train_policy_gradient_with_rule_rm import collect_actor_buffer_with_label, reward_fn
+from policy_train_ppo_with_rule_rm import collect_actor_buffer_with_label, reward_fn
 from policy_train_ppo_best_of_n import select_best_of_n_buffer
 from policy_train_ppo_with_evaluate import evaluate_actor
 from src.dataset import JsonDataset
 from src.parallel.initialize import setup_model_parallel
-from src.ppo.buffer import PolicyRolloutBuffer, RolloutBuffer, CriticRolloutBuffer
+from src.ppo.buffer import PPORolloutBuffer, RolloutBuffer, CriticRolloutBuffer
 from src.utils import json_load, print_current_func_args
 
 
@@ -111,7 +111,7 @@ def run(
                 use_last_token_reward=True
             )
 
-            rollout_buffer = PolicyRolloutBuffer(
+            rollout_buffer = PPORolloutBuffer(
                 obs=policy_rollout_buffer["obs"],
                 actions=policy_rollout_buffer["actions"],
                 rewards=verifier_rollout_buffer["scores"],

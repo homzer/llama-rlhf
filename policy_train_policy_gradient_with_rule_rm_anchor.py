@@ -6,17 +6,14 @@ import fire
 import torch
 
 from policy_train_policy_gradient import train_policy_gradient
-from policy_train_policy_gradient_with_rule_rm import (
-    collect_actor_buffer_with_label,
-    collect_rule_based_verifier_buffer
-)
+from policy_train_ppo_with_rule_rm import collect_actor_buffer_with_label, collect_rule_based_verifier_buffer
 from policy_train_ppo_with_evaluate import evaluate_actor
 from src.dataset import JsonDataset, ChatTemplateDataset
 from src.entities import Timer
 from src.modeling import get_parallel_model
 from src.parallel.data_parallel.dataloader import ParallelDataLoader
 from src.parallel.initialize import setup_model_parallel, set_barrier
-from src.ppo.buffer import PolicyRolloutBuffer, RolloutBuffer
+from src.ppo.buffer import PPORolloutBuffer, RolloutBuffer
 from src.ppo.collector import ActorForwardBufferCollector
 from src.ppo.parallel_buffer import ParallelRolloutBuffer
 from src.utils import json_load, print_current_func_args
@@ -213,12 +210,12 @@ def run(
             ParallelRolloutBuffer(**policy_rollout_buffer).save(os.path.join(save_dir, "epoch-%03d" % epoch))
 
             verifier_rollout_buffer = collect_rule_based_verifier_buffer(
-                policy_rollout_buffer=policy_rollout_buffer, task=task
+                actor_rollout_buffer=policy_rollout_buffer, task=task
             )
 
-            print(f"Average Rewards: {verifier_rollout_buffer.mean(use_last_token_reward=True)}")
+            print(f"Average Rewards: {verifier_rollout_buffer.mean()}")
 
-            rollout_buffer = PolicyRolloutBuffer(
+            rollout_buffer = PPORolloutBuffer(
                 obs=policy_rollout_buffer["obs"],
                 actions=policy_rollout_buffer["actions"],
                 rewards=verifier_rollout_buffer["scores"],

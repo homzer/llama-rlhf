@@ -324,6 +324,98 @@ class MATHEvaluator(Evaluator):
         return self.extract_answer(output)
 
 
+class MathEvaluator(Evaluator):
+    def __init__(self):
+        super().__init__()
+
+    def format_label(self, label: str) -> str:
+        label = label.lower()
+
+        label = label.replace(" ", "")
+        label = re.sub(r"\\mathbf", "", label)
+        label = re.sub(r"^\w=", "", label)
+        label = re.sub(r"\\left|\\right|\\!|\\%|\\\$|", "", label)
+        label = re.sub(r"\\text{.*\n*.*}", "", label)
+        label = re.sub(r"\^{?\\circ}?", "", label)
+        label = re.sub(r"\\\\", r"\\", label)
+        label = re.sub(r"\\$", "", label)
+        label = re.sub(r"^0+", "", label)
+        label = re.sub(r',|\.0+$', "", label)
+        label = re.sub(r'\s', "", label)
+        label = re.sub(r'\\!', "", label)
+        label = re.sub(r"dfrac|tfrac", "frac", label)
+        label = re.sub(r"\\mbox\{\w+}", "", label)
+        label = re.sub(r"\\left|\\right", "", label)
+        return label
+
+    def extract_answer(self, output: str) -> str:
+        a = ''
+        if 'boxed' in output:
+            ans = output.split('boxed')[-1]
+            if len(ans) == 0:
+                return ""
+            elif ans[0] == '{':
+                stack = 1
+                for c in ans[1:]:
+                    if c == '{':
+                        stack += 1
+                        a += c
+                    elif c == '}':
+                        stack -= 1
+                        if stack == 0:
+                            break
+                        a += c
+                    else:
+                        a += c
+            else:
+                a = ans.split('$')[0].strip()
+        return self.format_label(a)
+
+    def eval(self, output: str, label: str) -> bool | None:
+        answer = self.extract_answer(output)
+        if len(answer) == 0:
+            return None
+        return answer == self.format_label(label)
+
+    def forward(self, output: str, label: str = None) -> str:
+        if label is not None:
+            if self.eval(output, label) is True:
+                self.meter.forward(1)
+                self.correct += 1
+            else:
+                self.meter.forward(0)
+        return self.extract_answer(output)
+
+
+class MMLUEvaluatorWithBoxed(MathEvaluator):
+    def extract_answer(self, output: str) -> str:
+        answer = super().extract_answer(output)
+        match = re.search(r'^([abcd])', answer)
+        return match.group(1) if match else ""
+
+    def eval(self, output: str, label: str) -> bool | None:
+        answer = self.extract_answer(output)
+        if len(answer) == 0:
+            return None
+        return self.format_label(label) == answer
+
+    def forward(self, output: str, label: str = None) -> str:
+        if label is not None:
+            if self.eval(output, label) is True:
+                self.meter.forward(1)
+                self.correct += 1
+            if self.eval(output, label) is False:
+                self.meter.forward(0)
+        return self.extract_answer(output)
+
+
+class MMLUProEvaluatorWithBoxed(MMLUEvaluatorWithBoxed):
+    def extract_answer(self, output: str) -> str:
+        answer = super().extract_answer(output)
+        match = re.search(r'^([abcdefghij])', answer)
+        return match.group(1) if match else ""
+
+
 class MMLUEvaluator(Evaluator):
     def __init__(self):
         super().__init__()
@@ -376,6 +468,20 @@ class MultiChoicesEvaluator(Evaluator):
         print(f"Warning: Unrecognized label format: '{label}'")
         return self.label_patterns[-1]
 
+    def eval(self, output: str, label: str) -> bool | None:
+        final_results = []
+        pattern = self.get_label_pattern(label)
+        matches = re.findall(pattern, output)
+        for match in matches:
+            assert type(match) is str
+            final_results.append(match.lower())
+
+        # evaluation
+        if len(final_results) != 0 and label is not None:
+            return self.format_label(label) in final_results[-1:]
+
+        return None
+
     def forward(self, output: str, label: str = None) -> str:
         answer = None
         final_results = []
@@ -421,6 +527,19 @@ class BBHEvaluator(Evaluator):
         print(f"Warning: Unrecognized label format: '{label}'")
         return self.label_patterns[-1]
 
+    def eval(self, output: str, label: str) -> bool | None:
+        final_results = []
+        pattern = self.get_label_pattern(label)
+        matches = re.findall(pattern, output)
+        for match in matches:
+            assert type(match) is str
+            final_results.append(match.lower())
+
+        if len(final_results) != 0 and label is not None:
+            return self.format_label(label) in final_results[-1:]
+
+        return None
+
     def forward(self, output: str, label: str = None) -> str:
         answer = None
         final_results = []
@@ -447,20 +566,32 @@ class BBHEvaluator(Evaluator):
         return matches[0].lower() if len(matches) != 0 else None
 
 
+def get_evaluator(task: str) -> Evaluator:
+    return EVALUATORS[task.lower()]()
+
+
 EVALUATORS = {
-    "gsm8k": GSM8KEvaluator,
-    "asdiv": GSM8KEvaluator,
-    "svamp": GSM8KEvaluator,
-    "math": MATHEvaluator,
-    "prm800k": MATHEvaluator,
-    "aime2024": MATHEvaluator,
-    "aime2025": MATHEvaluator,
-    "amc23": MATHEvaluator,
-    "aime": MATHEvaluator,
+    "gsm8k": MathEvaluator,
+    "asdiv": MathEvaluator,
+    "svamp": MathEvaluator,
+    "math": MathEvaluator,
+    "prm800k": MathEvaluator,
+    "aime2024": MathEvaluator,
+    "aime2025": MathEvaluator,
+    "amc23": MathEvaluator,
+    "aime": MathEvaluator,
+    "omni-math": MathEvaluator,
+    "olympiad-bench": MathEvaluator,
+    "minerva": MathEvaluator,
     "mmlu": MMLUEvaluator,
+    "mmlu-boxed": MMLUEvaluatorWithBoxed,
+    "mmlu-pro-boxed": MMLUProEvaluatorWithBoxed,
+    "mmlu-redux-boxed": MMLUEvaluatorWithBoxed,
     "arc": MultiChoicesEvaluator,
     "csqa": MultiChoicesEvaluator,
     "bbh": BBHEvaluator,
     "agieval": MultiChoicesEvaluator,
-    "gpqa-diamond": MATHEvaluator
+    "gpqa-diamond": MATHEvaluator,
+    "multi-arith": MathEvaluator
 }
+

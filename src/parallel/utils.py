@@ -37,6 +37,24 @@ def split_tensor_along_last_dim(
     return tensor_list
 
 
+def split_tensor_along_first_dim(
+        tensor: torch.Tensor, num_partitions: int, contiguous_split_chunks: bool = False
+) -> Tuple[torch.Tensor, ...]:
+    """Split a tensor along its first dimension.
+    Arguments:
+        tensor: input tensor.
+        num_partitions: number of partitions to split the tensor
+        contiguous_split_chunks: If True, make each chunk contiguous in memory.
+    """
+    first_dim_size = divide_and_check_no_remainder(tensor.size()[0], num_partitions)
+    # Split.
+    tensor_list = torch.split(tensor, first_dim_size, dim=0)
+    if contiguous_split_chunks:
+        return tuple(chunk.contiguous() for chunk in tensor_list)
+
+    return tensor_list
+
+
 def split_tensor_along_second_dim(
         tensor: torch.Tensor, num_partitions: int, contiguous_split_chunks: bool = False
 ) -> Tuple[torch.Tensor, ...]:

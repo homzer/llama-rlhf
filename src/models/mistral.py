@@ -3,237 +3,251 @@ from typing import Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.nn.init as init
+
+from src.checkpoint import CheckpointForMistral
+from src.models.modeling import (
+    ParallelModelForCausalLM,
+    CausalLMOutputs,
+    AttentionForCausalLM
+)
+from src.models.modeling_acts import Clamp, RMSNorm, RotaryEmbedding, LogitsNormalize
+from src.models.modeling_args import MistralArgs
+from src.parallel.initialize import set_model_parallel_barrier
 from src.parallel.model_parallel.layers import (
     RowParallelLinear,
     ColumnParallelLinear,
     ParallelEmbedding
 )
-
-from src.checkpoint import CheckpointForLlama
-from src.models.modeling import (
-    ParallelModelForCausalLM,
-    CausalLMOutputs,
-    AttentionForCausalLM,
-    ParallelVerifier,
-    VerifierOutputs
+from src.parallel.sequence_parallel.mappings import (
+    gather_from_sequence_parallel_region,
+    scatter_to_sequence_parallel_region
 )
-from src.models.modeling_acts import RMSNorm, Clamp, LogitsNormalize
-from src.models.modeling_args import MistralArgs, LoraMistralArgs
-from src.utils import apply_rotary_emb, precompute_freqs_cis, apply_lora
-from src.parallel.initialize import set_model_parallel_barrier
+from src.utils import compute_position_ids, apply_rotary_pos_emb_
 
 
 class MistralAttention(AttentionForCausalLM):
     def __init__(self, args: MistralArgs):
         super().__init__(args.max_seq_len)
         self.args = args
+        self.head_dim = args.hidden_size // args.num_attention_heads
+        assert args.num_attention_heads % args.model_parallel_world_size == 0
+        self.num_local_heads = args.num_attention_heads // args.model_parallel_world_size
+        self.num_key_value_heads = args.num_key_value_heads
+        assert self.num_key_value_heads % args.model_parallel_world_size == 0
+        self.num_local_key_value_heads = self.num_key_value_heads // args.model_parallel_world_size
+        self.n_rep = args.num_attention_heads // args.num_key_value_heads
 
-        self.n_heads: int = args.n_heads
-        self.n_kv_heads: int = args.n_kv_heads
-        self.n_local_heads = self.n_heads // args.model_parallel_world_size
-        self.n_local_kv_heads = self.n_kv_heads // args.model_parallel_world_size
+        self.rotary_emb = None
 
-        self.repeats = self.n_local_heads // self.n_local_kv_heads
-        self.sliding_window = self.args.sliding_window
-
-        self.scale = self.args.head_dim ** -0.5
-
-        self.wq = None
-        self.wk = None
-        self.wv = None
-        self.wo = None
+        self.q_proj = None
+        self.k_proj = None
+        self.v_proj = None
+        self.o_proj = None
+        self.q_proj_fn = lambda x: self.q_proj(x)
+        self.k_proj_fn = lambda x: self.k_proj(x)
+        self.v_proj_fn = lambda x: self.v_proj(x)
+        self.o_proj_fn = lambda x: self.o_proj(x)
 
     def init_weights(self):
-        self.wq = ColumnParallelLinear(
-            self.args.dim,
-            self.args.n_heads * self.args.head_dim,
+        self.q_proj = ColumnParallelLinear(
+            self.args.hidden_size,
+            self.args.num_attention_heads * self.head_dim,
             bias=False,
             gather_output=False,
             init_method=lambda x: x,
+            ).type(self.args.dtype)
+        self.k_proj = ColumnParallelLinear(
+            self.args.hidden_size,
+            self.num_key_value_heads * self.head_dim,
+            bias=False,
+            gather_output=False,
+            init_method=lambda x: x
         ).type(self.args.dtype)
-        self.wk = ColumnParallelLinear(
-            self.args.dim,
-            self.args.n_kv_heads * self.args.head_dim,
+        self.v_proj = ColumnParallelLinear(
+            self.args.hidden_size,
+            self.num_key_value_heads * self.head_dim,
             bias=False,
             gather_output=False,
             init_method=lambda x: x,
-        ).type(self.args.dtype)
-        self.wv = ColumnParallelLinear(
-            self.args.dim,
-            self.args.n_kv_heads * self.args.head_dim,
-            bias=False,
-            gather_output=False,
-            init_method=lambda x: x,
-        ).type(self.args.dtype)
-        self.wo = RowParallelLinear(
-            self.args.n_heads * self.args.head_dim,
-            self.args.dim,
+            ).type(self.args.dtype)
+        self.o_proj = RowParallelLinear(
+            self.args.num_attention_heads * self.head_dim,
+            self.args.hidden_size,
             bias=False,
             input_is_parallel=True,
             init_method=lambda x: x,
+            ).type(self.args.dtype)
+
+        self.rotary_emb = RotaryEmbedding(
+            self.head_dim,
+            max_position_embeddings=self.args.max_position_embeddings,
+            base=self.args.rope_theta,
         ).type(self.args.dtype)
-
-    def apply_cache(self, xk, xv, start_pos):
-        bsz, seqlen, n_heads, head_dim = xk.shape
-        positions = torch.arange(start_pos, start_pos + seqlen).to(xk.device)
-        if self.cache_k is None:
-            self.cache_k = torch.empty(
-                (
-                    bsz,
-                    self.args.sliding_window,
-                    self.n_local_kv_heads,
-                    self.args.head_dim,
-                )
-            ).type(self.args.dtype).cuda()
-        if self.cache_v is None:
-            self.cache_v = torch.empty(
-                (
-                    bsz,
-                    self.args.sliding_window,
-                    self.n_local_kv_heads,
-                    self.args.head_dim,
-                )
-            ).type(self.args.dtype).cuda()
-
-            # The cache is a rotating buffer
-        scatter_pos = (positions[-self.sliding_window:] % self.sliding_window)[None, :, None, None]
-        scatter_pos = scatter_pos.repeat(bsz, 1, self.n_local_kv_heads, self.args.head_dim)
-        self.cache_k[:bsz].scatter_(dim=1, index=scatter_pos, src=xk[:, -self.sliding_window:])
-        self.cache_v[:bsz].scatter_(dim=1, index=scatter_pos, src=xv[:, -self.sliding_window:])
-
-        if positions.shape[0] > 1:
-            # prefill
-            xk, xv = self.repeat_kv(xk, xv, self.repeats)
-        else:
-            cur_pos = positions[-1].item() + 1
-            xk, xv = self.repeat_kv(
-                self.cache_k[:bsz, :cur_pos, ...],
-                self.cache_v[:bsz, :cur_pos, ...],
-                self.repeats
-            )
-        return xk, xv
 
     def forward(
             self,
             x: torch.Tensor,
             start_pos: int,
-            freqs_cis: torch.Tensor,
-            mask: torch.Tensor = None,
-            use_cache: bool = False
-    ) -> torch.Tensor:
-        bsz, seqlen, _ = x.shape
+            mask: Optional[torch.Tensor],
+            use_cache=False
+    ):
+        bsz, local_seq_len, _ = x.size()
+        xq, xk, xv = self.q_proj_fn(x), self.k_proj_fn(x), self.v_proj_fn(x)
 
-        xq, xk, xv = self.wq(x), self.wk(x), self.wv(x)
-        xq = xq.view(bsz, seqlen, self.n_local_heads, self.args.head_dim)
-        xk = xk.view(bsz, seqlen, self.n_local_kv_heads, self.args.head_dim)
-        xv = xv.view(bsz, seqlen, self.n_local_kv_heads, self.args.head_dim)
-        xq, xk = apply_rotary_emb(xq, xk, freqs_cis=freqs_cis)
+        xq = xq.view(bsz, local_seq_len, self.num_local_heads, self.head_dim)
+        xk = xk.view(bsz, local_seq_len, self.num_local_key_value_heads, self.head_dim)
+        xv = xv.view(bsz, local_seq_len, self.num_local_key_value_heads, self.head_dim)
 
+        # Sequence Parallel Op.
+        if not use_cache:  # Bypass the function if performing autoregressive generation.
+            xk = gather_from_sequence_parallel_region(xk)
+            xv = gather_from_sequence_parallel_region(xv)
+        seq_len = xv.shape[1]
+
+        position_ids = compute_position_ids(start_pos, seq_len).to(x.device)
+        # Sequence Parallel Op.
+        local_position_ids = position_ids
+        if not use_cache:  # Bypass the function if performing autoregressive generation.
+            local_position_ids = scatter_to_sequence_parallel_region(position_ids)
+
+        cos, sin = self.rotary_emb.forward(xv.transpose(1, 2), seq_len=seq_len + start_pos)
+        xq = apply_rotary_pos_emb_(xq.transpose(1, 2), cos, sin, local_position_ids)
+        xk = apply_rotary_pos_emb_(xk.transpose(1, 2), cos, sin, position_ids)
+
+        xq = xq.transpose(1, 2)
+        xk = xk.transpose(1, 2)
         if use_cache:
             xk, xv = self.apply_cache(xk, xv, start_pos)
-        else:
-            xk, xv = self.repeat_kv(xk, xv, self.repeats)
 
-        output = self.apply_attention(xq, xk, xv, mask[None, None, ...] if mask is not None else None)
+        xk, xv = self.repeat_kv(xk, xv, self.n_rep)
 
-        return self.wo(output)
+        output = self.apply_attention(xq, xk, xv, mask)
+        return self.o_proj_fn(output)
 
 
 class MistralFeedForward(nn.Module):
     def __init__(self, args: MistralArgs):
         super().__init__()
         self.args = args
-        self.w1 = None
-        self.w2 = None
-        self.w3 = None
+
+        self.gate_proj = None
+        self.down_proj = None
+        self.up_proj = None
+        self.gate_proj_fn = lambda x: self.gate_proj(x)
+        self.down_proj_fn = lambda x: self.down_proj(x)
+        self.up_proj_fn = lambda x: self.up_proj(x)
 
     def init_weights(self):
-        self.w1 = ColumnParallelLinear(
-            self.args.dim,
-            self.args.hidden_dim,
+        self.gate_proj = ColumnParallelLinear(
+            self.args.hidden_size, self.args.intermediate_size,
             bias=False,
             gather_output=False,
             init_method=lambda x: x
         ).type(self.args.dtype)
-        self.w2 = RowParallelLinear(
-            self.args.hidden_dim,
-            self.args.dim,
+        self.down_proj = RowParallelLinear(
+            self.args.intermediate_size, self.args.hidden_size,
             bias=False,
             input_is_parallel=True,
             init_method=lambda x: x
         ).type(self.args.dtype)
-        self.w3 = ColumnParallelLinear(
-            self.args.dim,
-            self.args.hidden_dim,
+        self.up_proj = ColumnParallelLinear(
+            self.args.hidden_size, self.args.intermediate_size,
             bias=False,
             gather_output=False,
             init_method=lambda x: x
         ).type(self.args.dtype)
 
-    def forward(self, x) -> torch.Tensor:
-        return self.w2(F.silu(self.w1(x)) * self.w3(x))
+    def forward(self, x):
+        return self.down_proj_fn(F.silu(self.gate_proj_fn(x)) * self.up_proj_fn(x))
 
 
 class MistralTransformerBlock(nn.Module):
     def __init__(self, args: MistralArgs):
         super().__init__()
         self.args = args
-        self.attention = MistralAttention(args)
-        self.feed_forward = MistralFeedForward(args)
+        self.self_attn = MistralAttention(args)
+        self.mlp = MistralFeedForward(args)
         self.clamp = Clamp(enable=args.use_clamp)
 
-        self.attention_norm = None
-        self.ffn_norm = None
+        self.input_layernorm = None
+        self.post_attention_layernorm = None
 
     def init_weights(self):
-        self.attention.init_weights()
-        self.feed_forward.init_weights()
-        self.attention_norm = RMSNorm(self.args.dim, eps=self.args.norm_eps).type(self.args.dtype)
-        self.ffn_norm = RMSNorm(self.args.dim, eps=self.args.norm_eps).type(self.args.dtype)
+        self.self_attn.init_weights()
+        self.mlp.init_weights()
+        self.input_layernorm = RMSNorm(self.args.hidden_size, eps=self.args.rms_norm_eps).type(self.args.dtype)
+        self.post_attention_layernorm = RMSNorm(self.args.hidden_size, eps=self.args.rms_norm_eps).type(self.args.dtype)
 
     def forward(
             self,
             x: torch.Tensor,
             start_pos: int,
-            freqs_cis: torch.Tensor,
             mask: Optional[torch.Tensor],
-            use_cache: bool
-    ) -> torch.Tensor:
-        h = x + self.attention.forward(self.attention_norm(x), start_pos, freqs_cis, mask, use_cache)
+            use_cache
+    ):
+        h = x + self.self_attn.forward(self.input_layernorm(x), start_pos, mask, use_cache)
         h = self.clamp.forward(h)
-        out = h + self.feed_forward.forward(self.ffn_norm(h))
+        out = h + self.mlp.forward(self.post_attention_layernorm(h))
         out = self.clamp.forward(out)
         return out
+
+
+class MistralHead(nn.Module):
+    def __init__(self, args: MistralArgs):
+        super().__init__()
+        self.args = args
+
+        self.embed_tokens = None
+        self.layers = torch.nn.ModuleList()
+        for layer_id in range(args.num_hidden_layers):
+            self.layers.append(MistralTransformerBlock(args))
+        self.norm = None
+
+    def init_weights(self):
+        self.embed_tokens = ParallelEmbedding(
+            self.args.vocab_size, self.args.hidden_size, init_method=lambda x: x
+        ).type(self.args.dtype)
+        for layer in self.layers:
+            layer.init_weights()
+        self.norm = RMSNorm(self.args.hidden_size, eps=self.args.rms_norm_eps).type(self.args.dtype)
+
+    def forward(self, tokens: torch.Tensor, start_pos=0, use_cache=False):
+        tokens = tokens.to(next(self.parameters()).device)
+        _bsz, seq_len = tokens.shape
+
+        # Sequence Parallel Op.
+        if not use_cache:  # Bypass the function if performing autoregressive generation.
+            tokens = scatter_to_sequence_parallel_region(tokens)
+        h = self.embed_tokens(tokens)
+
+        mask = None
+        if seq_len > 1:
+            mask = torch.full((1, 1, seq_len, seq_len), float("-inf"), device=tokens.device)
+            mask = torch.triu(mask, diagonal=start_pos + 1).type_as(h)
+
+            # Sequence Parallel Op.
+            if not use_cache:  # Bypass the function if performing autoregressive generation.
+                mask = scatter_to_sequence_parallel_region(mask.transpose(1, 2)).transpose(1, 2)
+
+        for layer in self.layers:
+            h = layer(h, start_pos, mask, use_cache)
+        return self.norm(h)
 
 
 class Mistral(ParallelModelForCausalLM):
     def __init__(self, args: MistralArgs):
         super().__init__()
         self.args = args
-        self.vocab_size = args.vocab_size
-        self.n_layers = args.n_layers
-
-        self.tok_embeddings = None
-        self.layers = torch.nn.ModuleList()
-        for _ in range(args.n_layers):
-            self.layers.append(MistralTransformerBlock(args))
-        self.norm = None
-        self.output = None
+        self.model = MistralHead(args)
+        self.lm_head = None
+        self.lm_head_fn = lambda x: self.lm_head(x)
         self.logits_norm = LogitsNormalize(enable=self.args.use_logits_normalize)
-
-        self.freqs_cis = precompute_freqs_cis(self.args.head_dim, 128000)
-        self.checkpoint = CheckpointForLlama()
+        self.checkpoint = CheckpointForMistral()
 
     def init_weights(self):
-        self.tok_embeddings = ParallelEmbedding(
-            self.args.vocab_size, self.args.dim, init_method=lambda x: x
-        ).type(self.args.dtype)
-        for layer in self.layers:
-            layer.init_weights()
-        self.norm = RMSNorm(self.args.dim, eps=self.args.norm_eps).type(self.args.dtype)
-        self.output = ColumnParallelLinear(
-            self.args.dim, self.args.vocab_size, bias=False, init_method=lambda x: x
+        self.model.init_weights()
+        self.lm_head = ColumnParallelLinear(
+            self.args.hidden_size, self.args.vocab_size, bias=False, init_method=lambda x: x
         ).type(self.args.dtype)
 
     def forward(
@@ -242,25 +256,12 @@ class Mistral(ParallelModelForCausalLM):
             start_pos: int = 0,
             use_cache: bool = False
     ) -> CausalLMOutputs:
-        tokens = tokens.to(next(self.parameters()).device)
-        _bsz, seqlen = tokens.shape
-        h = self.tok_embeddings(tokens)
-        positions = torch.arange(start_pos, start_pos + seqlen).to(h.device)
-        self.freqs_cis = self.freqs_cis.to(h.device)
-        freqs_cis = self.freqs_cis[positions]
+        h = self.model.forward(tokens, start_pos, use_cache)
+        output = self.lm_head_fn(h)
 
-        mask = None
-        if seqlen > 1:
-            tensor = torch.full((seqlen, seqlen), dtype=h.dtype, fill_value=1, device=h.device)
-            mask = torch.tril(tensor, diagonal=0).to(h.dtype)
-            # make the mask banded to account for sliding window
-            mask = torch.triu(mask, diagonal=-self.args.sliding_window)
-            mask = torch.log(mask)
-
-        for layer in self.layers:
-            h = layer(h, start_pos, freqs_cis, mask, use_cache)
-        h = self.norm(h)
-        output = self.output(h)
+        # Sequence Parallel Op.
+        if not use_cache:  # Bypass the function if performing autoregressive generation.
+            output = gather_from_sequence_parallel_region(output)
 
         return CausalLMOutputs(logits=self.logits_norm.forward(output), hidden_states=h)
 
@@ -274,323 +275,8 @@ class Mistral(ParallelModelForCausalLM):
         merge_lora = kwargs.get("merge_lora", True)
         super().load(ckpt_dir, verbose=verbose, merge_lora=merge_lora)
 
+    # Copied from llama_hf.LlamaHf.flush
     def flush(self):
-        """ Clean cache in `LlamaAttention` module """
-        for i in range(self.args.n_layers):
-            self.layers[i].attention.flush()
+        for i in range(self.args.num_hidden_layers):
+            self.model.layers[i].self_attn.flush()
         set_model_parallel_barrier()
-
-
-class MistralVerifier(ParallelVerifier):
-    def __init__(self, args: MistralArgs):
-        super().__init__()
-        self.args = args
-        self.vocab_size = args.vocab_size
-        self.n_layers = args.n_layers
-
-        self.tok_embeddings = None
-        self.layers = torch.nn.ModuleList()
-        for _ in range(args.n_layers):
-            self.layers.append(MistralTransformerBlock(args))
-        self.norm = None
-        self.v_head = None
-
-        self.freqs_cis = precompute_freqs_cis(self.args.head_dim, 128000)
-        self.checkpoint = CheckpointForLlama()
-
-    def init_weights(self):
-        self.tok_embeddings = ParallelEmbedding(
-            self.args.vocab_size, self.args.dim, init_method=lambda x: x
-        ).type(self.args.dtype)
-        for layer in self.layers:
-            layer.init_weights()
-        self.norm = RMSNorm(self.args.dim, eps=self.args.norm_eps).type(self.args.dtype)
-        self.v_head = nn.Linear(self.args.dim, 1, bias=False).type(self.args.dtype)
-
-    def forward(self, tokens: torch.Tensor) -> VerifierOutputs:
-        tokens = tokens.to(next(self.parameters()).device)
-        _bsz, seqlen = tokens.shape
-        h = self.tok_embeddings(tokens)
-        positions = torch.arange(0, seqlen).to(h.device)
-        self.freqs_cis = self.freqs_cis.to(h.device)
-        freqs_cis = self.freqs_cis[positions]
-
-        mask = None
-        if seqlen > 1:
-            tensor = torch.full((seqlen, seqlen), dtype=h.dtype, fill_value=1, device=h.device)
-            mask = torch.tril(tensor, diagonal=0).to(h.dtype)
-            # make the mask banded to account for sliding window
-            mask = torch.triu(mask, diagonal=-self.args.sliding_window)
-            mask = torch.log(mask)
-
-        for layer in self.layers:
-            h = layer(h, freqs_cis, positions, mask, use_cache=False)
-        h = self.norm(h)
-        scores = self.v_head(h.type_as(self.v_head.weight)).squeeze(-1)  # [b, s]
-        return VerifierOutputs(scores=scores)
-
-    # Copied from llama_hf.LlamaHf.load
-    def load(self, ckpt_dir: str, verbose: bool = True, **kwargs):
-        ckpt_dir = self.checkpoint.auto_split_or_merge_checkpoints(
-            ckpt_dir=ckpt_dir,
-            model_parallel_world_size=self.model_parallel_world_size,
-            global_rank=self.global_rank
-        )
-        merge_lora = kwargs.get("merge_lora", True)
-        super().load(ckpt_dir, verbose=verbose, merge_lora=merge_lora)
-
-
-class LoraMistralAttention(MistralAttention):
-    def __init__(self, args: LoraMistralArgs):
-        super().__init__(args)
-        self.args = args
-        self.lora_a_wq = None
-        self.lora_b_wq = None
-        self.lora_a_wk = None
-        self.lora_b_wk = None
-        self.lora_a_wv = None
-        self.lora_b_wv = None
-        self.lora_a_wo = None
-        self.lora_b_wo = None
-
-    def init_weights(self):
-        super().init_weights()
-
-        self.lora_a_wq = nn.Linear(
-            self.args.dim,
-            self.args.r,
-            bias=False
-        ).type(self.args.lora_dtype)
-        self.lora_b_wq = ColumnParallelLinear(
-            self.args.r,
-            self.args.n_heads * self.args.head_dim,
-            bias=False,
-            gather_output=False,
-            init_method=init.zeros_,
-        ).type(self.args.lora_dtype)
-        self.lora_a_wk = nn.Linear(
-            self.args.dim,
-            self.args.r,
-            bias=False
-        ).type(self.args.lora_dtype)
-        self.lora_b_wk = ColumnParallelLinear(
-            self.args.r,
-            self.args.n_kv_heads * self.args.head_dim,
-            bias=False,
-            gather_output=False,
-            init_method=init.zeros_,
-        ).type(self.args.lora_dtype)
-        self.lora_a_wv = nn.Linear(
-            self.args.dim,
-            self.args.r,
-            bias=False
-        ).type(self.args.lora_dtype)
-        self.lora_b_wv = ColumnParallelLinear(
-            self.args.r,
-            self.args.n_kv_heads * self.args.head_dim,
-            bias=False,
-            gather_output=False,
-            init_method=init.zeros_,
-        ).type(self.args.lora_dtype)
-        self.lora_a_wo = RowParallelLinear(
-            self.args.n_heads * self.args.head_dim,
-            self.args.r,
-            bias=False,
-            input_is_parallel=True,
-            init_method=init.xavier_normal_,
-        ).type(self.args.lora_dtype)
-        self.lora_b_wo = nn.Linear(
-            self.args.r,
-            self.args.dim,
-            bias=False
-        ).type(self.args.lora_dtype)
-        init.zeros_(self.lora_b_wo.weight)
-
-    def forward(
-            self,
-            x: torch.Tensor,
-            start_pos: int,
-            freqs_cis: torch.Tensor,
-            mask: torch.Tensor = None,
-            use_cache: bool = False
-    ) -> torch.Tensor:
-        bsz, seqlen, _ = x.shape
-
-        xq = self.wq(x) + apply_lora(x, self.lora_a_wq, self.lora_b_wq)
-        xk = self.wk(x) + apply_lora(x, self.lora_a_wk, self.lora_b_wk)
-        xv = self.wv(x) + apply_lora(x, self.lora_a_wv, self.lora_b_wv)
-        xq = xq.view(bsz, seqlen, self.n_local_heads, self.args.head_dim)
-        xk = xk.view(bsz, seqlen, self.n_local_kv_heads, self.args.head_dim)
-        xv = xv.view(bsz, seqlen, self.n_local_kv_heads, self.args.head_dim)
-        xq, xk = apply_rotary_emb(xq, xk, freqs_cis=freqs_cis)
-
-        if use_cache:
-            xk, xv = self.apply_cache(xk, xv, start_pos)
-        else:
-            xk, xv = self.repeat_kv(xk, xv, self.repeats)
-
-        output = self.apply_attention(xq, xk, xv, mask[None, None, ...] if mask is not None else None)
-        return self.wo(output) + apply_lora(output, self.lora_a_wo, self.lora_b_wo)
-
-
-class LoraMistralFeedForward(MistralFeedForward):
-    def __init__(self, args: LoraMistralArgs):
-        super().__init__(args)
-        self.args = args
-        self.lora_a_w1 = None
-        self.lora_b_w1 = None
-        self.lora_a_w2 = None
-        self.lora_b_w2 = None
-        self.lora_a_w3 = None
-        self.lora_b_w3 = None
-
-    def init_weights(self):
-        super().init_weights()
-
-        self.lora_a_w1 = nn.Linear(
-            self.args.dim,
-            self.args.r,
-            bias=False
-        ).type(self.args.lora_dtype)
-        self.lora_b_w1 = ColumnParallelLinear(
-            self.args.r,
-            self.args.hidden_dim,
-            bias=False,
-            gather_output=False,
-            init_method=init.zeros_,
-        ).type(self.args.lora_dtype)
-        self.lora_a_w2 = RowParallelLinear(
-            self.args.hidden_dim,
-            self.args.r,
-            bias=False,
-            input_is_parallel=True,
-            init_method=init.xavier_normal_,
-        ).type(self.args.lora_dtype)
-        self.lora_b_w2 = nn.Linear(
-            self.args.r,
-            self.args.dim,
-            bias=False
-        ).type(self.args.lora_dtype)
-        init.zeros_(self.lora_b_w2.weight)
-        self.lora_a_w3 = nn.Linear(
-            self.args.dim,
-            self.args.r,
-            bias=False
-        ).type(self.args.lora_dtype)
-        self.lora_b_w3 = ColumnParallelLinear(
-            self.args.r,
-            self.args.hidden_dim,
-            bias=False,
-            gather_output=False,
-            init_method=init.zeros_,
-        ).type(self.args.lora_dtype)
-
-    def forward(self, x) -> torch.Tensor:
-        w1_x = self.w1(x) + apply_lora(x, self.lora_a_w1, self.lora_b_w1)
-        w3_x = self.w3(x) + apply_lora(x, self.lora_a_w3, self.lora_b_w3)
-        out = F.silu(w1_x) * w3_x
-        return self.w2(out) + apply_lora(out, self.lora_a_w2, self.lora_b_w2)
-
-
-class LoraMistralTransformerBlock(MistralTransformerBlock):
-    def __init__(self, args: LoraMistralArgs):
-        super().__init__(args)
-        self.args = args
-        self.attention = LoraMistralAttention(args)
-        self.feed_forward = LoraMistralFeedForward(args)
-
-
-class LoraMistral(Mistral):
-    def __init__(self, args: LoraMistralArgs):
-        super().__init__(args)
-        self.args = args
-        self.layers = torch.nn.ModuleList()
-        for _ in range(args.n_layers):
-            self.layers.append(LoraMistralTransformerBlock(args))
-        self.lora_a_output = None
-        self.lora_b_output = None
-
-    def init_weights(self):
-        super().init_weights()
-
-        self.lora_a_output = nn.Linear(
-            self.args.dim,
-            self.args.r,
-            bias=False
-        ).type(self.args.lora_dtype)
-        self.lora_b_output = ColumnParallelLinear(
-            self.args.r,
-            self.args.vocab_size,
-            bias=False,
-            gather_output=True,
-            init_method=init.zeros_
-        ).type(self.args.lora_dtype)
-
-        # Freeze parameters
-        self._freeze()
-
-    def forward(
-            self,
-            tokens: torch.Tensor,
-            start_pos: int = 0,
-            use_cache: bool = False
-    ) -> CausalLMOutputs:
-        tokens = tokens.to(next(self.parameters()).device)
-        _bsz, seqlen = tokens.shape
-        h = self.tok_embeddings(tokens)
-        positions = torch.arange(start_pos, start_pos + seqlen).to(h.device)
-        self.freqs_cis = self.freqs_cis.to(h.device)
-        freqs_cis = self.freqs_cis[positions]
-
-        mask = None
-        if seqlen > 1:
-            tensor = torch.full((seqlen, seqlen), dtype=h.dtype, fill_value=1, device=h.device)
-            mask = torch.tril(tensor, diagonal=0).to(h.dtype)
-            # make the mask banded to account for sliding window
-            mask = torch.triu(mask, diagonal=-self.args.sliding_window)
-            mask = torch.log(mask)
-
-        for layer in self.layers:
-            h = layer(h, start_pos, freqs_cis, mask, use_cache)
-        h = self.norm(h)
-        output = self.output(h) + apply_lora(h, self.lora_a_output, self.lora_b_output)
-
-        return CausalLMOutputs(logits=self.logits_norm.forward(output), hidden_states=h)
-
-    def load(self, ckpt_dir: str, verbose: bool = True, merge_lora: bool = False):
-        super().load(ckpt_dir=ckpt_dir, verbose=verbose, merge_lora=merge_lora)
-
-    # lora op
-    def _freeze(self):
-        """ Freeze all parameters but lora ones. """
-        frozen_names = []
-        for name, param in self.named_parameters():
-            if 'lora' not in name:
-                param.requires_grad_(False)
-                frozen_names.append(name)
-
-
-class LoraMistralVerifier(MistralVerifier):
-    def __init__(self, args: LoraMistralArgs):
-        super().__init__(args)
-        self.args = args
-        self.layers = nn.ModuleList()
-        for _ in range(args.n_layers):
-            self.layers.append(LoraMistralTransformerBlock(args))
-
-    def init_weights(self):
-        super().init_weights()
-
-        # Freeze parameters
-        self._freeze()
-
-    def load(self, ckpt_dir: str, verbose: bool = True, merge_lora: bool = False):
-        super().load(ckpt_dir=ckpt_dir, verbose=verbose, merge_lora=merge_lora)
-
-    def _freeze(self):
-        """ Freeze all parameters but lora ones. """
-        frozen_names = []
-        for name, param in self.named_parameters():
-            if 'lora' not in name and 'v_head' not in name:
-                param.requires_grad_(False)
-                frozen_names.append(name)

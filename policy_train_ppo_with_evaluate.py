@@ -16,7 +16,7 @@ from src.dataset import JsonDataset, ChatTemplateDataset
 from src.evaluator import DataParallelPolicyEvaluator
 from src.modeling import get_parallel_model
 from src.parallel.initialize import setup_model_parallel, set_barrier, get_rank
-from src.ppo.buffer import PolicyRolloutBuffer
+from src.ppo.buffer import PPORolloutBuffer
 from src.utils import json_load, json_dump
 
 
@@ -50,8 +50,8 @@ def evaluate_actor(
     print("Actor Evaluating ...")
     if dataset is None:
         dataset = JsonDataset(label_file)
-        if use_chat_template:
-            dataset = ChatTemplateDataset(dataset, actor_tokenizer)
+    if use_chat_template:
+        dataset = ChatTemplateDataset(dataset, actor_tokenizer)
     evaluator = DataParallelPolicyEvaluator(
         model=actor,
         tokenizer=actor_tokenizer,
@@ -201,9 +201,9 @@ def run(
                 max_forward_batch_size=max_forward_batch_size
             )
 
-            print(f"Average Rewards: {verifier_rollout_buffer.mean(use_last_token_reward)}")
+            print(f"Average Rewards: {verifier_rollout_buffer.mean()}")
 
-            rollout_buffer = PolicyRolloutBuffer(
+            rollout_buffer = PPORolloutBuffer(
                 obs=actor_rollout_buffer["obs"],
                 actions=actor_rollout_buffer["actions"],
                 rewards=verifier_rollout_buffer["scores"],

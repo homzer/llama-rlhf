@@ -27,7 +27,8 @@ class Qwen3Attention(AttentionForCausalLM):
     def __init__(self, args: QwenArgs):
         super().__init__(args.max_seq_len)
         self.args = args
-        self.head_dim = args.hidden_size // args.num_attention_heads
+        # self.head_dim = args.hidden_size // args.num_attention_heads
+        self.head_dim = args.head_dim
         assert args.num_attention_heads % args.model_parallel_world_size == 0
         self.num_local_heads = args.num_attention_heads // args.model_parallel_world_size
         self.num_key_value_heads = args.num_key_value_heads

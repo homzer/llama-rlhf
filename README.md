@@ -190,3 +190,5 @@ The generated result will be saved to `LOG_DIR`.
 | qwq-32b                          | qwen        |
 | qwen-3-4b/8b/14b/32b             | qwen3       |
 | gemma-2-2b/9b/27b                | gemma2      |
+| internlm-3-8b-instruct           | internlm3   |
+| mistral-7b-v0.1/v0.2/v0.3        | mistral     |

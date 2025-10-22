@@ -5,10 +5,10 @@ from datetime import datetime
 
 
 class Logger:
-    def __init__(self, log_dir: str = "."):
+    def __init__(self, log_dir: str = ".", mode: str = "w"):
         os.makedirs(log_dir, exist_ok=True)
         self.terminal = sys.stdout
-        self.log = open(os.path.join(log_dir, "output.log"), "w", encoding="utf-8")
+        self.log = open(os.path.join(log_dir, "output.log"), mode=mode, encoding="utf-8")
 
     def write(self, message: str):
         if message.strip():

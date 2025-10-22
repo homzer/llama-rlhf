@@ -13,6 +13,10 @@ ActionGeneratorOutputs = collections.namedtuple("ActionGeneratorOutputs", [
     'responses', 'obs', 'actions', 'action_logits', 'action_masks', 'action_logprobs'
 ])
 
+ActionForwardGeneratorOutputs = collections.namedtuple("ActionGeneratorOutputs", [
+    'responses', 'obs', 'actions', 'action_logits', 'action_masks', 'action_logprobs', 'output_actions'
+])
+
 CriticGeneratorOutputs = collections.namedtuple("CriticGeneratorOutputs", [
     "token_scores"
 ])
@@ -100,26 +104,29 @@ class ActorForwardGeneratorForCausalLM:
         tokens_logprobs = torch.gather(
             torch.log_softmax(outputs.logits, dim=-1), dim=-1, index=labels.unsqueeze(-1)
         ).squeeze(-1)
-        Outputs = collections.namedtuple("Outputs", ['tokens', 'tokens_logits', 'tokens_logprobs'])
-        return Outputs(tokens=tokens, tokens_logits=tokens_logits, tokens_logprobs=tokens_logprobs)
+        output_tokens = torch.argmax(outputs.logits, dim=-1)
+        Outputs = collections.namedtuple("Outputs", [
+            'tokens', 'output_tokens', 'tokens_logits', 'tokens_logprobs'])
+        return Outputs(tokens=tokens, output_tokens=output_tokens, tokens_logits=tokens_logits, tokens_logprobs=tokens_logprobs)
 
     def forward(
             self,
             instructions: List[str] | List[List[int]],
             responses: List[str] | List[List[int]]
-    ) -> ActionGeneratorOutputs:
+    ) -> ActionForwardGeneratorOutputs:
         self.model.eval()
 
         prep_outputs = self.prepare_for_forward(instructions, responses)
         forward_outputs = self.model_forward(prep_outputs.tokens, prep_outputs.labels)
 
-        return ActionGeneratorOutputs(
+        return ActionForwardGeneratorOutputs(
             responses=responses,
             obs=prep_outputs.tokens,
             actions=prep_outputs.labels,
             action_logits=forward_outputs.tokens_logits,
             action_masks=prep_outputs.masks,
-            action_logprobs=forward_outputs.tokens_logprobs
+            action_logprobs=forward_outputs.tokens_logprobs,
+            output_actions=forward_outputs.output_tokens
         )
 
 

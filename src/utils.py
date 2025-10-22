@@ -1,6 +1,7 @@
 import collections
 import inspect
 import json
+import math
 import os
 import pickle
 import random
@@ -108,31 +109,31 @@ def compute_position_ids(start_pos: int, seq_length: int):
     return position_ids  # [1, seq_len]
 
 
-def json_dump(obj, f, indent=None, ensure_ascii=False):
-    if str(f).endswith(".json"):
-        with open(f, 'w', encoding='utf-8') as writer:
+def json_dump(obj, file, indent=None, ensure_ascii=False):
+    if str(file).endswith(".json"):
+        with open(file, 'w', encoding='utf-8') as writer:
             writer.write(json.dumps(obj, indent=indent, ensure_ascii=ensure_ascii))
-    elif str(f).endswith(".jsonl"):
-        with open(f, 'w', encoding='utf-8') as writer:
+    elif str(file).endswith(".jsonl"):
+        with open(file, 'w', encoding='utf-8') as writer:
             assert type(obj) is list
             for data in obj:
                 writer.write(json.dumps(data, ensure_ascii=ensure_ascii) + '\n')
     else:
-        raise ValueError(f"Unexpected file type: {str(f)}")
+        raise ValueError(f"Unexpected file type: {str(file)}")
 
 
-def json_load(f):
+def json_load(file):
     """Load a .json file into a dictionary."""
-    if str(f).endswith(".json"):
-        with open(f, 'r', encoding='utf-8') as reader:
+    if str(file).endswith(".json"):
+        with open(file, 'r', encoding='utf-8') as reader:
             datalist = json.load(reader)
-    elif str(f).endswith(".jsonl"):
+    elif str(file).endswith(".jsonl"):
         datalist = []
-        with open(f, 'r', encoding='utf-8') as reader:
+        with open(file, 'r', encoding='utf-8') as reader:
             for line in reader:
                 datalist.append(json.loads(line))
     else:
-        raise ValueError(f"Unexpected file type: {str(f)}")
+        raise ValueError(f"Unexpected file type: {str(file)}")
     return datalist
 
 
@@ -163,8 +164,13 @@ def sample_top_p(probs: torch.Tensor, p: float = 1.0, num_samples: int = 1):
     mask = probs_sum - probs_sort > p
     probs_sort[mask] = 0.0
     probs_sort.div_(probs_sort.sum(dim=-1, keepdim=True))
-    probs_sort.nan_to_num_(nan=0.001, posinf=0.001, neginf=0.001)
-    next_tokens = torch.multinomial(probs_sort, num_samples=num_samples)
+    try:
+        next_tokens = torch.multinomial(probs_sort, num_samples=num_samples)
+    except RuntimeError:
+        print(probs_sort)
+        if int(os.environ.get("RANK")) == 0:
+            torch.save(probs_sort.cpu(), "./probs_sort_debug.bin")
+        exit(0)
     next_tokens = torch.gather(probs_idx, -1, next_tokens)
     next_tokens = torch.reshape(next_tokens, shape=[*origin_shape, num_samples])
     return next_tokens
@@ -346,20 +352,110 @@ def log1m_softmax(logits: torch.Tensor):
 @torch.no_grad()
 def proxy_neg_distribution(logits: torch.Tensor, actions: torch.Tensor, delta: float = 0.01) -> torch.Tensor:
     """
-    Construct a **proxy distribution** based on the original distribution by reducing the probability values at
+    Construct a target distribution based on the original distribution by reducing the probability values at
     the positions indexed by `actions`.
-    :param logits: [..., vocab_size] Original logits tensor.
-    :param actions: [...,] Token indices indicating positions to modify.
-    :param delta: Should be greater than 0. Controls the similarity between the proxy distribution and
-    the original distribution. A value closer to **0** results in higher similarity.
-    :return: log proxy distribution with adjusted probabilities.
+    :param logits: [..., vocab_size] original logits tensor.
+    :param actions: [...,] token indices indicating positions to modify.
+    :param delta: should be greater than 0. Controls the similarity between the target distribution and
+    the original distribution. A value closer to 0 results in higher similarity.
+    :return: log target distribution with adjusted probabilities.
     """
-    assert delta >= 0
     if delta > 0:
-        action_probs = torch.gather(torch.softmax(logits.float(), dim=-1), dim=-1, index=actions.unsqueeze(-1))
-        action_probs = torch.clamp(action_probs, max=1 - 1e-7)  # To avoid NaN
-        action_probs_addition = torch.log(1 - action_probs) - torch.log(1 + delta - action_probs)
-        logits = torch.scatter_add(logits, dim=-1, index=actions.unsqueeze(-1), src=action_probs_addition.type_as(logits))
+        actions = actions.unsqueeze(-1)
+        a = torch.logsumexp(
+            torch.scatter_add(
+                logits,
+                dim=-1,
+                index=actions,
+                src=torch.full_like(actions, fill_value=float("-inf"), dtype=logits.dtype)
+            ),
+            dim=-1,
+            keepdim=True
+        )
+        b = torch.logsumexp(
+            torch.scatter_add(
+                logits + math.log(1 + delta),
+                dim=-1,
+                index=actions,
+                src=torch.full_like(actions, fill_value=math.log(delta) - math.log(1 + delta), dtype=logits.dtype)
+            ),
+            dim=-1,
+            keepdim=True
+        )
+        logits = torch.scatter_add(logits, dim=-1, index=actions, src=(a - b))
+    return torch.log_softmax(logits, dim=-1)
+
+
+@torch.no_grad()
+def create_target_distribution_v2(
+        logits: torch.Tensor,
+        actions: torch.Tensor,
+        old_action_logprobs: torch.Tensor,
+        rho: float = 1.0,
+):
+    """
+    Construct a target distribution based on `old_action_logprobs` by adjusting
+    the probability values at the positions indexed by `actions`.
+    :param logits: [..., vocab_size] policy logits tensor.
+    :param actions: [...,] token indices indicating positions to modify.
+    :param old_action_logprobs: [...,] token log probabilities of old policy.
+    :param rho: should be greater than 0. Controls the similarity between the target distribution and
+    the original distribution. A value closer to 0 results in higher similarity.
+    :return: log target distribution with adjusted probabilities.
+    """
+    assert rho > 0
+    actions = actions.unsqueeze(-1)
+    a = torch.logsumexp(
+        torch.scatter_add(
+            logits,
+            dim=-1,
+            index=actions,
+            src=torch.full_like(actions, fill_value=float("-inf"), dtype=logits.dtype)
+        ),
+        dim=-1,
+        keepdim=True
+    )
+    b = torch.gather(logits, dim=-1, index=actions)
+    rho_probs = rho * old_action_logprobs.float().exp()
+    c = torch.where(
+        1 - rho_probs > 0, torch.log(rho_probs / (1 - rho_probs)), 1000.
+    ).unsqueeze(-1).to(logits.dtype)
+    logits = torch.scatter_add(logits, dim=-1, index=actions, src=(a - b + c))
+    return torch.log_softmax(logits, dim=-1)
+
+
+@torch.no_grad()
+def create_target_distribution(
+        logits: torch.Tensor,
+        actions: torch.Tensor,
+        old_action_logprobs: torch.Tensor,
+        delta: float = 0.1
+):
+    """
+    Construct a target distribution based on the original distribution by reducing the probability values at
+    the positions indexed by `actions`.
+    :param logits: [..., vocab_size] original logits tensor.
+    :param actions: [...,] token indices indicating positions to modify.
+    :param old_action_logprobs: [...,] token log probabilities of old policy.
+    :param delta: should be greater than 0. Controls the similarity between the target distribution and
+    the original distribution. A value closer to 0 results in higher similarity.
+    :return: log target distribution with adjusted probabilities.
+    """
+    assert delta > 0
+    gamma = (1 + delta) / old_action_logprobs.float().exp().unsqueeze(-1) - 1
+    actions = actions.unsqueeze(-1)
+    a = torch.logsumexp(
+        torch.scatter_add(
+            logits,
+            dim=-1,
+            index=actions,
+            src=torch.full_like(actions, fill_value=float("-inf"), dtype=logits.dtype)
+        ),
+        dim=-1,
+        keepdim=True
+    )
+    b = torch.gather(logits, dim=-1, index=actions)
+    logits = torch.scatter_add(logits, dim=-1, index=actions, src=(a - b - gamma.log().to(logits.dtype)))
     return torch.log_softmax(logits, dim=-1)
 
 
@@ -510,6 +606,15 @@ def print_current_func_args():
     args, _, _, values = inspect.getargvalues(frame)
     param_str = '\n'.join(['%30s = %s' % (arg, values[arg]) for arg in sorted(args)])
     print('\n%30s   %s\n%s\n%s\n' % ('ATTRIBUTE', 'VALUE', '_' * 60, param_str))
+
+
+def can_convert_to_tensor(x: np.ndarray) -> bool:
+    supported_dtypes = [
+        np.float32, np.float64, np.float16,
+        np.int64, np.int32, np.int16, np.int8, np.uint8,
+        np.bool_
+    ]
+    return x.dtype in supported_dtypes
 
 
 # ===============================================================
