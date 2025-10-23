@@ -12,7 +12,8 @@ from src.ppo.generator import (
     CriticGeneratorForCausalLM,
     ActorGeneratorForCausalLM,
     LogitsGeneratorForCausalLM,
-    ActorForwardGeneratorForCausalLM
+    ActorForwardGeneratorForCausalLM,
+    ActorPrefixGeneratorForCausalLM
 )
 from src.tokenizers.tokenizer import Tokenizer
 
@@ -25,7 +26,6 @@ class ActorBufferCollector:
             max_seq_len: int,
             temperature: float = 1.0,
             top_p: float = 1.0
-
     ):
         self.generator = ActorGeneratorForCausalLM(
             model=actor, tokenizer=tokenizer, max_seq_len=max_seq_len, temperature=temperature, top_p=top_p
@@ -66,6 +66,33 @@ class ActorForwardBufferCollector:
             action_logprobs=generator_outputs.action_logprobs.float().cpu().numpy(),
             responses=responses,
             output_actions=generator_outputs.output_actions.cpu().numpy()
+        )
+
+
+class ActorPrefixBufferCollector:
+    def __init__(
+            self,
+            actor: Union[ModelForCausalLM, ParallelModelForCausalLM],
+            tokenizer: Tokenizer,
+            max_seq_len: int,
+            temperature: float = 1.0,
+            top_p: float = 1.0
+    ):
+        self.generator = ActorPrefixGeneratorForCausalLM(
+            model=actor, tokenizer=tokenizer, max_seq_len=max_seq_len, temperature=temperature, top_p=top_p
+        )
+
+    def forward(self, instructions: List[str], prefixes: List[str]) -> RolloutBuffer:
+        generator_outputs = self.generator.forward(instructions, prefixes)
+        return RolloutBuffer(
+            instructions=instructions,
+            obs=generator_outputs.obs.cpu().numpy(),
+            actions=generator_outputs.actions.cpu().numpy(),
+            action_logits=generator_outputs.action_logits.float().cpu().numpy(),
+            action_masks=generator_outputs.action_masks.cpu().numpy(),
+            action_logprobs=generator_outputs.action_logprobs.float().cpu().numpy(),
+            prefix_masks=generator_outputs.prefix_masks.cpu().numpy(),
+            responses=generator_outputs.responses
         )
 
 

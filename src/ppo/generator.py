@@ -4,7 +4,7 @@ from typing import List, Union
 import numpy as np
 import torch
 
-from src.generator import GeneratorForVerifier, GeneratorForCausalLM
+from src.generator import GeneratorForVerifier, GeneratorForCausalLM, PrefixGeneratorForCausalLM
 from src.models.modeling import ModelForCausalLM, ParallelModelForCausalLM, ParallelVerifier, Verifier
 from src.tokenizers import Tokenizer
 from src.trainer import prepare_for_forward
@@ -15,6 +15,10 @@ ActionGeneratorOutputs = collections.namedtuple("ActionGeneratorOutputs", [
 
 ActionForwardGeneratorOutputs = collections.namedtuple("ActionGeneratorOutputs", [
     'responses', 'obs', 'actions', 'action_logits', 'action_masks', 'action_logprobs', 'output_actions'
+])
+
+ActionPrefixGeneratorOutputs = collections.namedtuple("ActionPrefixGeneratorOutputs", [
+    'responses', 'obs', 'actions', 'action_logits', 'action_masks', 'action_logprobs', 'prefix_masks'
 ])
 
 CriticGeneratorOutputs = collections.namedtuple("CriticGeneratorOutputs", [
@@ -127,6 +131,50 @@ class ActorForwardGeneratorForCausalLM:
             action_masks=prep_outputs.masks,
             action_logprobs=forward_outputs.tokens_logprobs,
             output_actions=forward_outputs.output_tokens
+        )
+
+
+class ActorPrefixGeneratorForCausalLM(PrefixGeneratorForCausalLM):
+    def __init__(
+            self,
+            model: ModelForCausalLM | ParallelModelForCausalLM,
+            tokenizer: Tokenizer,
+            max_seq_len: int,
+            temperature: float = 0.0,
+            top_p: float = 1.0
+    ):
+        super().__init__(
+            model=model,
+            tokenizer=tokenizer,
+            max_seq_len=max_seq_len,
+            temperature=temperature,
+            top_p=top_p
+        )
+
+    def forward(
+            self, instructions: List[str] | List[List[int]], prefixes: List[str] | List[List[int]]
+    ) -> ActionPrefixGeneratorOutputs:
+        self.model.eval()
+        prep_outputs = self.prepare_for_generation(instructions, prefixes)
+        forward_outputs = self.model_forward(
+            prep_outputs.tokens, prep_outputs.input_masks, prep_outputs.start_pos
+        )
+        output_masks = self.get_output_masks(forward_outputs.tokens, prep_outputs.input_masks)
+        responses = self.decode_response(forward_outputs.tokens, output_masks)
+        # input tokens shift left to get output tokens
+        output_tokens = torch.zeros_like(forward_outputs.tokens)
+        output_tokens[:, :-1] = forward_outputs.tokens[:, 1:]
+        # shift left to get prefix masks
+        prefix_masks = torch.full_like(prep_outputs.prefix_masks, fill_value=False)
+        prefix_masks[:, :-1] = prep_outputs.prefix_masks[:, 1:]
+        return ActionPrefixGeneratorOutputs(
+            responses=responses,
+            obs=forward_outputs.tokens,
+            actions=output_tokens,
+            action_masks=output_masks,
+            action_logits=forward_outputs.tokens_logits,
+            action_logprobs=forward_outputs.tokens_logprobs,
+            prefix_masks=prefix_masks
         )
 
 

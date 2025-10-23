@@ -114,15 +114,14 @@ def get_output_masks(tokens: torch.Tensor, input_masks: torch.Tensor, tokenizer:
     return output_masks.to(torch.bool)
 
 
-def get_output_masks_with_prefix(
-        tokens: torch.Tensor,
-        input_masks: torch.Tensor,
-        prefix_masks: torch.Tensor,
-        tokenizer: Tokenizer
-) -> torch.Tensor:
-    input_masks = torch.where(prefix_masks, False, input_masks)
-    return get_output_masks(tokens=tokens, input_masks=input_masks, tokenizer=tokenizer)
-
+# def get_output_masks_with_prefix(
+#         tokens: torch.Tensor,
+#         input_masks: torch.Tensor,
+#         prefix_masks: torch.Tensor,
+#         tokenizer: Tokenizer
+# ) -> torch.Tensor:
+#     input_masks = torch.where(prefix_masks, False, input_masks)
+#     return get_output_masks(tokens=tokens, input_masks=input_masks, tokenizer=tokenizer)
 
 
 class GeneratorForCausalLM:
@@ -241,13 +240,13 @@ class PrefixGeneratorForCausalLM(GeneratorForCausalLM):
             max_seq_len=self.max_seq_len
         )
 
-    def get_output_masks(self, tokens, input_masks, prefix_masks):
-        return get_output_masks_with_prefix(
-            tokens=tokens,
-            input_masks=input_masks,
-            prefix_masks=prefix_masks,
-            tokenizer=self.tokenizer
-        )
+    # def get_output_masks(self, tokens, input_masks, prefix_masks):
+    #     return get_output_masks_with_prefix(
+    #         tokens=tokens,
+    #         input_masks=input_masks,
+    #         prefix_masks=prefix_masks,
+    #         tokenizer=self.tokenizer
+    #     )
 
     def forward(self, instructions: List[str] | List[List[int]], prefixes: List[str] | List[List[int]]) -> List[str]:
         self.model.eval()
@@ -255,7 +254,7 @@ class PrefixGeneratorForCausalLM(GeneratorForCausalLM):
         forward_outputs = self.model_forward(
             prep_outputs.tokens, prep_outputs.input_masks, prep_outputs.start_pos
         )
-        output_masks = self.get_output_masks(forward_outputs.tokens, prep_outputs.input_masks, prep_outputs.prefix_masks)
+        output_masks = self.get_output_masks(forward_outputs.tokens, prep_outputs.input_masks)
         responses = self.decode_response(forward_outputs.tokens, output_masks)
         return responses
 

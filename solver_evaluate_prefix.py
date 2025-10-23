@@ -84,9 +84,10 @@ def main(
         responses = generator.forward(data["instruction"], data["prefix"])
         datalist = convert_dataloader_data_to_list(data)
         for i, response in enumerate(responses):
-            datalist[i]['output'] = response
+            datalist[i]['output'] = datalist[i]["prefix"] + response
         results.extend(datalist)
-        print(data['instruction'][0].strip() + '\n' + responses[0])
+        print(data['instruction'][0].strip() + '\n' + data['prefix'][0] + responses[0])
+        print(f"\n---- Suffix ----\n{responses[0]}")
         print("---" * 10)
 
     evaluator = get_evaluator(task)
