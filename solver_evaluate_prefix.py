@@ -44,6 +44,7 @@ def main(
         use_chat_template: bool = False,
         dtype: str = "bfloat16",
         seed: int = None,
+        ratio: float = 0.5,
         model_parallel_size: int = None
 ):
     parallel_infos = setup_model_parallel(
@@ -63,7 +64,7 @@ def main(
         lora_rank=-1,
         dtype=dtype
     )
-    dataset = process_prefix_file(label_file)
+    dataset = process_prefix_file(label_file, ratio=ratio)
     if use_chat_template:
         dataset = ChatTemplateDataset(dataset, tokenizer)
     model.load(ckpt_dir)
