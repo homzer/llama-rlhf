@@ -22,8 +22,13 @@ class PrefixDataset(JsonDataset):
     def __init__(self, f, ratio: float = 0.5):
         super().__init__(f)
         self.ratio = ratio
+        datalist = []
         for data in self.datalist:
+            if len(data["output"]) == 0:
+                continue
             data["original_output"] = data.pop("output")
+            datalist.append(data)
+        self.datalist = datalist
 
     def __getitem__(self, i):
         data = super().__getitem__(i)
@@ -166,7 +171,7 @@ def run(
             obs=policy_rollout_buffer["obs"],
             actions=policy_rollout_buffer["actions"],
             rewards=verifier_rollout_buffer["scores"],
-            action_masks=policy_rollout_buffer["actions_masks"],
+            action_masks=policy_rollout_buffer["action_masks"],
             action_logprobs=policy_rollout_buffer["action_logprobs"],
             prefix_masks=policy_rollout_buffer["prefix_masks"]
         )

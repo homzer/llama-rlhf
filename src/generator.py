@@ -82,10 +82,12 @@ def prepare_for_generation_with_prefix(
             x = tokenizer.encode(x, bos=False, eos=False)
             prefix_masks[i][len(prompt_tokens[i]): len(prompt_tokens[i]) + len(x)] = True
             prompt_tokens[i].extend(x)
+            prompt_tokens[i] = prompt_tokens[i][:max_seq_len]
     elif isinstance(prefixes[0], list) and isinstance(prefixes[0][0], int):
         for i, x in enumerate(prefixes):
             prefix_masks[i][len(prompt_tokens[i]): len(prompt_tokens[i]) + len(x)] = True
             prompt_tokens[i].extend(x)
+            prompt_tokens[i] = prompt_tokens[i][:max_seq_len]
     else:
         raise TypeError(type(prefixes))
 
