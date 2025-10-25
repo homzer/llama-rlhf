@@ -1,6 +1,7 @@
 import gc
 import os
 import random
+from copy import deepcopy
 
 import fire
 import torch
@@ -26,6 +27,7 @@ class PrefixDataset(JsonDataset):
         for data in self.datalist:
             if len(data["output"]) == 0:
                 continue
+            data = deepcopy(data)
             data["original_output"] = data.pop("output")
             datalist.append(data)
         self.datalist = datalist
