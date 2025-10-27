@@ -15,6 +15,17 @@ from src.trainer import ParallelSolverTrainer
 from src.utils import print_current_func_args, json_load
 
 
+def process_multi_outputs(datalist: list) -> list:
+    results = []
+    for data in datalist:
+        if isinstance(data["output"], list):
+            for response in data["output"]:
+                results.append(dict(instruction=data["instruction"], output=response))
+        else:
+            results.append(dict(instruction=data["instruction"], output=data["output"]))
+    return results
+
+
 def evaluate_policy(
         model,
         tokenizer,
@@ -94,6 +105,7 @@ def main(
     for file in train_file.split("++"):
         datalist.extend(json_load(file))
     random.shuffle(datalist)
+    datalist = process_multi_outputs(datalist)
     dataset = JsonDataset(f=datalist)
     if use_chat_template:
         dataset = ChatTemplateDataset(dataset, tokenizer)
