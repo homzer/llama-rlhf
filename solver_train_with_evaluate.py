@@ -104,8 +104,8 @@ def main(
     datalist = []
     for file in train_file.split("++"):
         datalist.extend(json_load(file))
-    random.shuffle(datalist)
     datalist = process_multi_outputs(datalist)
+    random.shuffle(datalist)
     dataset = JsonDataset(f=datalist)
     if use_chat_template:
         dataset = ChatTemplateDataset(dataset, tokenizer)
