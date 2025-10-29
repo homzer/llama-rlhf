@@ -32,11 +32,10 @@ def train_policy_gradient_logits_convex(
         inner_epochs: int,
         save_dir: str,
         max_batch_size: int,
-        rho_pos: float = 1.2,
-        rho_neg: float = 0.8,
+        rho_pos: float = 1.8,
+        rho_neg: float = 0.9,
         save_optim: bool = False,
         accumulation_steps: int = 1,
-        use_logprobs_neg: bool = False,
         shuffle: bool = True
 ):
     policy, policy_tokenizer = get_parallel_model(
@@ -55,8 +54,7 @@ def train_policy_gradient_logits_convex(
         rho_pos=rho_pos,
         rho_neg=rho_neg,
         save_optim=save_optim,
-        accumulation_steps=accumulation_steps,
-        use_logprobs_neg=use_logprobs_neg
+        accumulation_steps=accumulation_steps
     )
     trainer.load_model(policy_ckpt_dir) if (
             epoch == 0
@@ -199,8 +197,7 @@ def run(
             rho_pos=rho_pos,
             rho_neg=rho_neg,
             save_optim=save_optim,
-            accumulation_steps=accumulation_steps,
-            use_logprobs_neg=True
+            accumulation_steps=accumulation_steps
         )
 
         if parallel_infos.global_rank == 0:

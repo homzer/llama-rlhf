@@ -15,51 +15,57 @@ class ParallelLogitsConvexTrainer(ParallelTrainer):
             optimizer: torch.optim.Optimizer,
             rho_pos: float,
             rho_neg: float,
+            beta_pos: float = 1.,
+            beta_neg: float = 1.,
             save_optim: bool = False,
-            accumulation_steps: int = 1,
-            use_logprobs_neg: bool = False,
+            accumulation_steps: int = 1
     ):
         super().__init__(policy, optimizer, save_optim, accumulation_steps=accumulation_steps)
         self.rho_pos = rho_pos
         self.rho_neg = rho_neg
-        self.use_logprobs_neg = use_logprobs_neg
+        self.beta_pos = beta_pos
+        self.beta_neg = beta_neg
         self.criterion = torch.nn.KLDivLoss(reduction="none", log_target=True)
+
+    def forward(self, *args, **kwargs):
+        raise NotImplementedError
 
     def compute_loss(self, logits, rewards, actions, old_action_logprobs) -> torch.Tensor:
         pos_reward_masks = rewards > 0
         neg_reward_masks = ~ pos_reward_masks
+
         # compute loss for positive reward tokens
-        pos_log_targets = create_target_distribution_v2(
-            logits=logits[pos_reward_masks],
-            actions=actions[pos_reward_masks],
-            old_action_logprobs=old_action_logprobs[pos_reward_masks],
-            rho=self.rho_pos
-        )
-        loss_pos = rewards[pos_reward_masks] * self.criterion.forward(
-            torch.log_softmax(logits[pos_reward_masks], dim=-1), target=pos_log_targets
-        ).sum(-1)
+        loss_pos = torch.tensor(0.0).to(logits)
+        if torch.sum(pos_reward_masks).item() != 0:
+            pos_log_targets = create_target_distribution_v2(
+                logits=logits[pos_reward_masks],
+                actions=actions[pos_reward_masks],
+                old_action_logprobs=old_action_logprobs[pos_reward_masks],
+                rho=self.rho_pos
+            )
+            loss_pos = rewards[pos_reward_masks] * self.criterion.forward(
+                torch.log_softmax(logits[pos_reward_masks], dim=-1), target=pos_log_targets
+            ).sum(-1)
+            loss_pos = self.beta_pos * torch.mean(loss_pos)
 
         # compute loss for negative reward tokens
-        neg_log_targets = create_target_distribution_v2(
-            logits=logits[neg_reward_masks],
-            actions=actions[neg_reward_masks],
-            old_action_logprobs=old_action_logprobs[neg_reward_masks] if (
-                not self.use_logprobs_neg
-            ) else torch.gather(
-                torch.log_softmax(logits, dim=-1), dim=-1, index=actions.unsqueeze(-1)
-            ).squeeze(-1)[neg_reward_masks],
-            rho=self.rho_neg
-        )
-        loss_neg = - rewards[neg_reward_masks] * self.criterion.forward(
-            torch.log_softmax(logits[neg_reward_masks], dim=-1), target=neg_log_targets
-        ).sum(-1)
+        loss_neg = torch.tensor(0.0).to(logits)
+        if torch.sum(neg_reward_masks).item() != 0:
+            neg_log_targets = create_target_distribution_v2(
+                logits=logits[neg_reward_masks],
+                actions=actions[neg_reward_masks],
+                old_action_logprobs=old_action_logprobs[neg_reward_masks],
+                rho=self.rho_neg
+            )
+            loss_neg = - rewards[neg_reward_masks] * self.criterion.forward(
+                torch.log_softmax(logits[neg_reward_masks], dim=-1), target=neg_log_targets
+            ).sum(-1)
+            loss_neg = self.beta_neg * torch.mean(loss_neg)
 
-        loss = torch.mean(torch.cat([loss_pos, loss_neg]))
+        loss = loss_pos + loss_neg
 
-        if self.step % 100 == 0:
-            loss_pos_item = loss_pos.mean().nan_to_num(0).item()
-            loss_neg_item = loss_neg.mean().nan_to_num(0).item()
-            print(f"Positive Reward Loss: {loss_pos_item} | Negative Reward Loss: {loss_neg_item}")
+        if (self.step + 1) % 100 == 0:
+            print(f"Positive Reward Loss: {loss_pos.item()} | Negative Reward Loss: {loss_neg.item()}")
 
         return loss
 
@@ -71,18 +77,20 @@ class ParallelPolicyGradientLogitsConvexTrainerForCausalLM(ParallelLogitsConvexT
             optimizer: torch.optim.Optimizer,
             rho_pos: float = 1.2,
             rho_neg: float = 0.8,
+            beta_pos: float = 1.0,
+            beta_neg: float = 1.0,
             save_optim: bool = False,
-            accumulation_steps: int = 1,
-            use_logprobs_neg: bool = False
+            accumulation_steps: int = 1
     ):
         super().__init__(
             policy,
             optimizer,
             rho_pos=rho_pos,
             rho_neg=rho_neg,
+            beta_pos=beta_pos,
+            beta_neg=beta_neg,
             save_optim=save_optim,
             accumulation_steps=accumulation_steps,
-            use_logprobs_neg=use_logprobs_neg
         )
         self.policy = policy
 
@@ -119,7 +127,6 @@ class ParallelPPOActorLogitsConvexTrainerForCausalLM(ParallelLogitsConvexTrainer
             rho_neg: float = 0.8,
             save_optim: bool = False,
             accumulation_steps: int = 1,
-            use_logprobs_neg: bool = False
     ):
         super().__init__(
             actor,
@@ -128,7 +135,6 @@ class ParallelPPOActorLogitsConvexTrainerForCausalLM(ParallelLogitsConvexTrainer
             rho_neg=rho_neg,
             save_optim=save_optim,
             accumulation_steps=accumulation_steps,
-            use_logprobs_neg=use_logprobs_neg
         )
         self.actor = actor
 
@@ -165,8 +171,7 @@ class ParallelGRPOLogitsConvexTrainerForCausalLM(ParallelLogitsConvexTrainer):
             rho_neg: float = 0.8,
             kl_coef: float = 0.01,
             save_optim: bool = False,
-            accumulation_steps: int = 1,
-            use_logprobs_neg: bool = False
+            accumulation_steps: int = 1
     ):
         super().__init__(
             policy,
@@ -174,8 +179,7 @@ class ParallelGRPOLogitsConvexTrainerForCausalLM(ParallelLogitsConvexTrainer):
             rho_pos=rho_pos,
             rho_neg=rho_neg,
             save_optim=save_optim,
-            accumulation_steps=accumulation_steps,
-            use_logprobs_neg=use_logprobs_neg
+            accumulation_steps=accumulation_steps
         )
         self.policy = policy
         self.kl_coef = kl_coef

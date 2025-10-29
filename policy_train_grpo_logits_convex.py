@@ -54,8 +54,7 @@ def train_grpo_logits_convex(
         rho_neg=rho_neg,
         kl_coef=kl_coef,
         save_optim=save_optim,
-        accumulation_steps=accumulation_steps,
-        use_logprobs_neg=use_logprobs_neg
+        accumulation_steps=accumulation_steps
     )
     trainer.load_model(policy_ckpt_dir) if (
             epoch == 0

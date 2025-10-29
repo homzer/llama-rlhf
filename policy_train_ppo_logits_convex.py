@@ -39,8 +39,7 @@ def train_actor_logits_convex(
         rho_pos: float,
         rho_neg: float,
         save_optim: bool = False,
-        accumulation_steps: int = 1,
-        use_logprobs_neg: bool = False
+        accumulation_steps: int = 1
 ):
     actor, actor_tokenizer = get_parallel_model(
         model_type=actor_model_type,
@@ -58,8 +57,7 @@ def train_actor_logits_convex(
         rho_pos=rho_pos,
         rho_neg=rho_neg,
         save_optim=save_optim,
-        accumulation_steps=accumulation_steps,
-        use_logprobs_neg=use_logprobs_neg
+        accumulation_steps=accumulation_steps
     )
     actor_trainer.load_model(actor_ckpt_dir) if (
             epoch == 0
@@ -254,8 +252,7 @@ def run(
             rho_pos=rho_pos,
             rho_neg=rho_neg,
             save_optim=save_optim,
-            accumulation_steps=accumulation_steps,
-            use_logprobs_neg=True
+            accumulation_steps=accumulation_steps
         )
 
         if parallel_infos.local_rank == 0:

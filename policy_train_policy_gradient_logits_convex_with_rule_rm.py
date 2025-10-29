@@ -84,6 +84,8 @@ def run(
         )
 
         print(f"Average Rewards: {verifier_rollout_buffer.mean()}")
+        avg_action_probs = policy_rollout_buffer["action_logprobs"][policy_rollout_buffer["action_masks"]].exp().mean()
+        print(f"Average Action Probs: {avg_action_probs}")
 
         rollout_buffer = RolloutBuffer(
             obs=policy_rollout_buffer["obs"],
