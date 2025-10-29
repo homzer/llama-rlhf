@@ -52,6 +52,7 @@ def train_policy_gradient_logits_convex(
     if compute_beta:
         beta_neg = (rollout_buffer["rewards"][rollout_buffer["action_masks"]] > 0).sum().item() / rollout_buffer["action_masks"].sum().item()
         beta_neg = 1.0 if beta_neg == 0 else beta_neg
+        print(f"Computed Beta Negative: {beta_neg}")
     optimizer = ParallelOptimizer(torch.optim.Adam(policy.parameters(), lr=lr))
     trainer = ParallelPolicyGradientLogitsConvexTrainerForCausalLM(
         policy=policy,
