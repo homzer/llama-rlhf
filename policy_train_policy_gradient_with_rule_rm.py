@@ -1,6 +1,7 @@
 import os
 
 import fire
+import numpy as np
 
 from policy_train_policy_gradient import train_policy_gradient
 from policy_train_ppo_with_evaluate import evaluate_actor
@@ -86,6 +87,8 @@ def run(
         )
 
         print(f"Average Rewards: {verifier_rollout_buffer.mean()}")
+        avg_action_probs = np.exp(policy_rollout_buffer["action_logprobs"][policy_rollout_buffer["action_masks"]]).mean()
+        print(f"Average Action Probs: {avg_action_probs}")
 
         rollout_buffer = RolloutBuffer(
             obs=policy_rollout_buffer["obs"],
