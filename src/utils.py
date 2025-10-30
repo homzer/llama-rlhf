@@ -392,15 +392,17 @@ def create_target_distribution_v2(
         actions: torch.Tensor,
         old_action_logprobs: torch.Tensor,
         rho: float = 1.0,
+        min_prob: float = 0.8
 ):
     """
     Construct a target distribution based on `old_action_logprobs` by adjusting
     the probability values at the positions indexed by `actions`.
     :param logits: [..., vocab_size] policy logits tensor.
-    :param actions: [...,] token indices indicating positions to modify.
-    :param old_action_logprobs: [...,] token log probabilities of old policy.
-    :param rho: should be greater than 0. Controls the similarity between the target distribution and
-    the original distribution. A value closer to 0 results in higher similarity.
+    :param actions: [...,] action ids indicating positions to modify.
+    :param old_action_logprobs: [...,] action log probabilities of old policy.
+    :param rho: should be greater than 0. It is the ratio between the target probability and
+    the original probability of a sampled action. A value closer to 1 results in higher similarity.
+    :param min_prob:
     :return: log target distribution with adjusted probabilities.
     """
     assert rho > 0
@@ -417,6 +419,8 @@ def create_target_distribution_v2(
     )
     b = torch.gather(logits, dim=-1, index=actions)
     rho_probs = rho * old_action_logprobs.float().exp()
+    if min_prob is not None and rho < 1:  # only consider the case when rho < 1
+        rho_probs = torch.where(rho_probs < min_prob, old_action_logprobs.float().exp(), rho_probs)
     c = torch.where(
         1 - rho_probs > 0, torch.log(rho_probs / (1 - rho_probs)), 1000.
     ).unsqueeze(-1).to(logits.dtype)
