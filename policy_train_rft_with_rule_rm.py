@@ -160,6 +160,8 @@ def run(
         )
 
         print(f"Average Rewards: {verifier_rollout_buffer.mean()}")
+        avg_action_probs = np.exp(policy_rollout_buffer["action_logprobs"][policy_rollout_buffer["action_masks"]]).mean()
+        print(f"Average Action Probs: {avg_action_probs}")
 
         if select_low_confidence_sample:
             policy_rollout_buffer_filtered, _ = select_lowest_confidence_of_n_buffer(
