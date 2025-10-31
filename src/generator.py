@@ -116,16 +116,6 @@ def get_output_masks(tokens: torch.Tensor, input_masks: torch.Tensor, tokenizer:
     return output_masks.to(torch.bool)
 
 
-# def get_output_masks_with_prefix(
-#         tokens: torch.Tensor,
-#         input_masks: torch.Tensor,
-#         prefix_masks: torch.Tensor,
-#         tokenizer: Tokenizer
-# ) -> torch.Tensor:
-#     input_masks = torch.where(prefix_masks, False, input_masks)
-#     return get_output_masks(tokens=tokens, input_masks=input_masks, tokenizer=tokenizer)
-
-
 class GeneratorForCausalLM:
     def __init__(
             self,
@@ -241,14 +231,6 @@ class PrefixGeneratorForCausalLM(GeneratorForCausalLM):
             tokenizer=self.tokenizer,
             max_seq_len=self.max_seq_len
         )
-
-    # def get_output_masks(self, tokens, input_masks, prefix_masks):
-    #     return get_output_masks_with_prefix(
-    #         tokens=tokens,
-    #         input_masks=input_masks,
-    #         prefix_masks=prefix_masks,
-    #         tokenizer=self.tokenizer
-    #     )
 
     def forward(self, instructions: List[str] | List[List[int]], prefixes: List[str] | List[List[int]]) -> List[str]:
         self.model.eval()

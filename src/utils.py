@@ -350,47 +350,9 @@ def log1m_softmax(logits: torch.Tensor):
 
 
 @torch.no_grad()
-def proxy_neg_distribution(logits: torch.Tensor, actions: torch.Tensor, delta: float = 0.01) -> torch.Tensor:
-    """
-    Construct a target distribution based on the original distribution by reducing the probability values at
-    the positions indexed by `actions`.
-    :param logits: [..., vocab_size] original logits tensor.
-    :param actions: [...,] token indices indicating positions to modify.
-    :param delta: should be greater than 0. Controls the similarity between the target distribution and
-    the original distribution. A value closer to 0 results in higher similarity.
-    :return: log target distribution with adjusted probabilities.
-    """
-    if delta > 0:
-        actions = actions.unsqueeze(-1)
-        a = torch.logsumexp(
-            torch.scatter_add(
-                logits,
-                dim=-1,
-                index=actions,
-                src=torch.full_like(actions, fill_value=float("-inf"), dtype=logits.dtype)
-            ),
-            dim=-1,
-            keepdim=True
-        )
-        b = torch.logsumexp(
-            torch.scatter_add(
-                logits + math.log(1 + delta),
-                dim=-1,
-                index=actions,
-                src=torch.full_like(actions, fill_value=math.log(delta) - math.log(1 + delta), dtype=logits.dtype)
-            ),
-            dim=-1,
-            keepdim=True
-        )
-        logits = torch.scatter_add(logits, dim=-1, index=actions, src=(a - b))
-    return torch.log_softmax(logits, dim=-1)
-
-
-@torch.no_grad()
-def create_target_distribution_v2(
+def create_target_distribution(
         logits: torch.Tensor,
         actions: torch.Tensor,
-        old_action_logprobs: torch.Tensor,
         rho: float = 1.0,
         min_rho_prob: float = 0.8
 ):
@@ -399,7 +361,6 @@ def create_target_distribution_v2(
     the probability values at the positions indexed by `actions`.
     :param logits: [..., vocab_size] policy logits tensor.
     :param actions: [...,] action ids indicating positions to modify.
-    :param old_action_logprobs: [...,] action log probabilities of old policy.
     :param rho: should be greater than 0. It is the ratio between the target probability and
     the original probability of a sampled action. A value closer to 1 results in higher similarity.
     :param min_rho_prob: is used when `rho` < 1 to set a lower bound for the probability.
@@ -408,6 +369,7 @@ def create_target_distribution_v2(
     """
     assert rho > 0
     actions = actions.unsqueeze(-1)
+    action_logprobs = torch.gather(torch.log_softmax(logits, dim=-1), dim=-1, index=actions).squeeze(-1)
     a = torch.logsumexp(
         torch.scatter_add(
             logits,
@@ -419,9 +381,10 @@ def create_target_distribution_v2(
         keepdim=True
     )
     b = torch.gather(logits, dim=-1, index=actions)
-    rho_probs = rho * old_action_logprobs.float().exp()
+    rho_probs = rho * action_logprobs.float().exp()
     if min_rho_prob is not None and rho < 1:  # only consider the case when rho < 1
-        rho_probs = torch.where(rho_probs < min_rho_prob, old_action_logprobs.float().exp(), rho_probs)
+        assert 0 < min_rho_prob < 1
+        rho_probs = torch.where(rho_probs < min_rho_prob, action_logprobs.float().exp(), rho_probs)
     c = torch.where(
         1 - rho_probs > 0, torch.log(rho_probs / (1 - rho_probs)), 1000.
     ).unsqueeze(-1).to(logits.dtype)
@@ -429,39 +392,47 @@ def create_target_distribution_v2(
     return torch.log_softmax(logits, dim=-1)
 
 
-@torch.no_grad()
-def create_target_distribution(
-        logits: torch.Tensor,
-        actions: torch.Tensor,
-        old_action_logprobs: torch.Tensor,
-        delta: float = 0.1
-):
-    """
-    Construct a target distribution based on the original distribution by reducing the probability values at
-    the positions indexed by `actions`.
-    :param logits: [..., vocab_size] original logits tensor.
-    :param actions: [...,] token indices indicating positions to modify.
-    :param old_action_logprobs: [...,] token log probabilities of old policy.
-    :param delta: should be greater than 0. Controls the similarity between the target distribution and
-    the original distribution. A value closer to 0 results in higher similarity.
-    :return: log target distribution with adjusted probabilities.
-    """
-    assert delta > 0
-    gamma = (1 + delta) / old_action_logprobs.float().exp().unsqueeze(-1) - 1
-    actions = actions.unsqueeze(-1)
-    a = torch.logsumexp(
-        torch.scatter_add(
-            logits,
-            dim=-1,
-            index=actions,
-            src=torch.full_like(actions, fill_value=float("-inf"), dtype=logits.dtype)
-        ),
-        dim=-1,
-        keepdim=True
-    )
-    b = torch.gather(logits, dim=-1, index=actions)
-    logits = torch.scatter_add(logits, dim=-1, index=actions, src=(a - b - gamma.log().to(logits.dtype)))
-    return torch.log_softmax(logits, dim=-1)
+# @torch.no_grad()
+# def create_target_distribution(
+#         logits: torch.Tensor,
+#         actions: torch.Tensor,
+#         old_action_logprobs: torch.Tensor,
+#         rho: float = 1.0,
+#         min_rho_prob: float = 0.8
+# ):
+#     """
+#     Construct a target distribution based on `old_action_logprobs` by adjusting
+#     the probability values at the positions indexed by `actions`.
+#     :param logits: [..., vocab_size] policy logits tensor.
+#     :param actions: [...,] action ids indicating positions to modify.
+#     :param old_action_logprobs: [...,] action log probabilities of old policy.
+#     :param rho: should be greater than 0. It is the ratio between the target probability and
+#     the original probability of a sampled action. A value closer to 1 results in higher similarity.
+#     :param min_rho_prob: is used when `rho` < 1 to set a lower bound for the probability.
+#     When the calculated `rho_probs` is less than `min_rho_prob`, we use the old probability instead of `rho_probs`.
+#     :return: log target distribution with adjusted probabilities.
+#     """
+#     assert rho > 0
+#     actions = actions.unsqueeze(-1)
+#     a = torch.logsumexp(
+#         torch.scatter_add(
+#             logits,
+#             dim=-1,
+#             index=actions,
+#             src=torch.full_like(actions, fill_value=float("-inf"), dtype=logits.dtype)
+#         ),
+#         dim=-1,
+#         keepdim=True
+#     )
+#     b = torch.gather(logits, dim=-1, index=actions)
+#     rho_probs = rho * old_action_logprobs.float().exp()
+#     if min_rho_prob is not None and rho < 1:  # only consider the case when rho < 1
+#         rho_probs = torch.where(rho_probs < min_rho_prob, old_action_logprobs.float().exp(), rho_probs)
+#     c = torch.where(
+#         1 - rho_probs > 0, torch.log(rho_probs / (1 - rho_probs)), 1000.
+#     ).unsqueeze(-1).to(logits.dtype)
+#     logits = torch.scatter_add(logits, dim=-1, index=actions, src=(a - b + c))
+#     return torch.log_softmax(logits, dim=-1)
 
 
 def load_safetensors(f: str) -> dict:

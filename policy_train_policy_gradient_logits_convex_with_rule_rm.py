@@ -41,7 +41,7 @@ def run(
         seed: int = None,
         rho_pos: float = 1.2,
         rho_neg: float = 0.8,
-        compute_beta: bool = False,
+        min_rho_prob: float = 0.8,
         save_optim: bool = False,
         accumulation_steps: int = 1,
         model_parallel_size: int = None,
@@ -116,7 +116,7 @@ def run(
             rho_neg=rho_neg,
             save_optim=save_optim,
             accumulation_steps=accumulation_steps,
-            compute_beta=compute_beta
+            min_rho_prob=min_rho_prob
         )
 
         if parallel_infos.global_rank == 0:

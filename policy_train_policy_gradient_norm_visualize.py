@@ -19,7 +19,7 @@ from src.parallel.optimizer import ParallelOptimizer
 from src.ppo.buffer import PPORolloutBuffer, CriticRolloutBuffer, RolloutBuffer, PPORolloutBufferSample
 from src.trainer import ParallelTrainer
 from src.utils import json_load, print_current_func_args, proxy_neg_distribution, json_dump, create_target_distribution, \
-    create_target_distribution_v2
+    create_target_distribution
 
 Outputs = collections.namedtuple('Outputs', [
     'gradient', 'action_probs', 'entropy', 'pos_gradient', 'neg_gradient'])
@@ -254,7 +254,7 @@ class ParallelPolicyGradientConvexBoundedTrainerForCausalLM(ParallelTrainer):
         rewards = torch.masked_select(rewards.to(logits.dtype).view(-1), action_masks.view(-1))
         pos_reward_masks = rewards > 0
 
-        pos_log_targets = create_target_distribution_v2(
+        pos_log_targets = create_target_distribution(
             logits=logits[pos_reward_masks],
             actions=actions[pos_reward_masks],
             old_action_logprobs=old_action_logprobs[pos_reward_masks],
@@ -265,7 +265,7 @@ class ParallelPolicyGradientConvexBoundedTrainerForCausalLM(ParallelTrainer):
         ).sum(-1)
 
         # compute loss for negative reward tokens
-        neg_log_targets = create_target_distribution_v2(
+        neg_log_targets = create_target_distribution(
             logits=logits[~pos_reward_masks],
             actions=actions[~pos_reward_masks],
             old_action_logprobs=old_action_logprobs[~pos_reward_masks],

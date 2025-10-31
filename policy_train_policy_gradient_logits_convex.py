@@ -37,7 +37,7 @@ def train_policy_gradient_logits_convex(
         save_optim: bool = False,
         accumulation_steps: int = 1,
         shuffle: bool = True,
-        compute_beta: bool = False
+        min_rho_prob: float = 0.8
 ):
     policy, policy_tokenizer = get_parallel_model(
         model_type=policy_model_type,
@@ -48,11 +48,6 @@ def train_policy_gradient_logits_convex(
         dtype=dtype,
         lora_dtype=lora_dtype
     )
-    beta_neg = 1.0
-    if compute_beta:
-        beta_neg = (rollout_buffer["rewards"][rollout_buffer["action_masks"]] > 0).sum().item() / rollout_buffer["action_masks"].sum().item()
-        beta_neg = 1.0 if beta_neg == 0 else beta_neg
-        print(f"Computed Beta Negative: {beta_neg}")
     optimizer = ParallelOptimizer(torch.optim.Adam(policy.parameters(), lr=lr))
     trainer = ParallelPolicyGradientLogitsConvexTrainerForCausalLM(
         policy=policy,
@@ -61,7 +56,7 @@ def train_policy_gradient_logits_convex(
         rho_neg=rho_neg,
         save_optim=save_optim,
         accumulation_steps=accumulation_steps,
-        beta_neg=beta_neg
+        min_rho_prob=min_rho_prob
     )
     trainer.load_model(policy_ckpt_dir) if (
             epoch == 0

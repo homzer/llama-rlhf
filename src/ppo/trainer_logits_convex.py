@@ -5,7 +5,7 @@ import torch
 from src.models.modeling import ParallelModelForCausalLM, ParallelModule
 from src.ppo.buffer import PPORolloutBufferSample
 from src.trainer import ParallelTrainer
-from src.utils import create_target_distribution_v2
+from src.utils import create_target_distribution
 
 
 class ParallelLogitsConvexTrainer(ParallelTrainer):
@@ -15,16 +15,14 @@ class ParallelLogitsConvexTrainer(ParallelTrainer):
             optimizer: torch.optim.Optimizer,
             rho_pos: float,
             rho_neg: float,
-            beta_pos: float = 1.,
-            beta_neg: float = 1.,
+            min_rho_prob: float = 0.8,
             save_optim: bool = False,
             accumulation_steps: int = 1
     ):
         super().__init__(policy, optimizer, save_optim, accumulation_steps=accumulation_steps)
         self.rho_pos = rho_pos
         self.rho_neg = rho_neg
-        self.beta_pos = beta_pos
-        self.beta_neg = beta_neg
+        self.min_rho_prob = min_rho_prob
         self.criterion = torch.nn.KLDivLoss(reduction="none", log_target=True)
 
     def forward(self, *args, **kwargs):
@@ -37,30 +35,32 @@ class ParallelLogitsConvexTrainer(ParallelTrainer):
         # compute loss for positive reward tokens
         loss_pos = torch.tensor(0.0).to(logits)
         if torch.sum(pos_reward_masks).item() != 0:
-            pos_log_targets = create_target_distribution_v2(
+            pos_log_targets = create_target_distribution(
                 logits=logits[pos_reward_masks],
                 actions=actions[pos_reward_masks],
-                old_action_logprobs=old_action_logprobs[pos_reward_masks],
-                rho=self.rho_pos
+                # old_action_logprobs=old_action_logprobs[pos_reward_masks],
+                rho=self.rho_pos,
+                min_rho_prob=self.min_rho_prob
             )
             loss_pos = rewards[pos_reward_masks] * self.criterion.forward(
                 torch.log_softmax(logits[pos_reward_masks], dim=-1), target=pos_log_targets
             ).sum(-1)
-            loss_pos = self.beta_pos * torch.mean(loss_pos)
+            loss_pos = torch.mean(loss_pos)
 
         # compute loss for negative reward tokens
         loss_neg = torch.tensor(0.0).to(logits)
         if torch.sum(neg_reward_masks).item() != 0:
-            neg_log_targets = create_target_distribution_v2(
+            neg_log_targets = create_target_distribution(
                 logits=logits[neg_reward_masks],
                 actions=actions[neg_reward_masks],
-                old_action_logprobs=old_action_logprobs[neg_reward_masks],
-                rho=self.rho_neg
+                # old_action_logprobs=old_action_logprobs[neg_reward_masks],
+                rho=self.rho_neg,
+                min_rho_prob=self.min_rho_prob
             )
             loss_neg = - rewards[neg_reward_masks] * self.criterion.forward(
                 torch.log_softmax(logits[neg_reward_masks], dim=-1), target=neg_log_targets
             ).sum(-1)
-            loss_neg = self.beta_neg * torch.mean(loss_neg)
+            loss_neg = torch.mean(loss_neg)
 
         loss = loss_pos + loss_neg
 
@@ -77,8 +77,7 @@ class ParallelPolicyGradientLogitsConvexTrainerForCausalLM(ParallelLogitsConvexT
             optimizer: torch.optim.Optimizer,
             rho_pos: float = 1.2,
             rho_neg: float = 0.8,
-            beta_pos: float = 1.0,
-            beta_neg: float = 1.0,
+            min_rho_prob: float = 0.8,
             save_optim: bool = False,
             accumulation_steps: int = 1
     ):
@@ -87,8 +86,7 @@ class ParallelPolicyGradientLogitsConvexTrainerForCausalLM(ParallelLogitsConvexT
             optimizer,
             rho_pos=rho_pos,
             rho_neg=rho_neg,
-            beta_pos=beta_pos,
-            beta_neg=beta_neg,
+            min_rho_prob=min_rho_prob,
             save_optim=save_optim,
             accumulation_steps=accumulation_steps,
         )
