@@ -1,5 +1,6 @@
 import gc
 import os
+import shutil
 
 import fire
 import torch
@@ -37,6 +38,7 @@ def train_policy_gradient_logits_convex(
         save_optim: bool = False,
         accumulation_steps: int = 1,
         shuffle: bool = True,
+        max_num_ckpts: int = None,
         min_rho_prob: float = 0.80,
         max_rho_prob: float = 0.99
 ):
@@ -74,6 +76,10 @@ def train_policy_gradient_logits_convex(
                 print(f'Loss: {trainer_outputs.loss}')
                 print(f'Rewards: {trainer_outputs.rewards}')
     trainer.save(os.path.join(save_dir, "epoch-%03d" % (epoch + 1)))
+    if max_num_ckpts is not None and (epoch + 1 - max_num_ckpts) > 0:
+        rm_dir = os.path.join(save_dir, "epoch-%03d" % (epoch + 1 - max_num_ckpts))
+        if os.path.exists(rm_dir):
+            shutil.rmtree(rm_dir)
 
     policy.cpu()
     del policy

@@ -44,6 +44,7 @@ def run(
         min_rho_prob: float = 0.80,
         max_rho_prob: float = 0.99,
         save_optim: bool = False,
+        max_num_ckpts: int = None,
         accumulation_steps: int = 1,
         model_parallel_size: int = None,
         sequence_parallel_size: int = 1,
@@ -87,8 +88,8 @@ def run(
         )
 
         print(f"Average Rewards: {verifier_rollout_buffer.mean()}")
-        avg_action_probs = np.exp(policy_rollout_buffer["action_logprobs"][policy_rollout_buffer["action_masks"]]).mean()
-        print(f"Average Action Probs: {avg_action_probs}")
+        action_probs = np.exp(policy_rollout_buffer["action_logprobs"][policy_rollout_buffer["action_masks"]]).mean()
+        print(f"Average Action Probs: {action_probs}")
 
         rollout_buffer = RolloutBuffer(
             obs=policy_rollout_buffer["obs"],
@@ -117,12 +118,13 @@ def run(
             rho_neg=rho_neg,
             save_optim=save_optim,
             accumulation_steps=accumulation_steps,
+            max_num_ckpts=max_num_ckpts,
             min_rho_prob=min_rho_prob,
             max_rho_prob=max_rho_prob
         )
 
         if parallel_infos.global_rank == 0:
-            rollout_buffer.save(os.path.join(save_dir, "epoch-%03d" % (epoch + 1)))
+            rollout_buffer.save(os.path.join(log_dir, "epoch-%03d" % (epoch + 1)))
 
         if label_file is not None:
             evaluate_actor(
