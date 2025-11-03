@@ -354,7 +354,8 @@ def create_target_distribution(
         logits: torch.Tensor,
         actions: torch.Tensor,
         rho: float = 1.0,
-        min_rho_prob: float = 0.8
+        min_rho_prob: float = 0.80,
+        max_rho_prob: float = 0.99
 ):
     """
     Construct a target distribution based on `old_action_logprobs` by adjusting
@@ -364,7 +365,9 @@ def create_target_distribution(
     :param rho: should be greater than 0. It is the ratio between the target probability and
     the original probability of a sampled action. A value closer to 1 results in higher similarity.
     :param min_rho_prob: is used when `rho` < 1 to set a lower bound for the probability.
-    When the calculated `rho_probs` is less than `min_rho_prob`, we use the old probability instead of `rho_probs`.
+    When the calculated `rho_probs` is less than `min_rho_prob`, we use the original probability instead of `rho_probs`.
+    :param max_rho_prob: is used when `rho` > 1 to set a upper bound for the probability.
+    When the calculated `rho_probs` is more than `max_rho_prob`, we use the `max_rho_prob` instead of `rho_probs`.
     :return: log target distribution with adjusted probabilities.
     """
     assert rho > 0
@@ -383,8 +386,11 @@ def create_target_distribution(
     b = torch.gather(logits, dim=-1, index=actions)
     rho_probs = rho * action_logprobs.float().exp()
     if min_rho_prob is not None and rho < 1:  # only consider the case when rho < 1
-        assert 0 < min_rho_prob < 1
+        assert 0 <= min_rho_prob <= 1
         rho_probs = torch.where(rho_probs < min_rho_prob, action_logprobs.float().exp(), rho_probs)
+    if max_rho_prob is not None and rho > 1:  # only consider the case when rho > 1
+        assert 0 <= max_rho_prob <= 1
+        rho_probs = torch.where(rho_probs > max_rho_prob, max_rho_prob, rho_probs)
     c = torch.where(
         1 - rho_probs > 0, torch.log(rho_probs / (1 - rho_probs)), 1000.
     ).unsqueeze(-1).to(logits.dtype)

@@ -15,7 +15,8 @@ class ParallelLogitsConvexTrainer(ParallelTrainer):
             optimizer: torch.optim.Optimizer,
             rho_pos: float,
             rho_neg: float,
-            min_rho_prob: float = 0.8,
+            min_rho_prob: float = 0.80,
+            max_rho_prob: float = 0.99,
             save_optim: bool = False,
             accumulation_steps: int = 1
     ):
@@ -23,12 +24,13 @@ class ParallelLogitsConvexTrainer(ParallelTrainer):
         self.rho_pos = rho_pos
         self.rho_neg = rho_neg
         self.min_rho_prob = min_rho_prob
+        self.max_rho_prob = max_rho_prob
         self.criterion = torch.nn.KLDivLoss(reduction="none", log_target=True)
 
     def forward(self, *args, **kwargs):
         raise NotImplementedError
 
-    def compute_loss(self, logits, rewards, actions, old_action_logprobs) -> torch.Tensor:
+    def compute_loss(self, logits, rewards, actions) -> torch.Tensor:
         pos_reward_masks = rewards > 0
         neg_reward_masks = ~ pos_reward_masks
 
@@ -38,9 +40,9 @@ class ParallelLogitsConvexTrainer(ParallelTrainer):
             pos_log_targets = create_target_distribution(
                 logits=logits[pos_reward_masks],
                 actions=actions[pos_reward_masks],
-                # old_action_logprobs=old_action_logprobs[pos_reward_masks],
                 rho=self.rho_pos,
-                min_rho_prob=self.min_rho_prob
+                min_rho_prob=self.min_rho_prob,
+                max_rho_prob=self.max_rho_prob
             )
             loss_pos = rewards[pos_reward_masks] * self.criterion.forward(
                 torch.log_softmax(logits[pos_reward_masks], dim=-1), target=pos_log_targets
@@ -53,9 +55,9 @@ class ParallelLogitsConvexTrainer(ParallelTrainer):
             neg_log_targets = create_target_distribution(
                 logits=logits[neg_reward_masks],
                 actions=actions[neg_reward_masks],
-                # old_action_logprobs=old_action_logprobs[neg_reward_masks],
                 rho=self.rho_neg,
-                min_rho_prob=self.min_rho_prob
+                min_rho_prob=self.min_rho_prob,
+                max_rho_prob=self.max_rho_prob
             )
             loss_neg = - rewards[neg_reward_masks] * self.criterion.forward(
                 torch.log_softmax(logits[neg_reward_masks], dim=-1), target=neg_log_targets
@@ -98,18 +100,16 @@ class ParallelPolicyGradientLogitsConvexTrainerForCausalLM(ParallelLogitsConvexT
         obs = rollout_data.obs.to(self.policy.device())
         actions = rollout_data.actions.to(self.policy.device())
         action_masks = rollout_data.action_masks.to(self.policy.device())
-        old_action_logprobs = rollout_data.action_logprobs.to(self.policy.device())
         rewards = rollout_data.rewards.to(self.policy.device())
 
         actions = torch.masked_select(actions.view(-1), action_masks.view(-1))
-        old_action_logprobs = torch.masked_select(old_action_logprobs.view(-1), action_masks.view(-1))
         rewards = torch.masked_select(rewards.view(-1), action_masks.view(-1))
 
         logits = self.policy.forward(obs).logits
         logits = logits.view(-1, logits.shape[-1])[action_masks.view(-1)]
         rewards = rewards.to(logits.dtype)
 
-        loss = self.compute_loss(logits, rewards, actions, old_action_logprobs)
+        loss = self.compute_loss(logits, rewards, actions)
         self.backward(loss)
 
         Outputs = collections.namedtuple('Outputs', ['loss', 'rewards'])
@@ -143,17 +143,15 @@ class ParallelPPOActorLogitsConvexTrainerForCausalLM(ParallelLogitsConvexTrainer
         actions = rollout_data.actions.to(self.actor.device())
         action_masks = rollout_data.action_masks.to(self.actor.device())
         advantages = rollout_data.advantages.to(self.actor.device())
-        old_action_logprobs = rollout_data.old_action_logprobs.to(self.actor.device())
 
         actions = torch.masked_select(actions.view(-1), action_masks.view(-1))
         advantages = torch.masked_select(advantages.view(-1), action_masks.view(-1))
-        old_action_logprobs = torch.masked_select(old_action_logprobs.view(-1), action_masks.view(-1))
 
         logits = self.actor.forward(obs).logits
         logits = logits.view(-1, logits.shape[-1])[action_masks.view(-1)]
         advantages = advantages.to(logits.dtype)
 
-        loss = self.compute_loss(logits, advantages, actions, old_action_logprobs)
+        loss = self.compute_loss(logits, advantages, actions)
         self.backward(loss)
 
         Outputs = collections.namedtuple('Outputs', ['loss', 'advantages'])
@@ -189,17 +187,15 @@ class ParallelGRPOLogitsConvexTrainerForCausalLM(ParallelLogitsConvexTrainer):
         actions = rollout_data.actions.to(self.policy.device())
         action_masks = rollout_data.action_masks.to(self.policy.device())
         rewards = rollout_data.rewards.to(self.policy.device())
-        old_action_logprobs = rollout_data.action_logprobs.to(self.policy.device())
 
         actions = torch.masked_select(actions.view(-1), action_masks.view(-1))
         rewards = torch.masked_select(rewards.view(-1), action_masks.view(-1))
-        old_action_logprobs = torch.masked_select(old_action_logprobs.view(-1), action_masks.view(-1))
 
         logits = self.policy.forward(obs).logits
         logits = logits.view(-1, logits.shape[-1])[action_masks.view(-1)]
         rewards = rewards.to(logits.dtype)
 
-        policy_loss = self.compute_loss(logits, rewards, actions, old_action_logprobs)
+        policy_loss = self.compute_loss(logits, rewards, actions)
 
         kl_loss = 0.0
         if hasattr(rollout_data, "ref_action_logprobs"):
