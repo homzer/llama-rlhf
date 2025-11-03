@@ -37,7 +37,8 @@ def train_policy_gradient_logits_convex(
         save_optim: bool = False,
         accumulation_steps: int = 1,
         shuffle: bool = True,
-        min_rho_prob: float = 0.8
+        min_rho_prob: float = 0.80,
+        max_rho_prob: float = 0.99
 ):
     policy, policy_tokenizer = get_parallel_model(
         model_type=policy_model_type,
@@ -56,7 +57,8 @@ def train_policy_gradient_logits_convex(
         rho_neg=rho_neg,
         save_optim=save_optim,
         accumulation_steps=accumulation_steps,
-        min_rho_prob=min_rho_prob
+        min_rho_prob=min_rho_prob,
+        max_rho_prob=max_rho_prob
     )
     trainer.load_model(policy_ckpt_dir) if (
             epoch == 0
