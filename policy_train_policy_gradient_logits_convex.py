@@ -11,7 +11,7 @@ from policy_train_ppo_with_evaluate import evaluate_actor
 from src.dataset import JsonDataset
 from src.entities import IterationHandler, Timer
 from src.modeling import get_parallel_model
-from src.parallel.initialize import setup_model_parallel, set_barrier
+from src.parallel.initialize import setup_model_parallel, set_barrier, get_rank
 from src.parallel.optimizer import ParallelOptimizer
 from src.ppo.buffer import RolloutBuffer
 from src.ppo.trainer_logits_convex import ParallelPolicyGradientLogitsConvexTrainerForCausalLM
@@ -78,7 +78,7 @@ def train_policy_gradient_logits_convex(
     trainer.save(os.path.join(save_dir, "epoch-%03d" % (epoch + 1)))
     if max_num_ckpts is not None and (epoch + 1 - max_num_ckpts) > 0:
         rm_dir = os.path.join(save_dir, "epoch-%03d" % (epoch + 1 - max_num_ckpts))
-        if os.path.exists(rm_dir):
+        if get_rank() == 0 and os.path.exists(rm_dir):
             shutil.rmtree(rm_dir)
 
     policy.cpu()
