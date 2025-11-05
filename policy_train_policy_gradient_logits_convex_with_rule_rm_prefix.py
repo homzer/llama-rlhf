@@ -1,7 +1,6 @@
 import gc
 import os
 import random
-from copy import deepcopy
 
 import fire
 import torch
@@ -19,25 +18,38 @@ from src.ppo.collector import ActorPrefixBufferCollector
 from src.utils import json_load, print_current_func_args
 
 
+# class PrefixDataset(JsonDataset):
+#     def __init__(self, f, ratio: float = 0.5):
+#         super().__init__(f)
+#         self.ratio = ratio
+#         datalist = []
+#         for data in self.datalist:
+#             if len(data["output"]) == 0:
+#                 continue
+#             data = deepcopy(data)
+#             data["original_output"] = data.pop("output")
+#             datalist.append(data)
+#         self.datalist = datalist
+#
+#     def __getitem__(self, i):
+#         data = super().__getitem__(i)
+#         if isinstance(data["original_output"], list):
+#             data["original_output"] = random.choice(data["original_output"])
+#         response_tokens = data["original_output"].split(" ")
+#         data["prefix"] = " ".join(response_tokens[: int(self.ratio * len(response_tokens))])
+#         return data
+
+
 class PrefixDataset(JsonDataset):
-    def __init__(self, f, ratio: float = 0.5):
+    def __init__(self, f):
         super().__init__(f)
-        self.ratio = ratio
-        datalist = []
-        for data in self.datalist:
-            if len(data["output"]) == 0:
-                continue
-            data = deepcopy(data)
-            data["original_output"] = data.pop("output")
-            datalist.append(data)
-        self.datalist = datalist
+        self.first_words = [
+            "Since", "Because", "To", "The", "We", "Given", "First", "Let's", "For", "Based", "According", "Now", "As", ""
+        ]
 
     def __getitem__(self, i):
         data = super().__getitem__(i)
-        if isinstance(data["original_output"], list):
-            data["original_output"] = random.choice(data["original_output"])
-        response_tokens = data["original_output"].split(" ")
-        data["prefix"] = " ".join(response_tokens[: int(self.ratio * len(response_tokens))])
+        data["prefix"] = random.choice(self.first_words)
         return data
 
 
@@ -109,7 +121,6 @@ def run(
         label_file: str = None,
         policy_config_file: str = None,
         policy_tokenizer_file: str = None,
-        prefix_ratio: float = 0.8,
         lora_rank: int = -1,
         lora_dtype: str = "bfloat16",
         max_batch_size: int = 1,
@@ -121,6 +132,7 @@ def run(
         epochs: int = 1,
         chunk_size: int = None,
         inner_epochs: int = 1,
+        max_num_ckpts: int = None,
         lr: float = 1e-5,
         dtype: str = "bfloat16",
         begin_epoch: int = 0,
@@ -145,7 +157,7 @@ def run(
     policy_tokenizer_file = policy_tokenizer_file or policy_ckpt_dir
 
     for epoch, datalist in IterationHandler(json_load(train_file), epochs, chunk_size, begin_epoch):
-        dataset = PrefixDataset(datalist, ratio=prefix_ratio)
+        dataset = PrefixDataset(datalist)
         if len(dataset) == 0:
             continue
 
@@ -165,6 +177,9 @@ def run(
             top_p=top_p,
             num_samples_per_prompt=num_samples_per_prompt
         )
+
+        # also train on prefix
+        policy_rollout_buffer["action_masks"] = policy_rollout_buffer["prefix_masks"] | policy_rollout_buffer["action_masks"]
 
         verifier_rollout_buffer = collect_rule_based_verifier_buffer(policy_rollout_buffer, task)
         print(f"Average Rewards: {verifier_rollout_buffer.mean()}")
@@ -197,10 +212,11 @@ def run(
             rho_neg=rho_neg,
             save_optim=save_optim,
             accumulation_steps=accumulation_steps,
+            max_num_ckpts=max_num_ckpts
         )
 
         if parallel_infos.global_rank == 0:
-            rollout_buffer.save(os.path.join(save_dir, "epoch-%03d" % (epoch + 1)))
+            rollout_buffer.save(os.path.join(log_dir, "epoch-%03d" % (epoch + 1)))
 
         if label_file is not None:
             evaluate_actor(
