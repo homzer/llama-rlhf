@@ -2,19 +2,23 @@ import os
 
 import fire
 import torch
-from torch.utils.data import DataLoader
 
 from src.dataset import ChatTemplateDataset, JsonDataset
 from src.entities import Timer
 from src.modeling import get_parallel_verifier
+from src.parallel.data_parallel.dataloader import ParallelDataLoader
 from src.parallel.initialize import setup_model_parallel
-from src.rewards.trainer import ParallelPointwiseVerifierTrainerForLastToken, ParallelPointwiseVerifierTrainerForFocalLoss
+from src.parallel.optimizer import ParallelOptimizer
+from src.rewards.trainer import ParallelPointwiseVerifierTrainerForLastToken, \
+    ParallelPointwiseVerifierTrainerForFocalLoss
+from src.utils import print_current_func_args
 
 
 def main(
         strategy: str,
         ckpt_dir: str,
         save_dir: str,
+        log_dir: str,
         train_file: str,
         model_type: str,
         max_seq_len: int = 512,
@@ -27,11 +31,19 @@ def main(
         dtype: str = "bfloat16",
         lora_dtype: str = "bfloat16",
         use_chat_template: bool = False,
-        seed: int = None
+        seed: int = None,
+        model_parallel_size: int = None,
+        sequence_parallel_size: int = 1,
 ):
     tokenizer_file = tokenizer_file or ckpt_dir
     config_file = config_file or ckpt_dir
-    setup_model_parallel(seed=seed)
+    setup_model_parallel(
+        seed=seed,
+        log_dir=log_dir,
+        model_parallel_size=model_parallel_size,
+        sequence_parallel_size=sequence_parallel_size
+    )
+    print_current_func_args()
     model, tokenizer = get_parallel_verifier(
         model_type=model_type,
         config_file=config_file,
@@ -45,8 +57,8 @@ def main(
     dataset = JsonDataset(f=train_file)
     if use_chat_template:
         dataset = ChatTemplateDataset(dataset, tokenizer)
-    dataloader = DataLoader(dataset, batch_size=max_batch_size)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    dataloader = ParallelDataLoader(dataset, batch_size=max_batch_size)
+    optimizer = ParallelOptimizer(torch.optim.Adam(model.parameters(), lr=lr))
     if "last-token" in strategy:
         trainer = ParallelPointwiseVerifierTrainerForLastToken(
             model=model,
