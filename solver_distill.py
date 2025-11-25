@@ -9,8 +9,8 @@ from src.dataset import MultiOutputsDataset, JsonDataset
 from src.entities import Timer
 from src.evaluator import PolicyEvaluator
 from src.modeling import get_parallel_model
-from src.ppo.buffer import LogitsRolloutBuffer
-from src.ppo.collector import LogitsBufferCollector
+from src.ppo.buffer import LogitsRolloutBufferV0
+from src.ppo.collector import LogitsBufferCollectorV0
 from src.trainer import ParallelSolverDistillTrainer
 from src.utils import json_dump
 from src.parallel.initialize import setup_model_parallel, set_barrier
@@ -64,8 +64,8 @@ def main(
             lora_rank=-1
         )
         teacher.load(teacher_ckpt_dir, merge_lora=True)
-        buffer_collector = LogitsBufferCollector(teacher, teacher_tokenizer, teacher_max_seq_len, logits_topk=5)
-        rollout_buffer = LogitsRolloutBuffer()
+        buffer_collector = LogitsBufferCollectorV0(teacher, teacher_tokenizer, teacher_max_seq_len, logits_topk=5)
+        rollout_buffer = LogitsRolloutBufferV0()
         timer = Timer(len(dataloader), episode=10)
         for data in dataloader:
             timer.step()

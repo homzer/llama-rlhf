@@ -13,10 +13,10 @@ from src.parallel.optimizer import ParallelOptimizer
 from src.ppo.buffer import (
     CriticRolloutBuffer,
     PPORolloutBuffer,
-    LogitsRolloutBuffer,
+    LogitsRolloutBufferV0,
     RolloutBuffer
 )
-from src.ppo.collector import CriticBufferCollector, LogitsBufferCollector, ActorBufferCollector
+from src.ppo.collector import CriticBufferCollector, LogitsBufferCollectorV0, ActorBufferCollector
 from src.ppo.trainer import ParallelPPOActorTrainerForCausalLM, ParallelPPOCriticTrainerForCausalLM
 from src.utils import json_load, print_current_func_args
 
@@ -95,7 +95,7 @@ def collect_reference_buffer(
         reference_ckpt_dir: str,
         actor_rollout_buffer: RolloutBuffer,
         max_forward_batch_size: int,
-) -> LogitsRolloutBuffer:
+) -> LogitsRolloutBufferV0:
     reference, reference_tokenizer = get_parallel_model(
         model_type=actor_model_type,
         config_file=actor_config_file,
@@ -105,10 +105,10 @@ def collect_reference_buffer(
         dtype=dtype
     )
     reference.load(reference_ckpt_dir)
-    reference_buffer_collector = LogitsBufferCollector(
+    reference_buffer_collector = LogitsBufferCollectorV0(
         model=reference, tokenizer=reference_tokenizer, max_seq_len=max_seq_len
     )
-    reference_rollout_buffer = LogitsRolloutBuffer()
+    reference_rollout_buffer = LogitsRolloutBufferV0()
     print('Reference buffer collecting ...')
     timer = Timer(total=actor_rollout_buffer.size() // max_forward_batch_size, episode=10)
     for data in actor_rollout_buffer.get(max_forward_batch_size):

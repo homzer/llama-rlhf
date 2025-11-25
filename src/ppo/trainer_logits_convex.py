@@ -5,7 +5,50 @@ import torch
 from src.models.modeling import ParallelModelForCausalLM, ParallelModule
 from src.ppo.buffer import PPORolloutBufferSample
 from src.trainer import ParallelTrainer
-from src.utils import create_target_distribution
+from src.utils import create_target_distribution, estimate_vocab_adv, create_lco_log_target
+
+
+class ParallelLCOTrainerForCausalLM(ParallelTrainer):
+    def __init__(
+            self,
+            policy: ParallelModelForCausalLM,
+            optimizer: torch.optim.Optimizer,
+            beta: float = 10.0,
+            estimate_with_beta: bool = False,
+            save_optim: bool = False,
+            accumulation_steps: int = 1,
+    ):
+        super().__init__(policy, optimizer, save_optim=save_optim, accumulation_steps=accumulation_steps)
+        self.policy = policy
+        self.beta = beta
+        self.estimate_with_beta = estimate_with_beta
+        self.criterion = torch.nn.KLDivLoss(reduction="none", log_target=True)
+
+    def forward(self, rollout_data):
+        self.policy.train()
+
+        obs = rollout_data.obs.to(self.policy.device())
+        actions = rollout_data.actions.to(self.policy.device())
+        action_masks = rollout_data.action_masks.to(self.policy.device())
+        advantages = rollout_data.advantages.to(self.policy.device())
+        old_logits = rollout_data.logits.to(self.policy.device())
+
+        actions = actions.view(-1)[action_masks.view(-1)]
+        advantages = advantages.view(-1)[action_masks.view(-1)]
+        old_logits = old_logits.view(-1, old_logits.shape[-1])[action_masks.view(-1)]
+
+        logits = self.policy.forward(obs).logits
+        logits = logits.view(-1, logits.shape[-1])[action_masks.view(-1)]
+
+        advantages = estimate_vocab_adv(old_logits, advantages.unsqueeze(-1), actions.unsqueeze(-1))
+        log_targets = create_lco_log_target(old_logits, advantages, beta=self.beta)
+        loss = self.criterion.forward(
+            torch.log_softmax(logits, dim=-1), target=log_targets.to(logits)
+        ).sum(-1).mean()
+
+        self.backward(loss)
+        Outputs = collections.namedtuple('Outputs', ['loss'])
+        return Outputs(loss=loss.item())
 
 
 class ParallelLogitsConvexTrainer(ParallelTrainer):

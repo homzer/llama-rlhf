@@ -5,15 +5,16 @@ import numpy as np
 from src.models.modeling import ModelForCausalLM, ParallelModelForCausalLM, Verifier, ParallelVerifier
 from src.ppo.buffer import (
     CriticRolloutBuffer,
-    LogitsRolloutBuffer,
-    RolloutBuffer
+    LogitsRolloutBufferV0,
+    RolloutBuffer,
+    LogitsRolloutBuffer
 )
 from src.ppo.generator import (
     CriticGeneratorForCausalLM,
     ActorGeneratorForCausalLM,
-    LogitsGeneratorForCausalLM,
+    LogitsGeneratorForCausalLMV0,
     ActorForwardGeneratorForCausalLM,
-    ActorPrefixGeneratorForCausalLM
+    ActorPrefixGeneratorForCausalLM, ActorLogitsGeneratorForCausalLM
 )
 from src.tokenizers.tokenizer import Tokenizer
 
@@ -134,7 +135,7 @@ class LogitsBufferCollector:
             logits_topk: int = None
     ):
         self.logits_topk = logits_topk
-        self.generator = LogitsGeneratorForCausalLM(
+        self.generator = ActorLogitsGeneratorForCausalLM(
             model=model, tokenizer=tokenizer, max_seq_len=max_seq_len
         )
 
@@ -142,6 +143,34 @@ class LogitsBufferCollector:
         assert len(instructions) == len(responses)
         generator_outputs = self.generator.forward(instructions, responses)
         return LogitsRolloutBuffer(
+            instructions=instructions,
+            obs=generator_outputs.obs.cpu().numpy(),
+            actions=generator_outputs.actions.cpu().numpy(),
+            action_masks=generator_outputs.action_masks.cpu().numpy(),
+            action_logprobs=generator_outputs.action_logprobs.float().cpu().numpy(),
+            logits=generator_outputs.logits,
+            responses=responses,
+            logits_topk=self.logits_topk
+        )
+
+
+class LogitsBufferCollectorV0:
+    def __init__(
+            self,
+            model: Union[ModelForCausalLM, ParallelModelForCausalLM],
+            tokenizer: Tokenizer,
+            max_seq_len: int,
+            logits_topk: int = None
+    ):
+        self.logits_topk = logits_topk
+        self.generator = LogitsGeneratorForCausalLMV0(
+            model=model, tokenizer=tokenizer, max_seq_len=max_seq_len
+        )
+
+    def forward(self, instructions: List[str], responses: List[str]) -> LogitsRolloutBufferV0:
+        assert len(instructions) == len(responses)
+        generator_outputs = self.generator.forward(instructions, responses)
+        return LogitsRolloutBufferV0(
             instructions=instructions,
             outputs=responses,
             logits=generator_outputs.logits,

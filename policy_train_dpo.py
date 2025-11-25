@@ -16,8 +16,8 @@ from src.parallel.initialize import (
     get_data_parallel_rank
 )
 from src.parallel.optimizer import ParallelOptimizer
-from src.ppo.buffer import LogitsRolloutBuffer
-from src.ppo.collector import LogitsBufferCollector
+from src.ppo.buffer import LogitsRolloutBufferV0
+from src.ppo.collector import LogitsBufferCollectorV0
 from src.trainer import ParallelSolverDPOTrainer
 from src.utils import json_load, print_current_func_args
 
@@ -35,15 +35,15 @@ def collect_reference_buffer(
         save_dir: str,
         local_epoch: int,
         reuse_buffer: bool = False
-) -> (LogitsRolloutBuffer, LogitsRolloutBuffer):
+) -> (LogitsRolloutBufferV0, LogitsRolloutBufferV0):
     print("Reference buffer collecting ...")
     worker_id = get_data_parallel_rank()
     ref_chosen_buffer_save_dir = os.path.join(save_dir, "epoch-%03d" % local_epoch, "chosen", str(worker_id))
     ref_rejected_buffer_save_dir = os.path.join(save_dir, "epoch-%03d" % local_epoch, "rejected", str(worker_id))
     if (reuse_buffer and os.path.exists(os.path.join(ref_chosen_buffer_save_dir, "buffer.jsonl")) and
             os.path.exists(os.path.join(ref_rejected_buffer_save_dir, "buffer.jsonl"))):
-        ref_chosen_rollout_buffer = LogitsRolloutBuffer()
-        ref_rejected_rollout_buffer = LogitsRolloutBuffer()
+        ref_chosen_rollout_buffer = LogitsRolloutBufferV0()
+        ref_rejected_rollout_buffer = LogitsRolloutBufferV0()
         ref_chosen_rollout_buffer.load(os.path.join(ref_chosen_buffer_save_dir, "buffer.jsonl"))
         ref_rejected_rollout_buffer.load(os.path.join(ref_rejected_buffer_save_dir, "buffer.jsonl"))
     else:
@@ -58,13 +58,13 @@ def collect_reference_buffer(
             dataset = ChatTemplateDataset(dataset, reference_tokenizer)
         dataloader = ParallelDataLoader(dataset, batch_size=forward_batch_size)
         reference.load(reference_ckpt_dir)
-        reference_buffer_collector = LogitsBufferCollector(
+        reference_buffer_collector = LogitsBufferCollectorV0(
             model=reference,
             tokenizer=reference_tokenizer,
             max_seq_len=max_seq_len
         )
-        ref_chosen_rollout_buffer = LogitsRolloutBuffer()
-        ref_rejected_rollout_buffer = LogitsRolloutBuffer()
+        ref_chosen_rollout_buffer = LogitsRolloutBufferV0()
+        ref_rejected_rollout_buffer = LogitsRolloutBufferV0()
         timer = Timer(len(dataloader), episode=10)
         for data in dataloader:
             timer.step()
@@ -90,8 +90,8 @@ def collect_reference_buffer(
 
 
 def train_dpo(
-        ref_chosen_rollout_buffer: LogitsRolloutBuffer,
-        ref_rejected_rollout_buffer: LogitsRolloutBuffer,
+        ref_chosen_rollout_buffer: LogitsRolloutBufferV0,
+        ref_rejected_rollout_buffer: LogitsRolloutBufferV0,
         policy_model_type: str,
         policy_ckpt_dir: str,
         policy_config_file: str,

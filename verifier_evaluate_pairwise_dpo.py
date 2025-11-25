@@ -10,9 +10,9 @@ from src.dataset import PairwiseDataset, ChatTemplateDataset
 from src.entities import Timer
 from src.modeling import get_parallel_model
 from src.parallel.initialize import setup_model_parallel, set_barrier, get_local_rank
-from src.ppo.buffer import LogitsRolloutBuffer
-from src.ppo.collector import LogitsBufferCollector
-from src.ppo.generator import LogitsGeneratorForCausalLM
+from src.ppo.buffer import LogitsRolloutBufferV0
+from src.ppo.collector import LogitsBufferCollectorV0
+from src.ppo.generator import LogitsGeneratorForCausalLMV0
 from src.utils import json_dump
 
 
@@ -50,13 +50,13 @@ def main(
             dtype=dtype
         )
         reference.load(reference_ckpt_dir)
-        reference_buffer_collector = LogitsBufferCollector(
+        reference_buffer_collector = LogitsBufferCollectorV0(
             model=reference,
             tokenizer=reference_tokenizer,
             max_seq_len=max_seq_len
         )
-        reference_chosen_rollout_buffer = LogitsRolloutBuffer()
-        reference_rejected_rollout_buffer = LogitsRolloutBuffer()
+        reference_chosen_rollout_buffer = LogitsRolloutBufferV0()
+        reference_rejected_rollout_buffer = LogitsRolloutBufferV0()
         reference_dataloader = DataLoader(
             ChatTemplateDataset(dataset, reference_tokenizer) if use_chat_template else dataset,
             batch_size=max_batch_size
@@ -86,8 +86,8 @@ def main(
             reference_rejected_rollout_buffer.save(os.path.join(log_dir, "rejected"))
         set_barrier()
     else:
-        reference_chosen_rollout_buffer = LogitsRolloutBuffer().load(chosen_buffer_file)
-        reference_rejected_rollout_buffer = LogitsRolloutBuffer().load(rejected_buffer_file)
+        reference_chosen_rollout_buffer = LogitsRolloutBufferV0().load(chosen_buffer_file)
+        reference_rejected_rollout_buffer = LogitsRolloutBufferV0().load(rejected_buffer_file)
 
     policy, policy_tokenizer = get_parallel_model(
         model_type=model_type,
@@ -139,7 +139,7 @@ def main(
 
     datalist = []
     timer = Timer(len(reference_chosen_rollout_buffer) // max_batch_size, episode=10)
-    generator = LogitsGeneratorForCausalLM(policy, policy_tokenizer, max_seq_len)
+    generator = LogitsGeneratorForCausalLMV0(policy, policy_tokenizer, max_seq_len)
     for chosen_data, rejected_data in zip(
             reference_chosen_rollout_buffer.get(max_batch_size),
             reference_rejected_rollout_buffer.get(max_batch_size)

@@ -6,7 +6,7 @@ from src.criterion import MSELoss
 from src.models.modeling import ParallelModelForCausalLM, ParallelVerifier
 from src.ppo.buffer import PPORolloutBufferSample
 from src.trainer import ParallelTrainer, Trainer
-from src.utils import create_target_distribution, masked_mean
+from src.utils import masked_mean
 
 
 class PPOTrainerForCausalLM(Trainer):
@@ -239,62 +239,98 @@ class ParallelPolicyGradientGuiderTrainerForCausalLM(ParallelTrainer):
         )
 
 
-class ParallelPolicyGradientConvexBoundedTrainerForCausalLM(ParallelTrainer):
+class ParallelInvalidActionMaskTrainerForCausalLM(ParallelTrainer):
     def __init__(
             self,
             policy: ParallelModelForCausalLM,
             optimizer: torch.optim.Optimizer,
-            delta: float = 0.1,
+            clip_range: float = 0.2,
             save_optim: bool = False,
-            accumulation_steps: int = 1
+            accumulation_steps: int = 1,
     ):
-        super().__init__(policy, optimizer, save_optim, accumulation_steps=accumulation_steps)
+        super().__init__(
+            model=policy,
+            optimizer=optimizer,
+            save_optim=save_optim,
+            accumulation_steps=accumulation_steps
+        )
         self.policy = policy
-        self.delta = delta
-        self.criterion = torch.nn.KLDivLoss(reduction='none', log_target=True)
+        self.clip_range = clip_range
 
     def forward(self, rollout_data):
         self.policy.train()
 
         obs = rollout_data.obs.to(self.policy.device())
+        rewards = rollout_data.rewards.to(self.policy.device())
         actions = rollout_data.actions.to(self.policy.device())
         action_masks = rollout_data.action_masks.to(self.policy.device())
         old_action_logprobs = rollout_data.action_logprobs.to(self.policy.device())
-        rewards = rollout_data.rewards.to(self.policy.device())
+        valid_action_logits = rollout_data.logits.to(self.policy.device())
+
+        rewards = rewards.view(-1)[action_masks.view(-1)]
+        actions = actions.view(-1)[action_masks.view(-1)]
+        old_action_logprobs = old_action_logprobs.view(-1)[action_masks.view(-1)]
+        valid_action_logits = valid_action_logits.view(-1, valid_action_logits.shape[-1])[action_masks.view(-1)]
+        valid_action_masks = torch.softmax(valid_action_logits, dim=-1) >= 0.1
+        valid_action_masks[torch.arange(valid_action_masks.shape[0]), actions] = True
 
         logits = self.policy.forward(obs).logits
         logits = logits.view(-1, logits.shape[-1])[action_masks.view(-1)]
-        actions = torch.masked_select(actions.view(-1), action_masks.view(-1))
-        old_action_logprobs = torch.masked_select(old_action_logprobs.view(-1), action_masks.view(-1))
-        rewards = torch.masked_select(rewards.to(logits.dtype).view(-1), action_masks.view(-1))
-        pos_reward_masks = rewards > 0
+        logits = torch.where(valid_action_masks, logits, -100)
 
-        loss_pos = - rewards[pos_reward_masks] * torch.gather(
-            torch.log_softmax(logits[pos_reward_masks], dim=-1), dim=-1, index=actions[pos_reward_masks].unsqueeze(-1)
+        action_logprobs = torch.gather(
+            torch.log_softmax(logits, dim=-1), dim=-1, index=actions.unsqueeze(-1)
         ).squeeze(-1)
 
-        # compute loss for negative reward tokens
-        log_targets = create_target_distribution(
-            logits=logits[~pos_reward_masks],
-            actions=actions[~pos_reward_masks],
-            old_action_logprobs=old_action_logprobs[~pos_reward_masks],
-            delta=self.delta
-        )
-        loss_neg = - rewards[~pos_reward_masks] * self.criterion.forward(
-            torch.log_softmax(logits[~pos_reward_masks], dim=-1), target=log_targets
-        ).sum(-1)
-
-        loss = torch.mean(torch.cat([loss_pos, loss_neg]))
+        # ratio between old and new policy, should be one at the first iteration
+        ratio = torch.exp(action_logprobs - old_action_logprobs)
+        # clipped surrogate loss
+        loss = rewards * ratio
+        if self.clip_range > 0:
+            clipped_actor_loss = rewards * torch.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range)
+            loss = torch.min(loss, clipped_actor_loss)
+        loss = - torch.mean(loss)
 
         self.backward(loss)
 
-        if self.step % 100 == 0:
-            loss_pos_item = loss_pos.mean().nan_to_num(0).item()
-            loss_neg_item = loss_neg.mean().nan_to_num(0).item()
-            print(f"Positive Reward Loss: {loss_pos_item} | Negative Reward Loss: {loss_neg_item}")
+        Outputs = collections.namedtuple('Outputs', ['loss'])
+        return Outputs(loss=loss.item())
 
-        Outputs = collections.namedtuple('Outputs', ['loss', 'rewards'])
-        return Outputs(loss=loss.item(), rewards=torch.mean(rewards).item())
+
+class ParallelGKDTrainerForCausalLM(ParallelTrainer):
+    def __init__(
+            self,
+            policy: ParallelModelForCausalLM,
+            optimizer: torch.optim.Optimizer,
+            save_optim: bool = False,
+            accumulation_steps: int = 1,
+    ):
+        super().__init__(
+            model=policy,
+            optimizer=optimizer,
+            save_optim=save_optim,
+            accumulation_steps=accumulation_steps
+        )
+        self.policy = policy
+        self.criterion = torch.nn.KLDivLoss(reduction="none", log_target=True)
+
+    def forward(self, rollout_data):
+        self.policy.train()
+
+        obs = rollout_data.obs.to(self.policy.device())
+        action_masks = rollout_data.action_masks.to(self.policy.device())
+        teacher_logits = rollout_data.logits.to(self.policy.device())
+
+        logits = self.policy.forward(obs).logits
+        logits = logits.view(-1, logits.shape[-1])[action_masks.view(-1)]
+        teacher_logits = teacher_logits.view(-1, teacher_logits.shape[-1])[action_masks.view(-1)]
+        loss = self.criterion.forward(
+            torch.log_softmax(logits, dim=-1), target=torch.log_softmax(teacher_logits.to(logits), dim=-1)
+        ).sum(-1).mean()
+
+        self.backward(loss)
+        Outputs = collections.namedtuple('Outputs', ['loss'])
+        return Outputs(loss=loss.item())
 
 
 class ParallelWeightedPolicyGradientTrainerForCausalLM(ParallelTrainer):

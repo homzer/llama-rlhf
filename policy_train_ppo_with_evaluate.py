@@ -21,6 +21,7 @@ from src.utils import json_load, json_dump
 
 
 def evaluate_actor(
+        task: str,
         label_file: str,
         actor_model_type: str,
         actor_config_file: str,
@@ -31,14 +32,11 @@ def evaluate_actor(
         actor_save_dir: str,
         max_generate_batch_size: int,
         use_chat_template: bool,
-        task: str = None,
         log_dir: str = None,
         dataset: JsonDataset = None,
         temperature: float = 0.0,
         top_p: float = 1.0,
 ):
-    if task is None:
-        return
     actor, actor_tokenizer = get_parallel_model(
         model_type=actor_model_type,
         config_file=actor_config_file,

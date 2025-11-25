@@ -2,9 +2,12 @@ import os
 
 import fire
 import torch
-from torch.utils.data import DataLoader
 
+from src.dataset import PairwiseDataset, ChatTemplateDataset
+from src.entities import Timer
+from src.modeling import get_parallel_verifier
 from src.parallel.data_parallel.dataloader import ParallelDataLoader
+from src.parallel.initialize import setup_model_parallel
 from src.parallel.optimizer import ParallelOptimizer
 from src.rewards.trainer import (
     ParallelVerifierTrainerForLastToken,
@@ -12,10 +15,6 @@ from src.rewards.trainer import (
     ParallelVerifierTrainerForFocalMeanScore,
     ParallelVerifierTrainerForFocalLoss, ParallelVerifierTrainerForPGTG,
 )
-from src.dataset import PairwiseDataset, ChatTemplateDataset
-from src.entities import Timer
-from src.modeling import get_parallel_verifier
-from src.parallel.initialize import setup_model_parallel
 from src.utils import print_current_func_args
 
 
@@ -24,7 +23,7 @@ def main(
         ckpt_dir: str,
         save_dir: str,
         train_file: str,
-        model_type: str = "qwen-2-7b",
+        model_type: str,
         max_seq_len: int = 512,
         max_batch_size: int = 1,
         lr: float = 1e-5,

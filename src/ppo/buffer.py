@@ -7,7 +7,7 @@ import numpy as np
 import torch
 
 from src.entities import SlimLogits
-from src.utils import masked_mean, can_convert_to_tensor
+from src.utils import masked_mean, can_convert_to_tensor, reshape_to_matrix
 
 PPORolloutBufferSample = collections.namedtuple(
     "RolloutBufferSample", [
@@ -71,7 +71,7 @@ CriticRolloutBufferSample = collections.namedtuple(
     ]
 )
 
-LogitsRolloutBufferSample = collections.namedtuple(
+LogitsRolloutBufferSampleV0 = collections.namedtuple(
     "LogitsRolloutBufferSample", [
         "instructions",
         "outputs",
@@ -79,98 +79,6 @@ LogitsRolloutBufferSample = collections.namedtuple(
         "output_tokens_logps"
     ]
 )
-
-LogitsRolloutBufferSampleV0 = collections.namedtuple(
-    "LogitsRolloutBufferSample", [
-        "instructions",
-        "logits"
-    ]
-)
-
-
-class RolloutBuffer(dict):
-    def __init__(self, **kwargs):
-        super().__init__()
-        self.set(**kwargs)
-
-    def set(self, **kwargs):
-        """initialize buffer."""
-        for key, value in kwargs.items():
-            self[key] = value.copy() if isinstance(value, np.ndarray) else np.array(value)
-
-    def copy(self) -> "RolloutBuffer":
-        return RolloutBuffer(**self)
-
-    def size(self) -> int:
-        """Return the size of the rollout buffer"""
-        if len(self) == 0:
-            return 0
-        for key in self.keys():
-            assert len(self[key]) == len(self[next(iter(self))])
-        return len(self[next(iter(self))])
-
-    def rearrange(self, indices: List[int] | np.ndarray):
-        for key in self.keys():
-            self[key] = self[key][indices]
-
-    def shuffle(self):
-        self.rearrange(np.random.permutation(self.size()))
-
-    def save(self, save_dir: str, overwrite: bool = True):
-        os.makedirs(save_dir, exist_ok=True)
-        save_file = os.path.join(save_dir, "buffer.jsonl")
-        print(f"Saving buffer to {save_file} ......")
-        with open(save_file, 'w' if overwrite else 'a', encoding='utf-8') as writer:
-            for i in range(self.size()):
-                data = dict()
-                for key in self.keys():
-                    data[key] = self[key][i].tolist()
-                writer.write(json.dumps(data, ensure_ascii=False) + '\n')
-        print("Saving done!")
-
-    @classmethod
-    def load(cls, buffer_dir: str, start: int = 0, stop: int = None, **kwargs) -> "RolloutBuffer":
-        buffer_file = os.path.join(buffer_dir, "buffer.jsonl")
-        print(f"Loading buffer from {buffer_file} ......")
-        kwargs = dict()
-        with open(buffer_file, 'r', encoding="utf-8") as reader:
-            for i, line in enumerate(reader):
-                if stop is not None and stop <= i:
-                    break
-                if start <= i:
-                    for key, value in json.loads(line).items():
-                        if key not in kwargs:
-                            kwargs[key] = []
-                        kwargs[key].append(value)
-
-        buffer = RolloutBuffer(**kwargs)
-        print("Loading done!")
-        return buffer
-
-    def extend(self, rollout_buffer: "RolloutBuffer") -> "RolloutBuffer":
-        if len(rollout_buffer) == 0:
-            return self
-        if len(self) == 0 or self.size() == 0:
-            self.set(**rollout_buffer)
-        else:
-            for key in self.keys():
-                self[key] = np.concatenate([self[key], rollout_buffer[key]], axis=0)
-        return self
-
-    def get(self, batch_size: int, shuffle: bool = False, output_tensor: bool = False) -> Generator:
-        start_idx = 0
-        indices = np.random.permutation(self.size()) if shuffle else np.arange(self.size())
-        RolloutBufferSample = collections.namedtuple(
-            "RolloutBufferSample", field_names=[key for key in self.keys()]
-        )
-        while start_idx < self.size():
-            batch_indices = indices[start_idx: start_idx + batch_size]
-            data = dict()
-            for key in self.keys():
-                value = self[key][batch_indices]
-                data[key] = torch.from_numpy(value) if output_tensor and can_convert_to_tensor(value) else value
-            yield RolloutBufferSample(**data)
-            start_idx += batch_size
 
 
 class PPORolloutBuffer:
@@ -318,159 +226,88 @@ class PPORolloutBuffer:
             start_idx += batch_size
 
 
-class LogitsRolloutBuffer:
-    def __init__(
-            self,
-            instructions: Union[List[str], np.ndarray] = None,
-            outputs: Union[List[str], np.ndarray] = None,
-            logits: torch.Tensor = None,
-            output_tokens_logps: Union[np.ndarray, torch.Tensor] = None,
-            logits_topk: int = None
-    ):
-        self.ignore_logits = logits_topk is None or logits_topk <= 0
-        self.logits = None
-        self.instructions = None
-        self.outputs = None
-        self.output_tokens_logps = None
+class RolloutBuffer(dict):
+    def __init__(self, **kwargs):
+        super().__init__()
+        self.set(**kwargs)
 
-        self.__cache_logits = None
+    def set(self, **kwargs):
+        """initialize buffer."""
+        for key, value in kwargs.items():
+            self[key] = value.copy() if isinstance(value, np.ndarray) else np.array(value)
 
-        if instructions is not None:
-            assert logits is not None
-            assert outputs is not None
-            assert output_tokens_logps is not None
-            logits = None if self.ignore_logits else SlimLogits(logits=logits, n=logits_topk)
-            self._set(instructions, outputs, logits, output_tokens_logps)
+    def copy(self) -> "RolloutBuffer":
+        return RolloutBuffer(**self)
 
-    def save(self, save_dir: str, overwrite: bool = True, self_clean: bool = False):
+    def size(self) -> int:
+        """Return the size of the rollout buffer"""
+        if len(self) == 0:
+            return 0
+        for key in self.keys():
+            assert len(self[key]) == len(self[next(iter(self))])
+        return len(self[next(iter(self))])
+
+    def rearrange(self, indices: List[int] | np.ndarray):
+        for key in self.keys():
+            self[key] = self[key][indices]
+
+    def shuffle(self):
+        self.rearrange(np.random.permutation(self.size()))
+
+    def save(self, save_dir: str, overwrite: bool = True):
         os.makedirs(save_dir, exist_ok=True)
         save_file = os.path.join(save_dir, "buffer.jsonl")
         print(f"Saving buffer to {save_file} ......")
         with open(save_file, 'w' if overwrite else 'a', encoding='utf-8') as writer:
-            for i in range(len(self)):
-                writer.write(json.dumps(dict(
-                    instruction=self.instructions[i],
-                    output=self.outputs[i],
-                    logits={} if self.ignore_logits else self.logits[i].to_dict(),
-                    output_tokens_logps=self.output_tokens_logps[i].tolist(),
-                ), ensure_ascii=False) + '\n')
-        if self_clean:
-            self.__reset()
+            for i in range(self.size()):
+                data = dict()
+                for key in self.keys():
+                    data[key] = self[key][i].tolist()
+                writer.write(json.dumps(data, ensure_ascii=False) + '\n')
         print("Saving done!")
 
-    def load(self, buffer_file: str, start: int = 0, stop: int = None) -> "LogitsRolloutBuffer":
+    @classmethod
+    def load(cls, buffer_dir: str, start: int = 0, stop: int = None, **kwargs) -> "RolloutBuffer":
+        buffer_file = os.path.join(buffer_dir, "buffer.jsonl")
         print(f"Loading buffer from {buffer_file} ......")
-        self.instructions = []
-        self.outputs = []
-        self.logits = []
-        self.output_tokens_logps = []
+        kwargs = dict()
         with open(buffer_file, 'r', encoding="utf-8") as reader:
             for i, line in enumerate(reader):
                 if stop is not None and stop <= i:
                     break
                 if start <= i:
-                    data = json.loads(line)
-                    self.instructions.append(data['instruction'])
-                    self.outputs.append(data['output'])
-                    self.logits.append(data['logits'])
-                    self.output_tokens_logps.append(data['output_tokens_logps'])
-        self.instructions = np.array(self.instructions)
-        self.outputs = np.array(self.outputs)
-        self.logits = None if self.ignore_logits else SlimLogits().from_dict(self.logits)
-        self.output_tokens_logps = np.array(self.output_tokens_logps)
+                    for key, value in json.loads(line).items():
+                        if key not in kwargs:
+                            kwargs[key] = []
+                        kwargs[key].append(value)
+
+        buffer = RolloutBuffer(**kwargs)
         print("Loading done!")
-        return self
+        return buffer
 
-    def __flush(self):
-        if self.__cache_logits is not None:
-            self.logits.extend(self.__cache_logits)
-            self.__cache_logits = None
-
-    def __reset(self):
-        self.logits = None
-        self.instructions = None
-        self.outputs = None
-        self.output_tokens_logps = None
-        self.__cache_logits = None
-
-    def __len__(self):
-        self.__flush()
-        if self.instructions is not None:
-            assert len(self.instructions) == len(self.outputs)
-            assert len(self.instructions) == len(self.output_tokens_logps)
-            return len(self.instructions)
-        return 0
-
-    def _set(self, instructions, outputs, logits: SlimLogits, output_tokens_logps):
-        if not isinstance(instructions, np.ndarray):
-            instructions = np.array(instructions)
-        if not isinstance(outputs, np.ndarray):
-            outputs = np.array(outputs)
-        if not isinstance(output_tokens_logps, np.ndarray):
-            output_tokens_logps = output_tokens_logps.float().cpu().numpy()
-        self.instructions = instructions
-        self.outputs = outputs
-        if not self.ignore_logits:
-            self.logits = logits
-        self.output_tokens_logps = output_tokens_logps
-
-    def extend(self, rollout_buffer: "LogitsRolloutBuffer"):
-        if self.instructions is None:
-            self.ignore_logits = rollout_buffer.ignore_logits
-            self._set(
-                rollout_buffer.instructions,
-                rollout_buffer.outputs,
-                rollout_buffer.logits,
-                rollout_buffer.output_tokens_logps
-            )
+    def extend(self, rollout_buffer: "RolloutBuffer") -> "RolloutBuffer":
+        if len(rollout_buffer) == 0:
+            return self
+        if len(self) == 0 or self.size() == 0:
+            self.set(**rollout_buffer)
         else:
-            if len(rollout_buffer) > 0:
-                self.instructions = np.concatenate([self.instructions, rollout_buffer.instructions], axis=0)
-                self.outputs = np.concatenate([self.outputs, rollout_buffer.outputs], axis=0)
-                self.output_tokens_logps = np.concatenate(
-                    [self.output_tokens_logps, rollout_buffer.output_tokens_logps], axis=0)
-                if not self.ignore_logits:  # Extremely slow, using cache
-                    if self.__cache_logits is None:
-                        self.__cache_logits = rollout_buffer.logits
-                    else:
-                        self.__cache_logits.extend(rollout_buffer.logits)
-                if self.__cache_logits is not None and len(self.__cache_logits) > 1000:
-                    self.__flush()
-
+            for key in self.keys():
+                self[key] = np.concatenate([self[key], rollout_buffer[key]], axis=0)
         return self
 
-    def get_logps(self, batch_size: int) -> Generator[torch.Tensor, None, None]:
-        """ Only fetching output_tokens_logps. """
-        self.__flush()
-        size = len(self)
-        indices = np.arange(size)
+    def get(self, batch_size: int, shuffle: bool = False, output_tensor: bool = False) -> Generator:
         start_idx = 0
-        while start_idx < size:
+        indices = np.random.permutation(self.size()) if shuffle else np.arange(self.size())
+        RolloutBufferSample = collections.namedtuple(
+            "RolloutBufferSample", field_names=[key for key in self.keys()]
+        )
+        while start_idx < self.size():
             batch_indices = indices[start_idx: start_idx + batch_size]
-            yield torch.tensor(self.output_tokens_logps[batch_indices])
-            start_idx += batch_size
-
-    def get(self, batch_size: int) -> Generator[LogitsRolloutBufferSample, None, None]:
-        self.__flush()
-        size = len(self)
-        indices = np.arange(size)
-        start_idx = 0
-        while start_idx < size:
-            batch_indices = indices[start_idx: start_idx + batch_size]
-            logits = None
-            if not self.ignore_logits:
-                logits = torch.zeros(
-                    (len(batch_indices), self.logits.max_seq_len, self.logits.vocab_size), dtype=torch.float32
-                )
-                for i, bi in enumerate(batch_indices):
-                    logits[i, :, :] = self.logits.fetch(bi)
-
-            yield LogitsRolloutBufferSample(
-                instructions=self.instructions[batch_indices].tolist(),
-                outputs=self.outputs[batch_indices].tolist(),
-                logits=logits,
-                output_tokens_logps=torch.tensor(self.output_tokens_logps[batch_indices])
-            )
+            data = dict()
+            for key in self.keys():
+                value = self[key][batch_indices]
+                data[key] = torch.from_numpy(value) if output_tensor and can_convert_to_tensor(value) else value
+            yield RolloutBufferSample(**data)
             start_idx += batch_size
 
 
@@ -553,3 +390,207 @@ class CriticRolloutBuffer(RolloutBuffer):
             use_last_token_reward=use_last_token_reward,
             last_token_reward_only=last_token_reward_only
         )
+
+
+class LogitsRolloutBuffer(RolloutBuffer):
+    def __init__(
+            self,
+            logits: torch.Tensor = None,
+            logits_topk: int = 5,
+            **kwargs
+    ):
+        super().__init__()
+        if logits is not None:
+            logits_values, logits_indices = torch.topk(logits.half(), k=logits_topk)  # torch >= 2.4.0
+            kwargs["vocab_sizes"] = np.full(shape=logits.shape[0], fill_value=logits.shape[-1])
+            kwargs["logits_values"] = logits_values.detach().cpu().numpy()
+            kwargs["logits_indices"] = logits_indices.detach().cpu().numpy()
+            self.set(**kwargs)
+
+    @classmethod
+    def load(cls, buffer_dir: str, start: int = 0, stop: int = None, **kwargs) -> "LogitsRolloutBuffer":
+        logits_rollout_buffer = LogitsRolloutBuffer()
+        for key, value in super().load(buffer_dir=buffer_dir, start=start, stop=stop).items():
+            logits_rollout_buffer[key] = value
+        return logits_rollout_buffer
+
+    def get(self, batch_size: int, shuffle: bool = False, output_tensor: bool = False) -> Generator:
+        start_idx = 0
+        indices = np.random.permutation(self.size()) if shuffle else np.arange(self.size())
+        LogitsRolloutBufferSample = collections.namedtuple(
+            "LogitsRolloutBufferSample", field_names=["logits", *[key for key in self.keys()]]
+        )
+        vocab_size = self["vocab_sizes"][0]
+        while start_idx < self.size():
+            batch_indices = indices[start_idx: start_idx + batch_size]
+            seq_len = self["logits_values"].shape[1]
+            logits = np.full(shape=[len(batch_indices), seq_len, vocab_size], fill_value=-100, dtype=np.half)
+            logits = reshape_to_matrix(logits)
+            logits[
+                np.arange(logits.shape[0])[:, None], reshape_to_matrix(self["logits_indices"][batch_indices])
+            ] = reshape_to_matrix(self["logits_values"][batch_indices])
+            logits = logits.reshape(len(batch_indices), seq_len, vocab_size)
+
+            data = dict(logits=torch.from_numpy(logits) if output_tensor else logits)
+            for key in self.keys():
+                value = self[key][batch_indices]
+                data[key] = torch.from_numpy(value) if output_tensor and can_convert_to_tensor(value) else value
+
+            yield LogitsRolloutBufferSample(**data)
+            start_idx += batch_size
+
+
+class LogitsRolloutBufferV0:
+    def __init__(
+            self,
+            instructions: Union[List[str], np.ndarray] = None,
+            outputs: Union[List[str], np.ndarray] = None,
+            logits: torch.Tensor = None,
+            output_tokens_logps: Union[np.ndarray, torch.Tensor] = None,
+            logits_topk: int = None
+    ):
+        self.ignore_logits = logits_topk is None or logits_topk <= 0
+        self.logits = None
+        self.instructions = None
+        self.outputs = None
+        self.output_tokens_logps = None
+
+        self.__cache_logits = None
+
+        if instructions is not None:
+            assert logits is not None
+            assert outputs is not None
+            assert output_tokens_logps is not None
+            logits = None if self.ignore_logits else SlimLogits(logits=logits, n=logits_topk)
+            self._set(instructions, outputs, logits, output_tokens_logps)
+
+    def save(self, save_dir: str, overwrite: bool = True, self_clean: bool = False):
+        os.makedirs(save_dir, exist_ok=True)
+        save_file = os.path.join(save_dir, "buffer.jsonl")
+        print(f"Saving buffer to {save_file} ......")
+        with open(save_file, 'w' if overwrite else 'a', encoding='utf-8') as writer:
+            for i in range(len(self)):
+                writer.write(json.dumps(dict(
+                    instruction=self.instructions[i],
+                    output=self.outputs[i],
+                    logits={} if self.ignore_logits else self.logits[i].to_dict(),
+                    output_tokens_logps=self.output_tokens_logps[i].tolist(),
+                ), ensure_ascii=False) + '\n')
+        if self_clean:
+            self.__reset()
+        print("Saving done!")
+
+    def load(self, buffer_file: str, start: int = 0, stop: int = None) -> "LogitsRolloutBufferV0":
+        print(f"Loading buffer from {buffer_file} ......")
+        self.instructions = []
+        self.outputs = []
+        self.logits = []
+        self.output_tokens_logps = []
+        with open(buffer_file, 'r', encoding="utf-8") as reader:
+            for i, line in enumerate(reader):
+                if stop is not None and stop <= i:
+                    break
+                if start <= i:
+                    data = json.loads(line)
+                    self.instructions.append(data['instruction'])
+                    self.outputs.append(data['output'])
+                    self.logits.append(data['logits'])
+                    self.output_tokens_logps.append(data['output_tokens_logps'])
+        self.instructions = np.array(self.instructions)
+        self.outputs = np.array(self.outputs)
+        self.logits = None if self.ignore_logits else SlimLogits().from_dict(self.logits)
+        self.output_tokens_logps = np.array(self.output_tokens_logps)
+        print("Loading done!")
+        return self
+
+    def __flush(self):
+        if self.__cache_logits is not None:
+            self.logits.extend(self.__cache_logits)
+            self.__cache_logits = None
+
+    def __reset(self):
+        self.logits = None
+        self.instructions = None
+        self.outputs = None
+        self.output_tokens_logps = None
+        self.__cache_logits = None
+
+    def __len__(self):
+        self.__flush()
+        if self.instructions is not None:
+            assert len(self.instructions) == len(self.outputs)
+            assert len(self.instructions) == len(self.output_tokens_logps)
+            return len(self.instructions)
+        return 0
+
+    def _set(self, instructions, outputs, logits: SlimLogits, output_tokens_logps):
+        if not isinstance(instructions, np.ndarray):
+            instructions = np.array(instructions)
+        if not isinstance(outputs, np.ndarray):
+            outputs = np.array(outputs)
+        if not isinstance(output_tokens_logps, np.ndarray):
+            output_tokens_logps = output_tokens_logps.float().cpu().numpy()
+        self.instructions = instructions
+        self.outputs = outputs
+        if not self.ignore_logits:
+            self.logits = logits
+        self.output_tokens_logps = output_tokens_logps
+
+    def extend(self, rollout_buffer: "LogitsRolloutBufferV0"):
+        if self.instructions is None:
+            self.ignore_logits = rollout_buffer.ignore_logits
+            self._set(
+                rollout_buffer.instructions,
+                rollout_buffer.outputs,
+                rollout_buffer.logits,
+                rollout_buffer.output_tokens_logps
+            )
+        else:
+            if len(rollout_buffer) > 0:
+                self.instructions = np.concatenate([self.instructions, rollout_buffer.instructions], axis=0)
+                self.outputs = np.concatenate([self.outputs, rollout_buffer.outputs], axis=0)
+                self.output_tokens_logps = np.concatenate(
+                    [self.output_tokens_logps, rollout_buffer.output_tokens_logps], axis=0)
+                if not self.ignore_logits:  # Extremely slow, using cache
+                    if self.__cache_logits is None:
+                        self.__cache_logits = rollout_buffer.logits
+                    else:
+                        self.__cache_logits.extend(rollout_buffer.logits)
+                if self.__cache_logits is not None and len(self.__cache_logits) > 1000:
+                    self.__flush()
+
+        return self
+
+    def get_logps(self, batch_size: int) -> Generator[torch.Tensor, None, None]:
+        """ Only fetching output_tokens_logps. """
+        self.__flush()
+        size = len(self)
+        indices = np.arange(size)
+        start_idx = 0
+        while start_idx < size:
+            batch_indices = indices[start_idx: start_idx + batch_size]
+            yield torch.tensor(self.output_tokens_logps[batch_indices])
+            start_idx += batch_size
+
+    def get(self, batch_size: int) -> Generator[LogitsRolloutBufferSampleV0, None, None]:
+        self.__flush()
+        size = len(self)
+        indices = np.arange(size)
+        start_idx = 0
+        while start_idx < size:
+            batch_indices = indices[start_idx: start_idx + batch_size]
+            logits = None
+            if not self.ignore_logits:
+                logits = torch.zeros(
+                    (len(batch_indices), self.logits.max_seq_len, self.logits.vocab_size), dtype=torch.float32
+                )
+                for i, bi in enumerate(batch_indices):
+                    logits[i, :, :] = self.logits.fetch(bi)
+
+            yield LogitsRolloutBufferSampleV0(
+                instructions=self.instructions[batch_indices].tolist(),
+                outputs=self.outputs[batch_indices].tolist(),
+                logits=logits,
+                output_tokens_logps=torch.tensor(self.output_tokens_logps[batch_indices])
+            )
+            start_idx += batch_size

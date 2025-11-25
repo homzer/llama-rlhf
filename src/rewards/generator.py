@@ -17,7 +17,7 @@ from src.rewards.strategy import (
 )
 from src.generator import GeneratorForVerifier
 from src.models.modeling import ParallelVerifier, Verifier, ModelForCausalLM, ParallelModelForCausalLM
-from src.ppo.generator import LogitsGeneratorForCausalLM
+from src.ppo.generator import LogitsGeneratorForCausalLMV0
 from src.tokenizers.tokenizer import Tokenizer
 
 
@@ -59,7 +59,7 @@ class PointwiseVerifierGeneratorForImplicitPRM:
             max_seq_len: int
     ):
         super().__init__()
-        self.generator = LogitsGeneratorForCausalLM(model, tokenizer, max_seq_len)
+        self.generator = LogitsGeneratorForCausalLMV0(model, tokenizer, max_seq_len)
         self.strategy = PointwiseVerifierStrategyForImplicitPRM()
 
     def forward(
@@ -158,7 +158,7 @@ class VerifierGeneratorForSimPO:
             tokenizer: Tokenizer,
             max_seq_len: int
     ):
-        self.generator = LogitsGeneratorForCausalLM(model, tokenizer, max_seq_len)
+        self.generator = LogitsGeneratorForCausalLMV0(model, tokenizer, max_seq_len)
         self.strategy = PairwiseVerifierStrategyForSimPO()
 
     def forward(
@@ -185,7 +185,7 @@ class VerifierGeneratorForDPO:
             max_seq_len: int
     ):
         super().__init__()
-        self.generator = LogitsGeneratorForCausalLM(model, tokenizer, max_seq_len)
+        self.generator = LogitsGeneratorForCausalLMV0(model, tokenizer, max_seq_len)
         self.strategy = PairwiseVerifierStrategyForDPO()
 
     def forward(
