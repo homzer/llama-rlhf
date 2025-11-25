@@ -10,11 +10,13 @@ from src.parallel.data_parallel.dataloader import ParallelDataLoader
 from src.parallel.initialize import setup_model_parallel
 from src.parallel.optimizer import ParallelOptimizer
 from src.trainer import ParallelSolverTrainer
+from src.utils import print_current_func_args
 
 
 def main(
         ckpt_dir: str,
         save_dir: str,
+        log_dir: str,
         train_file: str,
         model_type: str,
         tokenizer_file: str = None,
@@ -25,7 +27,7 @@ def main(
         epochs: int = 1,
         dtype: str = "bfloat16",
         lora_rank: int = -1,
-        lora_dtype: str = "float32",
+        lora_dtype: str = "bfloat16",
         save_steps: int = 10000,
         begin_epoch: int = 0,
         use_chat_template: bool = False,
@@ -38,9 +40,11 @@ def main(
     config_file = config_file or ckpt_dir
     setup_model_parallel(
         seed=seed,
+        log_dir=log_dir,
         model_parallel_size=model_parallel_size,
         sequence_parallel_size=sequence_parallel_size
     )
+    print_current_func_args()
 
     model, tokenizer = get_parallel_model(
         model_type=model_type,
