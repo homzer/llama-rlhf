@@ -77,7 +77,6 @@ def train_lco(
         save_dir: str,
         max_batch_size: int,
         beta: float = 10.0,
-        estimate_with_beta: bool = False,
         save_optim: bool = False,
         accumulation_steps: int = 1,
         max_num_ckpts: int = None
@@ -96,7 +95,6 @@ def train_lco(
         policy=policy,
         optimizer=optimizer,
         beta=beta,
-        estimate_with_beta=estimate_with_beta,
         save_optim=save_optim,
         accumulation_steps=accumulation_steps
     )
@@ -146,7 +144,6 @@ def run(
         max_forward_batch_size: int = 24,
         max_seq_len: int = 1024,
         beta: float = 10.0,
-        estimate_with_beta: bool = False,
         logits_topk: int = 5,
         temperature: float = 1.0,
         top_p: float = 1.0,
@@ -250,7 +247,6 @@ def run(
             save_dir=save_dir,
             max_batch_size=max_batch_size,
             beta=beta,
-            estimate_with_beta=estimate_with_beta,
             max_num_ckpts=max_num_ckpts,
             save_optim=save_optim,
             accumulation_steps=accumulation_steps
