@@ -1,5 +1,6 @@
 import gc
 import os
+import shutil
 
 import fire
 import numpy as np
@@ -9,7 +10,7 @@ from policy_train_ppo import collect_actor_buffer, collect_verifier_buffer
 from src.dataset import JsonDataset
 from src.entities import Timer, IterationHandler
 from src.modeling import get_parallel_model
-from src.parallel.initialize import setup_model_parallel, set_barrier
+from src.parallel.initialize import setup_model_parallel, set_barrier, get_rank
 from src.parallel.optimizer import ParallelOptimizer
 from src.ppo.buffer import PPORolloutBuffer, RolloutBuffer
 from src.ppo.trainer import (
@@ -56,7 +57,8 @@ def train_policy_gradient(
         rho_neg: float = 0.9,
         clip_range: float = 0.2,
         save_optim: bool = False,
-        accumulation_steps: int = 1
+        accumulation_steps: int = 1,
+        max_num_ckpts: int = None
 ):
     policy, policy_tokenizer = get_parallel_model(
         model_type=policy_model_type,
@@ -97,6 +99,10 @@ def train_policy_gradient(
                 print(f'Loss: {trainer_outputs.loss}')
                 print(f'Rewards: {trainer_outputs.rewards}')
     trainer.save(os.path.join(save_dir, "epoch-%03d" % (epoch + 1)))
+    if max_num_ckpts is not None and (epoch + 1 - max_num_ckpts) > 0:
+        rm_dir = os.path.join(save_dir, "epoch-%03d" % (epoch + 1 - max_num_ckpts))
+        if get_rank() == 0 and os.path.exists(rm_dir):
+            shutil.rmtree(rm_dir)
 
     policy.cpu()
     del policy
@@ -141,6 +147,7 @@ def run(
         last_token_reward_only: bool = False,
         save_optim: bool = False,
         accumulation_steps: int = 1,
+        max_num_ckpts: int = None,
         model_parallel_size: int = None,
         sequence_parallel_size: int = 1,
 ):
@@ -220,7 +227,8 @@ def run(
             max_batch_size=max_batch_size,
             train_strategy=train_strategy,
             accumulation_steps=accumulation_steps,
-            save_optim=save_optim
+            save_optim=save_optim,
+            max_num_ckpts=max_num_ckpts
         )
 
         if parallel_infos.local_rank == 0:
