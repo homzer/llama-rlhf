@@ -43,24 +43,20 @@ class ParallelLCOTrainerForCausalLM(ParallelTrainer):
         advantages = estimate_vocab_adv(old_logits, advantages.unsqueeze(-1), actions.unsqueeze(-1))
 
         # compute loss for positive advantage tokens
-        loss_pos = torch.tensor(0.0).to(logits)
-        if torch.sum(pos_advantage_masks).item() != 0:
-            pos_log_targets = create_lco_log_target(
-                old_logits[pos_advantage_masks], advantages[pos_advantage_masks], beta=1.0
-            )
-            loss_pos = self.criterion.forward(
-                torch.log_softmax(logits[pos_advantage_masks], dim=-1), target=pos_log_targets.to(logits)
-            ).sum(-1).mean()
+        pos_log_targets = create_lco_log_target(
+            old_logits[pos_advantage_masks], advantages[pos_advantage_masks], beta=0.1
+        )
+        loss_pos = self.criterion.forward(
+            torch.log_softmax(logits[pos_advantage_masks], dim=-1), target=pos_log_targets.to(logits)
+        ).sum(-1).mean().nan_to_num(0.0)
 
         # compute loss for negative advantage tokens
-        loss_neg = torch.tensor(0.0).to(logits)
-        if torch.sum(neg_advantage_masks).item() != 0:
-            neg_log_targets = create_lco_log_target(
-                old_logits[neg_advantage_masks], advantages[neg_advantage_masks], beta=self.beta
-            )
-            loss_neg = self.criterion.forward(
-                torch.log_softmax(logits[neg_advantage_masks], dim=-1), target=neg_log_targets.to(logits)
-            ).sum(-1).mean()
+        neg_log_targets = create_lco_log_target(
+            old_logits[neg_advantage_masks], advantages[neg_advantage_masks], beta=self.beta
+        )
+        loss_neg = self.criterion.forward(
+            torch.log_softmax(logits[neg_advantage_masks], dim=-1), target=neg_log_targets.to(logits)
+        ).sum(-1).mean().nan_to_num(0.0)
 
         loss = loss_pos + loss_neg
         self.backward(loss)

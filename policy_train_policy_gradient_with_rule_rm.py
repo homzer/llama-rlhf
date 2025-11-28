@@ -43,6 +43,7 @@ def run(
         rho_pos: float = 1.8,
         rho_neg: float = 0.9,
         clip_range: float = 0.2,
+        max_num_ckpts: int = None,
         save_optim: bool = False,
         accumulation_steps: int = 1,
         model_parallel_size: int = None,
@@ -117,6 +118,7 @@ def run(
             rho_pos=rho_pos,
             rho_neg=rho_neg,
             clip_range=clip_range,
+            max_num_ckpts=max_num_ckpts,
             save_optim=save_optim,
             accumulation_steps=accumulation_steps
         )
