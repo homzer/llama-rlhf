@@ -154,6 +154,7 @@ def run(
     parallel_infos = setup_model_parallel(
         seed=seed,
         log_dir=log_dir,
+        log_mode='w' if begin_epoch == 0 else 'a',
         model_parallel_size=model_parallel_size,
         sequence_parallel_size=sequence_parallel_size
     )
@@ -232,7 +233,7 @@ def run(
         )
 
         if parallel_infos.local_rank == 0:
-            rollout_buffer.save(os.path.join(save_dir, "epoch-%03d" % (epoch + 1)))
+            rollout_buffer.save(os.path.join(log_dir, "epoch-%03d" % (epoch + 1)))
 
 
 if __name__ == '__main__':

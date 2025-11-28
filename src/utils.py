@@ -425,6 +425,7 @@ def estimate_vocab_adv(
     :return: estimated advantages with shape of [..., vocab_size]
     """
     old_probs = torch.gather(torch.softmax(old_logits, dim=-1), dim=-1, index=actions)
+    advantages = advantages * (1 - old_probs)  # smoothing
     estimated_adv = - torch.sum(old_probs * advantages, dim=-1) / torch.clamp(1 - old_probs.sum(-1), min=0.1)
     estimated_adv = torch.repeat_interleave(estimated_adv.unsqueeze(-1), repeats=old_logits.shape[-1], dim=-1)
     estimated_adv[torch.arange(estimated_adv.shape[0])[:, None], actions] = advantages

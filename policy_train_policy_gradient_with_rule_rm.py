@@ -124,7 +124,7 @@ def run(
         )
 
         if parallel_infos.global_rank == 0:
-            rollout_buffer.save(os.path.join(save_dir, "epoch-%03d" % (epoch + 1)))
+            rollout_buffer.save(os.path.join(log_dir, "epoch-%03d" % (epoch + 1)))
 
         if label_file is not None:
             evaluate_actor(

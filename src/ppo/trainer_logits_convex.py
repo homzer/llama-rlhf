@@ -13,7 +13,7 @@ class ParallelLCOTrainerForCausalLM(ParallelTrainer):
             self,
             policy: ParallelModelForCausalLM,
             optimizer: torch.optim.Optimizer,
-            beta: float = 10.0,
+            beta: float = 1.0,
             save_optim: bool = False,
             accumulation_steps: int = 1,
     ):
@@ -44,7 +44,7 @@ class ParallelLCOTrainerForCausalLM(ParallelTrainer):
 
         # compute loss for positive advantage tokens
         pos_log_targets = create_lco_log_target(
-            old_logits[pos_advantage_masks], advantages[pos_advantage_masks], beta=0.01
+            old_logits[pos_advantage_masks], advantages[pos_advantage_masks], beta=self.beta
         )
         loss_pos = self.criterion.forward(
             torch.log_softmax(logits[pos_advantage_masks], dim=-1), target=pos_log_targets.to(logits)
