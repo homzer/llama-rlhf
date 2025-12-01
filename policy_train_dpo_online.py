@@ -106,7 +106,7 @@ def run(
                 reference_model_type=policy_model_type,
                 reference_config_file=policy_config_file,
                 reference_tokenizer_file=policy_tokenizer_file,
-                forward_batch_size=forward_batch_size,
+                max_forward_batch_size=forward_batch_size,
                 max_seq_len=max_seq_len,
                 dtype=dtype,
                 use_chat_template=use_chat_template,

@@ -30,7 +30,7 @@ def collect_reference_buffer(
         reference_model_type: str,
         reference_config_file: str,
         reference_tokenizer_file: str,
-        forward_batch_size: int,
+        max_forward_batch_size: int,
         max_seq_len: int,
         dtype: str,
         use_chat_template: bool,
@@ -52,7 +52,7 @@ def collect_reference_buffer(
         )
         if use_chat_template:
             dataset = ChatTemplateDataset(dataset, reference_tokenizer)
-        dataloader = ParallelDataLoader(dataset, batch_size=forward_batch_size)
+        dataloader = ParallelDataLoader(dataset, batch_size=max_forward_batch_size)
         reference.load(reference_ckpt_dir)
         ref_rollout_buffer = RolloutBuffer()
         ref_buffer_collector = ActorForwardBufferCollector(
@@ -164,7 +164,7 @@ def run(
         max_seq_len: int = 1024,
         max_batch_size: int = 1,
         generate_batch_size: int = 1,
-        forward_batch_size: int = 1,
+        max_forward_batch_size: int = 1,
         lr: float = 1e-6,
         dtype: str = "bfloat16",
         lora_rank: int = -1,
@@ -206,7 +206,7 @@ def run(
             reference_model_type=policy_model_type,
             reference_config_file=policy_config_file,
             reference_tokenizer_file=policy_tokenizer_file,
-            forward_batch_size=forward_batch_size,
+            max_forward_batch_size=max_forward_batch_size,
             max_seq_len=max_seq_len,
             dtype=dtype,
             use_chat_template=use_chat_template,
