@@ -7,11 +7,11 @@ import torch
 
 from policy_train_dpo import collect_reference_buffer
 from src.dataset import PairwiseDataset
-from src.entities import Timer
+from src.entities import Timer, IterationHandler
 from src.modeling import get_parallel_model
 from src.parallel.initialize import setup_model_parallel, set_barrier, get_rank
 from src.rewards.trainer import ParallelVerifierTrainerForDPO
-from src.utils import print_current_func_args
+from src.utils import print_current_func_args, json_load
 
 
 def main(
@@ -26,6 +26,7 @@ def main(
         lr: float = 1e-5,
         epochs: int = 1,
         begin_epoch: int = 0,
+        chunk_size: int = None,
         lora_rank: int = -1,
         tokenizer_file: str = None,
         config_file: str = None,
@@ -51,8 +52,12 @@ def main(
     )
     print_current_func_args()
 
-    dataset = PairwiseDataset(f=train_file)
-    for epoch in range(begin_epoch, epochs):
+    iterator = IterationHandler(json_load(train_file), epochs, chunk_size, begin_epoch)
+    for epoch, datalist in iterator:
+        dataset = PairwiseDataset(datalist)
+        if len(dataset) == 0:
+            continue
+
         reference_rollout_buffer = collect_reference_buffer(
             dataset=dataset,
             reference_ckpt_dir=ckpt_dir,
@@ -64,7 +69,7 @@ def main(
             dtype=dtype,
             use_chat_template=use_chat_template,
             log_dir=log_dir,
-            local_epoch=0,
+            local_epoch=iterator.local_epoch,
             reuse_buffer=reuse_buffer
         )
 
