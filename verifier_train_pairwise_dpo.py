@@ -93,7 +93,7 @@ def main(
         verifier.load(ckpt_dir) if (
                 epoch == 0
         ) else trainer.load(os.path.join(save_dir, "epoch-%03d" % epoch))
-        timer = Timer(len(reference_rollout_buffer) // max_batch_size, episode=10)
+        timer = Timer(reference_rollout_buffer.size() // max_batch_size, episode=10)
         for data in reference_rollout_buffer.get(max_batch_size, shuffle=True, output_tensor=True):
             timer.step()
             trainer_outputs = trainer.forward(data)
