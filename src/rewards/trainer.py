@@ -444,6 +444,6 @@ class ParallelVerifierTrainerForDPO(ParallelTrainer):
         return Output(loss=loss)
 
     def verifier_accuracy(self) -> float:
-        accuracy = sum(self.predictions) / len(self.predictions)
+        accuracy = torch.stack(self.predictions).mean().item()
         self.predictions = []
         return accuracy
