@@ -2,7 +2,7 @@ import collections
 
 import torch
 
-from src.criterion import MSELoss
+from src.criterion import MSELoss, DPOLoss
 from src.models.modeling import ParallelModelForCausalLM, ParallelVerifier
 from src.ppo.buffer import PPORolloutBufferSample
 from src.trainer import ParallelTrainer, Trainer
@@ -291,6 +291,65 @@ class ParallelInvalidActionMaskTrainerForCausalLM(ParallelTrainer):
             loss = torch.min(loss, clipped_actor_loss)
         loss = - torch.mean(loss)
 
+        self.backward(loss)
+
+        Outputs = collections.namedtuple('Outputs', ['loss'])
+        return Outputs(loss=loss.item())
+
+
+class ParallelDPOTrainerForCausalLM(ParallelTrainer):
+    def __init__(
+            self,
+            policy: ParallelModelForCausalLM,
+            optimizer: torch.optim.Optimizer,
+            beta: float = 0.1,
+            save_optim: bool = False,
+            accumulation_steps: int = 1,
+    ):
+        super().__init__(
+            model=policy,
+            optimizer=optimizer,
+            save_optim=save_optim,
+            accumulation_steps=accumulation_steps
+        )
+        self.policy = policy
+        self.criterion = DPOLoss(beta=beta)
+
+    def forward(self, rollout_data):
+        self.policy.train()
+
+        chosen_obs = rollout_data.chosen_obs.to(self.policy.device())
+        rejected_obs = rollout_data.rejected_obs.to(self.policy.device())
+        chosen_actions = rollout_data.chosen_actions.to(self.policy.device())
+        rejected_actions = rollout_data.rejected_actions.to(self.policy.device())
+        chosen_action_masks = rollout_data.chosen_action_masks.to(self.policy.device())
+        rejected_action_masks = rollout_data.rejected_action_masks.to(self.policy.device())
+        ref_chosen_logprobs = rollout_data.ref_chosen_logprobs.to(self.policy.device())
+        ref_rejected_logprobs = rollout_data.ref_rejected_logprobs.to(self.policy.device())
+
+        chosen_actions = chosen_actions.view(-1)[chosen_action_masks.view(-1)]
+        rejected_actions = rejected_actions.view(-1)[rejected_action_masks.view(-1)]
+        ref_chosen_logprobs = ref_chosen_logprobs.view(-1)[chosen_action_masks.view(-1)]
+        ref_rejected_logprobs = ref_rejected_logprobs.view(-1)[rejected_action_masks.view(-1)]
+
+        chosen_logits = self.policy.forward(chosen_obs).logits
+        chosen_logits = chosen_logits.view(-1, chosen_logits.shape[-1])[chosen_action_masks.view(-1)]
+        chosen_action_logprobs = torch.gather(
+            torch.log_softmax(chosen_logits, dim=-1), dim=-1, index=chosen_actions.unsqueeze(-1)
+        ).squeeze(-1)
+
+        rejected_logits = self.policy.forward(rejected_obs).logits
+        rejected_logits = rejected_logits.view(-1, rejected_logits.shape[-1])[rejected_action_masks.view(-1)]
+        rejected_action_logprobs = torch.gather(
+            torch.log_softmax(rejected_logits, dim=-1), dim=-1, index=rejected_actions.unsqueeze(-1)
+        ).squeeze(-1)
+
+        loss = self.criterion.forward(
+            chosen_logprobs=chosen_action_logprobs,
+            rejected_logprobs=rejected_action_logprobs,
+            ref_chosen_logprobs=ref_chosen_logprobs,
+            ref_rejected_logprobs=ref_rejected_logprobs
+        )
         self.backward(loss)
 
         Outputs = collections.namedtuple('Outputs', ['loss'])

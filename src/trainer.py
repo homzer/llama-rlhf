@@ -9,7 +9,7 @@ import torch.nn as nn
 from src.criterion import (
     PairwiseScoreLoss,
     KLDivLoss,
-    DPOLoss,
+    DPOLossV0,
     ReverseKLDivLoss,
     JSDivLoss,
     LastTokenScoreLoss,
@@ -587,7 +587,7 @@ class ParallelSolverDPOTrainer(ParallelModelTrainer):
         )
         self.ce_coef = ce_coef
         self.criterion_ce = nn.CrossEntropyLoss(ignore_index=-100)
-        self.criterion_dpo = DPOLoss(beta=beta)
+        self.criterion_dpo = DPOLossV0(beta=beta)
 
     def forward(
             self,

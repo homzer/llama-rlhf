@@ -1,24 +1,26 @@
 import gc
 import os
+import shutil
 
 import fire
 import torch
 
 from policy_train_ppo_with_evaluate import evaluate_actor
 from src.dataset import PairwiseDataset, ChatTemplateDataset
-from src.entities import Timer
+from src.entities import Timer, IterationHandler
 from src.modeling import get_parallel_model
 from src.parallel.data_parallel.dataloader import ParallelDataLoader
 from src.parallel.initialize import (
     setup_model_parallel,
     set_barrier,
     get_data_parallel_src_rank,
-    get_data_parallel_rank
+    get_data_parallel_rank,
+    get_rank
 )
 from src.parallel.optimizer import ParallelOptimizer
-from src.ppo.buffer import LogitsRolloutBufferV0
-from src.ppo.collector import LogitsBufferCollectorV0
-from src.trainer import ParallelSolverDPOTrainer
+from src.ppo.buffer import RolloutBuffer
+from src.ppo.collector import ActorForwardBufferCollector
+from src.ppo.trainer import ParallelDPOTrainerForCausalLM
 from src.utils import json_load, print_current_func_args
 
 
@@ -32,20 +34,14 @@ def collect_reference_buffer(
         max_seq_len: int,
         dtype: str,
         use_chat_template: bool,
-        save_dir: str,
+        log_dir: str,
         local_epoch: int,
         reuse_buffer: bool = False
-) -> (LogitsRolloutBufferV0, LogitsRolloutBufferV0):
+) -> RolloutBuffer:
     print("Reference buffer collecting ...")
-    worker_id = get_data_parallel_rank()
-    ref_chosen_buffer_save_dir = os.path.join(save_dir, "epoch-%03d" % local_epoch, "chosen", str(worker_id))
-    ref_rejected_buffer_save_dir = os.path.join(save_dir, "epoch-%03d" % local_epoch, "rejected", str(worker_id))
-    if (reuse_buffer and os.path.exists(os.path.join(ref_chosen_buffer_save_dir, "buffer.jsonl")) and
-            os.path.exists(os.path.join(ref_rejected_buffer_save_dir, "buffer.jsonl"))):
-        ref_chosen_rollout_buffer = LogitsRolloutBufferV0()
-        ref_rejected_rollout_buffer = LogitsRolloutBufferV0()
-        ref_chosen_rollout_buffer.load(os.path.join(ref_chosen_buffer_save_dir, "buffer.jsonl"))
-        ref_rejected_rollout_buffer.load(os.path.join(ref_rejected_buffer_save_dir, "buffer.jsonl"))
+    ref_buffer_save_dir = os.path.join(log_dir, "epoch-%03d" % local_epoch, str(get_data_parallel_rank()))
+    if reuse_buffer and os.path.exists(os.path.join(ref_buffer_save_dir, "buffer.jsonl")):
+        ref_rollout_buffer = RolloutBuffer.load(ref_buffer_save_dir)
     else:
         reference, reference_tokenizer = get_parallel_model(
             model_type=reference_model_type,
@@ -58,40 +54,43 @@ def collect_reference_buffer(
             dataset = ChatTemplateDataset(dataset, reference_tokenizer)
         dataloader = ParallelDataLoader(dataset, batch_size=forward_batch_size)
         reference.load(reference_ckpt_dir)
-        reference_buffer_collector = LogitsBufferCollectorV0(
-            model=reference,
+        ref_rollout_buffer = RolloutBuffer()
+        ref_buffer_collector = ActorForwardBufferCollector(
+            actor=reference,
             tokenizer=reference_tokenizer,
             max_seq_len=max_seq_len
         )
-        ref_chosen_rollout_buffer = LogitsRolloutBufferV0()
-        ref_rejected_rollout_buffer = LogitsRolloutBufferV0()
         timer = Timer(len(dataloader), episode=10)
         for data in dataloader:
             timer.step()
-            ref_chosen_rollout_buffer.extend(
-                reference_buffer_collector.forward(data["instruction"], data["chosen"])
-            )
-            ref_rejected_rollout_buffer.extend(
-                reference_buffer_collector.forward(data["instruction"], data["rejected"])
-            )
-        assert len(ref_chosen_rollout_buffer) == len(ref_rejected_rollout_buffer)
+            chosen_buffer = ref_buffer_collector.forward(instructions=data["instruction"], responses=data["chosen"])
+            rejected_buffer = ref_buffer_collector.forward(instructions=data["instruction"], responses=data["rejected"])
+            ref_rollout_buffer.extend(RolloutBuffer(
+                chosen_obs=chosen_buffer["obs"],
+                rejected_obs=rejected_buffer["obs"],
+                chosen_actions=chosen_buffer["actions"],
+                rejected_actions=rejected_buffer["actions"],
+                chosen_action_masks=chosen_buffer["action_masks"],
+                rejected_action_masks=rejected_buffer["action_masks"],
+                ref_chosen_logprobs=chosen_buffer["action_logprobs"],
+                ref_rejected_logprobs=rejected_buffer["action_logprobs"],
+            ))
+
         if get_data_parallel_src_rank() == 0:
-            ref_chosen_rollout_buffer.save(ref_chosen_buffer_save_dir)
-            ref_rejected_rollout_buffer.save(ref_rejected_buffer_save_dir)
+            ref_rollout_buffer.save(ref_buffer_save_dir)
 
         reference.cpu()
         del reference
-        del reference_buffer_collector
+        del ref_buffer_collector
         torch.cuda.empty_cache()
         gc.collect()
         set_barrier()
 
-    return ref_chosen_rollout_buffer, ref_rejected_rollout_buffer
+    return ref_rollout_buffer
 
 
 def train_dpo(
-        ref_chosen_rollout_buffer: LogitsRolloutBufferV0,
-        ref_rejected_rollout_buffer: LogitsRolloutBufferV0,
+        reference_rollout_buffer: RolloutBuffer,
         policy_model_type: str,
         policy_ckpt_dir: str,
         policy_config_file: str,
@@ -105,8 +104,10 @@ def train_dpo(
         beta: float,
         lr: float,
         epoch: int,
+        save_optim: bool = False,
+        accumulation_steps: int = 1,
+        max_num_ckpts: int = None,
 ):
-    print("DPO policy training ...")
     policy, policy_tokenizer = get_parallel_model(
         model_type=policy_model_type,
         config_file=policy_config_file,
@@ -117,36 +118,29 @@ def train_dpo(
         lora_dtype=lora_dtype
     )
     optimizer = ParallelOptimizer(torch.optim.Adam(policy.parameters(), lr=lr))
-    trainer = ParallelSolverDPOTrainer(
-        model=policy,
-        tokenizer=policy_tokenizer,
+    trainer = ParallelDPOTrainerForCausalLM(
+        policy=policy,
         optimizer=optimizer,
-        max_seq_len=max_seq_len,
-        beta=beta
+        beta=beta,
+        save_optim=save_optim,
+        accumulation_steps=accumulation_steps,
     )
-    policy.load(policy_ckpt_dir, merge_lora=True) if (
+    policy.load(policy_ckpt_dir) if (
             epoch == 0
     ) else trainer.load(os.path.join(save_dir, "epoch-%03d" % epoch))
-    timer = Timer(len(ref_chosen_rollout_buffer) // max_batch_size, episode=100)
-    for chosen_data, rejected_data in zip(
-            ref_chosen_rollout_buffer.get(max_batch_size),
-            ref_rejected_rollout_buffer.get(max_batch_size)
-    ):
+    print("DPO policy training ...")
+    timer = Timer(len(reference_rollout_buffer) // max_batch_size, episode=100)
+    for data in reference_rollout_buffer.get(max_batch_size, shuffle=True, output_tensor=True):
         timer.step()
-        trainer_outputs = trainer.forward(
-            instructions=chosen_data.instructions,
-            chosen=chosen_data.outputs,
-            rejected=rejected_data.outputs,
-            reference_chosen_log_probs=chosen_data.output_tokens_logps,
-            reference_rejected_log_probs=rejected_data.output_tokens_logps
-        )
+        trainer_outputs = trainer.forward(data)
         if trainer.step % 100 == 0:
-            print(f'step {trainer.step} of {len(ref_chosen_rollout_buffer) // max_batch_size} ---------------')
-            print(f'DPO LOSS: {trainer_outputs.loss_dpo} CE LOSS: {trainer_outputs.loss_ce}')
-            trainer.predict(trainer_outputs.logits, chosen_data.instructions, chosen_data.outputs)
-        if trainer.step % 10000 == 0:
-            trainer.save(os.path.join(save_dir, "epoch-%03d" % (epoch + 1)))
+            print(f'--------- STEP {trainer.step} OF {timer.total} ---------')
+            print(f'Loss: {trainer_outputs.loss}')
     trainer.save(os.path.join(save_dir, "epoch-%03d" % (epoch + 1)))
+    if max_num_ckpts is not None and (epoch + 1 - max_num_ckpts) > 0:
+        rm_dir = os.path.join(save_dir, "epoch-%03d" % (epoch + 1 - max_num_ckpts))
+        if get_rank() == 0 and os.path.exists(rm_dir):
+            shutil.rmtree(rm_dir)
 
     policy.cpu()
     del policy
@@ -160,13 +154,13 @@ def train_dpo(
 def run(
         task: str,
         log_dir: str,
-        label_file: str,
         train_file: str,
         save_dir: str,
         policy_ckpt_dir: str,
         policy_model_type: str,
         policy_tokenizer_file: str,
         policy_config_file: str,
+        label_file: str = None,
         max_seq_len: int = 1024,
         max_batch_size: int = 1,
         generate_batch_size: int = 1,
@@ -183,11 +177,15 @@ def run(
         model_parallel_size: int = None,
         sequence_parallel_size: int = 1,
         seed: int = None,
-        reuse_buffer: bool = False
+        reuse_buffer: bool = False,
+        save_optim: bool = False,
+        accumulation_steps: int = 1,
+        max_num_ckpts: int = None,
 ):
     setup_model_parallel(
         seed=seed,
         log_dir=log_dir,
+        log_mode="w" if begin_epoch == 0 else "a",
         model_parallel_size=model_parallel_size,
         sequence_parallel_size=sequence_parallel_size
     )
@@ -195,54 +193,50 @@ def run(
     policy_config_file = policy_config_file or policy_ckpt_dir
     policy_tokenizer_file = policy_tokenizer_file or policy_ckpt_dir
 
-    datalist = json_load(train_file)
-    chunk_size = chunk_size or len(datalist)
-    local_epochs = len(datalist) // chunk_size
-    begin_global_epoch = begin_epoch // local_epochs
-    begin_local_epoch = begin_epoch % local_epochs
-    for global_epoch in range(begin_global_epoch, epochs):
-        for local_epoch in range(begin_local_epoch, local_epochs):
-            epoch = local_epoch + global_epoch * local_epochs
-            print(f"Epoch - {epoch} of {local_epochs * epochs}")
-            dataset = PairwiseDataset(f=datalist[local_epoch * chunk_size: (local_epoch + 1) * chunk_size])
-            if len(dataset) == 0:
-                continue
+    iterator = IterationHandler(json_load(train_file), epochs, chunk_size, begin_epoch)
+    for epoch, datalist in iterator:
+        dataset = PairwiseDataset(datalist)
+        if len(dataset) == 0:
+            continue
 
-            # Reference model logprobs collecting ...
-            ref_chosen_rollout_buffer, ref_rejected_rollout_buffer = collect_reference_buffer(
-                dataset=dataset,
-                reference_ckpt_dir=policy_ckpt_dir,
-                reference_model_type=policy_model_type,
-                reference_config_file=policy_config_file,
-                reference_tokenizer_file=policy_tokenizer_file,
-                forward_batch_size=forward_batch_size,
-                max_seq_len=max_seq_len,
-                dtype=dtype,
-                use_chat_template=use_chat_template,
-                save_dir=save_dir,
-                local_epoch=local_epoch,
-                reuse_buffer=reuse_buffer
-            )
+        # Reference model logprobs collecting ...
+        reference_rollout_buffer = collect_reference_buffer(
+            dataset=dataset,
+            reference_ckpt_dir=policy_ckpt_dir,
+            reference_model_type=policy_model_type,
+            reference_config_file=policy_config_file,
+            reference_tokenizer_file=policy_tokenizer_file,
+            forward_batch_size=forward_batch_size,
+            max_seq_len=max_seq_len,
+            dtype=dtype,
+            use_chat_template=use_chat_template,
+            log_dir=log_dir,
+            local_epoch=iterator.local_epoch,
+            reuse_buffer=reuse_buffer
+        )
 
-            # policy DPO training ...
-            train_dpo(
-                ref_chosen_rollout_buffer=ref_chosen_rollout_buffer,
-                ref_rejected_rollout_buffer=ref_rejected_rollout_buffer,
-                policy_model_type=policy_model_type,
-                policy_ckpt_dir=policy_ckpt_dir,
-                policy_config_file=policy_config_file,
-                policy_tokenizer_file=policy_tokenizer_file,
-                save_dir=save_dir,
-                max_seq_len=max_seq_len,
-                max_batch_size=max_batch_size,
-                dtype=dtype,
-                lora_rank=lora_rank,
-                lora_dtype=lora_dtype,
-                beta=beta,
-                lr=lr,
-                epoch=epoch
-            )
+        # policy DPO training ...
+        train_dpo(
+            reference_rollout_buffer=reference_rollout_buffer,
+            policy_model_type=policy_model_type,
+            policy_ckpt_dir=policy_ckpt_dir,
+            policy_config_file=policy_config_file,
+            policy_tokenizer_file=policy_tokenizer_file,
+            save_dir=save_dir,
+            max_seq_len=max_seq_len,
+            max_batch_size=max_batch_size,
+            dtype=dtype,
+            lora_rank=lora_rank,
+            lora_dtype=lora_dtype,
+            beta=beta,
+            lr=lr,
+            epoch=epoch,
+            save_optim=save_optim,
+            accumulation_steps=accumulation_steps,
+            max_num_ckpts=max_num_ckpts
+        )
 
+        if label_file is not None:
             evaluate_actor(
                 task=task,
                 label_file=label_file,

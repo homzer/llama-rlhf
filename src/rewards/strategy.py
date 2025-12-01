@@ -5,7 +5,7 @@ from typing import List
 
 import torch
 
-from src.criterion import DPOLoss, SimPOLoss, ImplicitPRMLoss
+from src.criterion import SimPOLoss, ImplicitPRMLoss, DPOLoss
 
 
 class PointwiseVerifierStrategy:
@@ -420,24 +420,16 @@ class PairwiseVerifierStrategyForDPO(PairwiseVerifierStrategy):
 
     def trainer_forward(
             self,
-            chosen_logits: torch.Tensor,
-            rejected_logits: torch.Tensor,
-            chosen_labels: torch.Tensor,
-            rejected_labels: torch.Tensor,
-            chosen_masks: torch.Tensor,
-            rejected_masks: torch.Tensor,
-            ref_chosen_log_probs: torch.Tensor,
-            ref_rejected_log_probs: torch.Tensor,
+            chosen_logprobs: torch.Tensor,
+            rejected_logprobs: torch.Tensor,
+            ref_chosen_logprobs: torch.Tensor,
+            ref_rejected_logprobs: torch.Tensor
     ):
         return self.criterion.forward(
-            chosen_logits=chosen_logits,
-            rejected_logits=rejected_logits,
-            chosen_labels=chosen_labels,
-            rejected_labels=rejected_labels,
-            chosen_masks=chosen_masks,
-            rejected_masks=rejected_masks,
-            ref_chosen_log_probs=ref_chosen_log_probs,
-            ref_rejected_log_probs=ref_rejected_log_probs
+            chosen_logprobs=chosen_logprobs,
+            rejected_logprobs=rejected_logprobs,
+            ref_chosen_logprobs=ref_chosen_logprobs,
+            ref_rejected_logprobs=ref_rejected_logprobs
         )
 
     def generator_forward(

@@ -1,25 +1,25 @@
 import gc
 import os
+import shutil
 
 import fire
 import torch
-from torch.utils.data import DataLoader
 
-from src.rewards.trainer import ParallelVerifierTrainerForDPO
-from src.dataset import PairwiseDataset, ChatTemplateDataset
+from policy_train_dpo import collect_reference_buffer
+from src.dataset import PairwiseDataset
 from src.entities import Timer
 from src.modeling import get_parallel_model
-from src.ppo.buffer import LogitsRolloutBufferV0
-from src.ppo.collector import LogitsBufferCollectorV0
 from src.parallel.initialize import setup_model_parallel, set_barrier, get_rank
+from src.rewards.trainer import ParallelVerifierTrainerForDPO
+from src.utils import print_current_func_args
 
 
 def main(
+        log_dir: str,
         ckpt_dir: str,
         save_dir: str,
         train_file: str,
-        buffer_dir: str = None,
-        model_type: str = "qwen",
+        model_type: str,
         max_seq_len: int = 512,
         max_batch_size: int = 1,
         forward_batch_size: int = 32,
@@ -33,68 +33,40 @@ def main(
         lora_dtype: str = "float32",
         use_chat_template: bool = False,
         seed: int = None,
+        reuse_buffer: bool = False,
+        save_optim: bool = False,
+        accumulation_steps: int = 1,
+        max_num_ckpts: int = None,
+        model_parallel_size: int = None,
+        sequence_parallel_size: int = 1,
 ):
-    os.makedirs(save_dir, exist_ok=True)
-    tokenizer_file = ckpt_dir if tokenizer_file is None else tokenizer_file
-    config_file = ckpt_dir if config_file is None else config_file
-    buffer_dir = save_dir if buffer_dir is None else buffer_dir
-    chosen_buffer_file = os.path.join(buffer_dir, "chosen-buffer.jsonl")
-    rejected_buffer_file = os.path.join(buffer_dir, "rejected-buffer.jsonl")
-    setup_model_parallel(seed=seed)
+    tokenizer_file = tokenizer_file or ckpt_dir
+    config_file = config_file or ckpt_dir
+    setup_model_parallel(
+        seed=seed,
+        log_dir=log_dir,
+        log_mode='w' if begin_epoch == 0 else "a",
+        model_parallel_size=model_parallel_size,
+        sequence_parallel_size=sequence_parallel_size
+    )
+    print_current_func_args()
+
     dataset = PairwiseDataset(f=train_file)
-
     for epoch in range(begin_epoch, epochs):
-        if not os.path.exists(chosen_buffer_file) or not os.path.exists(rejected_buffer_file):
-            print("Reference buffer collecting ...")
-            # Reference model logits collecting
-            reference, reference_tokenizer = get_parallel_model(
-                model_type=model_type,
-                config_file=config_file,
-                max_seq_len=max_seq_len,
-                tokenizer_file=tokenizer_file,
-                lora_rank=lora_rank,
-                dtype=dtype,
-                lora_dtype=lora_dtype
-            )
-            reference.load(ckpt_dir)
-            reference_buffer_collector = LogitsBufferCollectorV0(
-                model=reference,
-                tokenizer=reference_tokenizer,
-                max_seq_len=max_seq_len
-            )
-            reference_chosen_rollout_buffer = LogitsRolloutBufferV0()
-            reference_rejected_rollout_buffer = LogitsRolloutBufferV0()
-            reference_dataloader = DataLoader(
-                ChatTemplateDataset(dataset, reference_tokenizer) if use_chat_template else dataset,
-                batch_size=forward_batch_size
-            )
-            timer = Timer(len(reference_dataloader), episode=10)
-            for data in reference_dataloader:
-                timer.step()
-                reference_chosen_rollout_buffer.extend(
-                    reference_buffer_collector.forward(
-                        data["instruction"], data["chosen"]
-                    )
-                )
-                reference_rejected_rollout_buffer.extend(
-                    reference_buffer_collector.forward(
-                        data["instruction"], data["rejected"]
-                    )
-                )
-
-            reference.cpu()
-            del reference
-            del reference_buffer_collector
-            torch.cuda.empty_cache()
-            gc.collect()
-            set_barrier()
-            if get_rank() == 0:
-                reference_chosen_rollout_buffer.save(os.path.join(save_dir, "chosen"))
-                reference_rejected_rollout_buffer.save(os.path.join(save_dir, "rejected"))
-            set_barrier()
-        else:
-            reference_chosen_rollout_buffer = LogitsRolloutBufferV0().load(chosen_buffer_file)
-            reference_rejected_rollout_buffer = LogitsRolloutBufferV0().load(rejected_buffer_file)
+        reference_rollout_buffer = collect_reference_buffer(
+            dataset=dataset,
+            reference_ckpt_dir=ckpt_dir,
+            reference_model_type=model_type,
+            reference_config_file=config_file,
+            reference_tokenizer_file=tokenizer_file,
+            forward_batch_size=forward_batch_size,
+            max_seq_len=max_seq_len,
+            dtype=dtype,
+            use_chat_template=use_chat_template,
+            log_dir=log_dir,
+            local_epoch=0,
+            reuse_buffer=reuse_buffer
+        )
 
         # verifier training
         verifier, verifier_tokenizer = get_parallel_model(
@@ -109,34 +81,35 @@ def main(
         optimizer = torch.optim.Adam(verifier.parameters(), lr=lr)
         trainer = ParallelVerifierTrainerForDPO(
             model=verifier,
-            tokenizer=verifier_tokenizer,
             optimizer=optimizer,
-            max_seq_len=max_seq_len
+            save_optim=save_optim,
+            accumulation_steps=accumulation_steps
         )
         verifier.load(ckpt_dir) if (
                 epoch == 0
-        ) else trainer.load(os.path.join(save_dir, f"epoch-{epoch}"))
-        timer = Timer(len(reference_chosen_rollout_buffer) // max_batch_size, episode=10)
-        for chosen_data, rejected_data in zip(
-                reference_chosen_rollout_buffer.get(max_batch_size),
-                reference_rejected_rollout_buffer.get(max_batch_size)
-        ):
-            assert chosen_data.instructions == rejected_data.instructions
+        ) else trainer.load(os.path.join(save_dir, "epoch-%03d" % epoch))
+        timer = Timer(len(reference_rollout_buffer) // max_batch_size, episode=10)
+        for data in reference_rollout_buffer.get(max_batch_size, shuffle=True, output_tensor=True):
             timer.step()
-            trainer_outputs = trainer.forward(
-                instructions=chosen_data.instructions,
-                chosen=chosen_data.outputs,
-                rejected=rejected_data.outputs,
-                reference_chosen_log_probs=chosen_data.output_tokens_logps,
-                reference_rejected_log_probs=rejected_data.output_tokens_logps
-            )
+            trainer_outputs = trainer.forward(data)
             if trainer.step % 100 == 0:
                 print(f'step {trainer.step} of {timer.total} ---------------')
                 print(f'LOSS: ', trainer_outputs.loss.item(), "Acc", trainer.verifier_accuracy())
-                trainer.predict(trainer_outputs.logits, chosen_data.instructions, chosen_data.outputs)
             if trainer.step % 10000 == 0:
-                trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))
-        trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))
+                trainer.save(os.path.join(save_dir, "epoch-%03d" % (epoch + 1)))
+        trainer.save(os.path.join(save_dir, "epoch-%03d" % (epoch + 1)))
+        if max_num_ckpts is not None and (epoch + 1 - max_num_ckpts) > 0:
+            rm_dir = os.path.join(save_dir, "epoch-%03d" % (epoch + 1 - max_num_ckpts))
+            if get_rank() == 0 and os.path.exists(rm_dir):
+                shutil.rmtree(rm_dir)
+
+        verifier.cpu()
+        del verifier
+        del optimizer
+        del trainer
+        torch.cuda.empty_cache()
+        gc.collect()
+        set_barrier()
 
 
 if __name__ == '__main__':

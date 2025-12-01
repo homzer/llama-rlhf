@@ -134,6 +134,7 @@ class IterationHandler:
         self.chunk_size = chunk_size or len(self.datalist)
         self.epochs = epochs
         self.begin_epoch = begin_epoch
+        self.local_epoch = 0
 
     def __iter__(self):
         local_epochs = (len(self.datalist) + self.chunk_size - 1) // self.chunk_size
@@ -141,6 +142,7 @@ class IterationHandler:
         begin_local_epoch = self.begin_epoch % local_epochs
         for global_epoch in range(begin_global_epoch, self.epochs):
             for local_epoch in range(begin_local_epoch, local_epochs):
+                self.local_epoch = local_epoch
                 epoch = global_epoch * local_epochs + local_epoch
                 print(f"Epoch - {epoch} of {local_epochs * self.epochs}")
                 batch_datalist = self.datalist[local_epoch * self.chunk_size: (local_epoch + 1) * self.chunk_size]

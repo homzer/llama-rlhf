@@ -3,13 +3,13 @@ from typing import List
 
 import torch
 
+from src.criterion import DPOLoss
 from src.models.modeling import ParallelVerifier, ParallelModelForCausalLM
 from src.rewards.strategy import (
     PairwiseVerifierStrategyForLastToken,
     PairwiseVerifierStrategyForMeanScore,
     PairwiseVerifierStrategyForFocalMeanScore,
     PairwiseVerifierStrategyForFocalLoss,
-    PairwiseVerifierStrategyForDPO,
     PairwiseVerifierStrategyForSimPO,
     PointwiseVerifierStrategyForLastToken,
     PointwiseVerifierStrategyForFocalLoss,
@@ -18,7 +18,7 @@ from src.rewards.strategy import (
     PairwiseVerifierStrategyForPGTG
 )
 from src.tokenizers import Tokenizer
-from src.trainer import ParallelVerifierTrainer, ParallelModelTrainer
+from src.trainer import ParallelVerifierTrainer, ParallelModelTrainer, ParallelTrainer
 
 
 class ParallelPointwiseVerifierTrainerForLastToken(ParallelVerifierTrainer):
@@ -382,65 +382,66 @@ class ParallelVerifierTrainerForSimPO(ParallelModelTrainer):
         return accuracy
 
 
-class ParallelVerifierTrainerForDPO(ParallelModelTrainer):
+class ParallelVerifierTrainerForDPO(ParallelTrainer):
     def __init__(
             self,
             model: ParallelModelForCausalLM,
-            tokenizer: Tokenizer,
             optimizer: torch.optim.Optimizer,
-            max_seq_len: int,
-            accumulation_steps: int = 1
+            accumulation_steps: int = 1,
+            save_optim: bool = False
     ):
         super().__init__(
             model=model,
-            tokenizer=tokenizer,
             optimizer=optimizer,
-            max_seq_len=max_seq_len,
+            save_optim=save_optim,
             accumulation_steps=accumulation_steps
         )
-        self.strategy = PairwiseVerifierStrategyForDPO()
+        self.criterion = DPOLoss()
         self.predictions = []
 
-    def forward(
-            self,
-            instructions: List[str],
-            chosen: List[str],
-            rejected: List[str],
-            reference_chosen_log_probs: torch.Tensor,
-            reference_rejected_log_probs: torch.Tensor
-    ):
-        bsz = len(instructions)
-        instructions = [*instructions, *instructions]
-        outputs = [*chosen, *rejected]
-        examples = self.prepare_for_forward(instructions, outputs)
+    def forward(self, rollout_data):
+        self.model.train()
 
-        logits = self.model.forward(examples.tokens).logits
-        loss = self.strategy.trainer_forward(
-            chosen_logits=logits[:bsz],
-            rejected_logits=logits[bsz:],
-            chosen_labels=examples.labels[:bsz],
-            rejected_labels=examples.labels[bsz:],
-            chosen_masks=examples.masks[:bsz],
-            rejected_masks=examples.masks[bsz:],
-            ref_chosen_log_probs=reference_chosen_log_probs,
-            ref_rejected_log_probs=reference_rejected_log_probs,
+        chosen_obs = rollout_data.chosen_obs.to(self.model.device())
+        rejected_obs = rollout_data.rejected_obs.to(self.model.device())
+        chosen_actions = rollout_data.chosen_actions.to(self.model.device())
+        rejected_actions = rollout_data.rejected_actions.to(self.model.device())
+        chosen_action_masks = rollout_data.chosen_action_masks.to(self.model.device())
+        rejected_action_masks = rollout_data.rejected_action_masks.to(self.model.device())
+        ref_chosen_logprobs = rollout_data.ref_chosen_logprobs.to(self.model.device())
+        ref_rejected_logprobs = rollout_data.ref_rejected_logprobs.to(self.model.device())
+
+        chosen_actions = chosen_actions.view(-1)[chosen_action_masks.view(-1)]
+        rejected_actions = rejected_actions.view(-1)[rejected_action_masks.view(-1)]
+        ref_chosen_logprobs = ref_chosen_logprobs.view(-1)[chosen_action_masks.view(-1)]
+        ref_rejected_logprobs = ref_rejected_logprobs.view(-1)[rejected_action_masks.view(-1)]
+
+        chosen_logits = self.model.forward(chosen_obs).logits
+        chosen_logits = chosen_logits.view(-1, chosen_logits.shape[-1])[chosen_action_masks.view(-1)]
+        chosen_action_logprobs = torch.gather(
+            torch.log_softmax(chosen_logits, dim=-1), dim=-1, index=chosen_actions.unsqueeze(-1)
+        ).squeeze(-1)
+
+        rejected_logits = self.model.forward(rejected_obs).logits
+        rejected_logits = rejected_logits.view(-1, rejected_logits.shape[-1])[rejected_action_masks.view(-1)]
+        rejected_action_logprobs = torch.gather(
+            torch.log_softmax(rejected_logits, dim=-1), dim=-1, index=rejected_actions.unsqueeze(-1)
+        ).squeeze(-1)
+
+        loss = self.criterion.forward(
+            chosen_logprobs=chosen_action_logprobs,
+            rejected_logprobs=rejected_action_logprobs,
+            ref_chosen_logprobs=ref_chosen_logprobs,
+            ref_rejected_logprobs=ref_rejected_logprobs
         )
         self.backward(loss)
 
-        chosen_scores = self.strategy.generator_forward(
-            logits=logits[:bsz],
-            labels=examples.labels[:bsz],
-            masks=examples.masks[:bsz]
+        self.predictions.append(
+            (chosen_action_logprobs.mean() - ref_chosen_logprobs.mean()) >
+            (rejected_action_logprobs.mean() - ref_rejected_logprobs.mean())
         )
-        rejected_scores = self.strategy.generator_forward(
-            logits=logits[bsz:],
-            labels=examples.labels[bsz:],
-            masks=examples.masks[bsz:]
-        )
-        self.predictions.extend([cs > rs for cs, rs in zip(chosen_scores, rejected_scores)])
-
-        Output = collections.namedtuple('Output', ['logits', 'loss'])
-        return Output(logits=logits[:bsz], loss=loss)
+        Output = collections.namedtuple('Output', ['loss'])
+        return Output(loss=loss)
 
     def verifier_accuracy(self) -> float:
         accuracy = sum(self.predictions) / len(self.predictions)

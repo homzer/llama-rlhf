@@ -44,11 +44,11 @@ class KLDivLoss(Loss):
         targets = targets.view(-1, targets.size(-1)).to(logits)
         if targets_after_softmax:
             loss = (targets.float() * (
-                torch.log(torch.clamp(targets.float(), min=1e-12)) - torch.log_softmax(logits.float(), dim=-1)
+                    torch.log(torch.clamp(targets.float(), min=1e-12)) - torch.log_softmax(logits.float(), dim=-1)
             )).type_as(logits)
         else:
             loss = (torch.softmax(targets.float(), dim=-1) * (
-                torch.log_softmax(targets.float(), dim=-1) - torch.log_softmax(logits.float(), dim=-1)
+                    torch.log_softmax(targets.float(), dim=-1) - torch.log_softmax(logits.float(), dim=-1)
             )).type_as(logits)
         loss = torch.sum(loss, dim=-1)
         if self.return_scalar:
@@ -238,6 +238,36 @@ class SimPOLoss(Loss):
 
 
 class DPOLoss(Loss):
+    def __init__(self, beta=0.1, reduction: str = "mean"):
+        super().__init__()
+        self.beta = beta
+        self.reduction = reduction
+
+    def forward(
+            self,
+            chosen_logprobs: torch.Tensor,
+            rejected_logprobs: torch.Tensor,
+            ref_chosen_logprobs: torch.Tensor,
+            ref_rejected_logprobs: torch.Tensor
+    ):
+        if self.reduction == "mean":
+            chosen_logprobs = chosen_logprobs.mean()
+            rejected_logprobs = rejected_logprobs.mean()
+            ref_chosen_logprobs = ref_chosen_logprobs.mean()
+            ref_rejected_logprobs = ref_rejected_logprobs.mean()
+        elif self.reduction == "sum":
+            chosen_logprobs = chosen_logprobs.sum()
+            rejected_logprobs = rejected_logprobs.sum()
+            ref_chosen_logprobs = ref_chosen_logprobs.sum()
+            ref_rejected_logprobs = ref_rejected_logprobs.sum()
+        else:
+            raise ValueError(self.reduction)
+        log_probs = (chosen_logprobs - rejected_logprobs) - (ref_chosen_logprobs - ref_rejected_logprobs)
+        loss = - F.logsigmoid(self.beta * log_probs).mean().nan_to_num(0.0)
+        return loss
+
+
+class DPOLossV0(Loss):
     def __init__(self, beta=0.1, logits_norm: bool = False, label_smoothing: float = 0.0, eps=1e-5):
         super().__init__()
         self.beta = beta
@@ -333,7 +363,7 @@ class DPOLoss(Loss):
         return loss.mean()
 
 
-class ImplicitPRMLoss(DPOLoss):
+class ImplicitPRMLoss(DPOLossV0):
     def __init__(self, beta=0.1):
         super().__init__(beta=beta)
 
@@ -419,7 +449,7 @@ def norm(x: torch.Tensor, dim: int = -1, eps: float = 1e-5):
 
 if __name__ == '__main__':
     torch.manual_seed(0)
-    criterion = DPOLoss(logits_norm=False)
+    criterion = DPOLossV0(logits_norm=False)
     _chosen_logits = torch.Tensor([
         [[1, 0, 100, -100], [1, 100, 0, -100], [0, 1, 100, -100]],
         [[-100, 1, 0, 100], [0, 1, 100, -100], [100, 1, 0, -100]]
