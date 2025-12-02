@@ -47,7 +47,7 @@ def collect_verifier_buffer(
         timer.step()
         generator_outputs = verifier_buffer_generator.forward(data.instructions, data.responses)
         verifier_rollout_buffer.extend(RolloutBuffer(
-            advantages=np.take_along_axis(
+            logprobs=np.take_along_axis(
                 torch.log_softmax(generator_outputs.logits, dim=-1).half().cpu().numpy(),
                 indices=data.logits_indices,
                 axis=-1
@@ -83,7 +83,7 @@ def collect_verifier_buffer(
         timer.step()
         generator_outputs = reference_buffer_generator.forward(data.instructions, data.responses)
         reference_rollout_buffer.extend(RolloutBuffer(
-            advantages=np.take_along_axis(
+            logprobs=np.take_along_axis(
                 torch.log_softmax(generator_outputs.logits, dim=-1).half().cpu().numpy(),
                 indices=data.logits_indices,
                 axis=-1
@@ -97,9 +97,10 @@ def collect_verifier_buffer(
     gc.collect()
     set_barrier()
 
-    verifier_rollout_buffer["advantages"] -= reference_rollout_buffer["advantages"]
+    verifier_rollout_buffer["ref_logprobs"] = reference_rollout_buffer["logprobs"]
+    verifier_rollout_buffer["advantages"] = verifier_rollout_buffer["logprobs"] - reference_rollout_buffer["logprobs"]
     # advantage normalization
-    verifier_rollout_buffer["advantages"] = normalize(verifier_rollout_buffer["advantages"], dim=-1)
+    # verifier_rollout_buffer["advantages"] = normalize(verifier_rollout_buffer["advantages"], dim=-1)
     return verifier_rollout_buffer
 
 
@@ -205,8 +206,13 @@ def run(
             dtype=dtype
         )
 
+        logits_rollout_buffer["logprobs"] = verifier_rollout_buffer["logprobs"]
+        logits_rollout_buffer["ref_logprobs"] = verifier_rollout_buffer["ref_logprobs"]
         logits_rollout_buffer["advantages"] = verifier_rollout_buffer["advantages"]
         logits_rollout_buffer["advantage_indices"] = verifier_rollout_buffer["advantage_indices"]
+
+        if parallel_infos.global_rank == 0:
+            logits_rollout_buffer.save(os.path.join(log_dir, "epoch-%03d" % (epoch + 1)))
 
         train_lco(
             rollout_buffer=logits_rollout_buffer,
@@ -228,9 +234,6 @@ def run(
             save_optim=save_optim,
             accumulation_steps=accumulation_steps
         )
-
-        if parallel_infos.global_rank == 0:
-            logits_rollout_buffer.save(os.path.join(log_dir, "epoch-%03d" % (epoch + 1)))
 
         if label_file is not None:
             assert task is not None
