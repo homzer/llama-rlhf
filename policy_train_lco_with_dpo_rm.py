@@ -7,6 +7,7 @@ import torch
 
 from policy_train_lco import collect_logits_buffer, train_lco
 from policy_train_ppo import collect_actor_buffer
+from policy_train_ppo_with_evaluate import evaluate_actor
 from src.dataset import JsonDataset
 from src.entities import Timer, IterationHandler
 from src.modeling import get_parallel_model
@@ -115,6 +116,8 @@ def run(
         policy_tokenizer_file: str = None,
         verifier_config_file: str = None,
         verifier_tokenizer_file: str = None,
+        label_file: str = None,
+        task: str = None,
         lora_rank: int = -1,
         lora_dtype: str = "bfloat16",
         max_batch_size: int = 1,
@@ -228,6 +231,23 @@ def run(
 
         if parallel_infos.global_rank == 0:
             logits_rollout_buffer.save(os.path.join(log_dir, "epoch-%03d" % (epoch + 1)))
+
+        if label_file is not None:
+            assert task is not None
+            evaluate_actor(
+                task=task,
+                label_file=label_file,
+                log_dir=log_dir,
+                actor_model_type=policy_model_type,
+                actor_config_file=policy_config_file,
+                max_seq_len=max_seq_len,
+                actor_tokenizer_file=policy_tokenizer_file,
+                dtype=dtype,
+                epoch=epoch,
+                actor_save_dir=save_dir,
+                max_generate_batch_size=max_generate_batch_size,
+                use_chat_template=use_chat_template
+            )
 
 
 if __name__ == '__main__':
