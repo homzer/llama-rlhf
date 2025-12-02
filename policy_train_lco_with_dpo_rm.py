@@ -49,12 +49,12 @@ def collect_verifier_buffer(
         verifier_rollout_buffer.extend(RolloutBuffer(
             advantages=np.take_along_axis(
                 torch.log_softmax(generator_outputs.logits, dim=-1).half().cpu().numpy(),
-                indices=data["logits_indices"],
+                indices=data.logits_indices,
                 axis=-1
             ),
-            advantage_indices=data["logits_indices"],
-            actions=data["actions"],
-            action_masks=data["action_masks"]
+            advantage_indices=data.logits_indices,
+            actions=data.actions,
+            action_masks=data.action_masks
         ))
 
     verifier.cpu()
@@ -85,7 +85,7 @@ def collect_verifier_buffer(
         reference_rollout_buffer.extend(RolloutBuffer(
             advantages=np.take_along_axis(
                 torch.log_softmax(generator_outputs.logits, dim=-1).half().cpu().numpy(),
-                indices=data["logits_indices"],
+                indices=data.logits_indices,
                 axis=-1
             ),
         ))
