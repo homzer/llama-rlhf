@@ -313,8 +313,8 @@ class ParallelDPOTrainerForCausalLM(ParallelTrainer):
             accumulation_steps=accumulation_steps
         )
         self.policy = policy
-        # self.criterion = DPOLoss(beta=beta)
-        self.criterion = DPOLossV0(beta=beta)
+        self.criterion = DPOLoss(beta=beta)
+        # self.criterion = DPOLossV0(beta=beta)
 
     def forward(self, rollout_data):
         self.policy.train()
@@ -334,33 +334,33 @@ class ParallelDPOTrainerForCausalLM(ParallelTrainer):
         # ref_rejected_logprobs = ref_rejected_logprobs.view(-1)[rejected_action_masks.view(-1)]
 
         chosen_logits = self.policy.forward(chosen_obs).logits
-        # chosen_action_logprobs = torch.gather(
-        #     torch.log_softmax(chosen_logits, dim=-1), dim=-1, index=chosen_actions.unsqueeze(-1)
-        # ).squeeze(-1)
+        chosen_action_logprobs = torch.gather(
+            torch.log_softmax(chosen_logits, dim=-1), dim=-1, index=chosen_actions.unsqueeze(-1)
+        ).squeeze(-1)
 
         rejected_logits = self.policy.forward(rejected_obs).logits
-        # rejected_action_logprobs = torch.gather(
-        #     torch.log_softmax(rejected_logits, dim=-1), dim=-1, index=rejected_actions.unsqueeze(-1)
-        # ).squeeze(-1)
+        rejected_action_logprobs = torch.gather(
+            torch.log_softmax(rejected_logits, dim=-1), dim=-1, index=rejected_actions.unsqueeze(-1)
+        ).squeeze(-1)
 
-        # loss = self.criterion.forward(
-        #     chosen_logprobs=chosen_action_logprobs,
-        #     rejected_logprobs=rejected_action_logprobs,
-        #     ref_chosen_logprobs=ref_chosen_logprobs,
-        #     ref_rejected_logprobs=ref_rejected_logprobs,
-        #     chosen_masks=chosen_action_masks,
-        #     rejected_masks=rejected_action_masks
-        # )
         loss = self.criterion.forward(
-            chosen_logits=chosen_logits,
-            rejected_logits=rejected_logits,
-            chosen_labels=chosen_actions,
-            rejected_labels=rejected_actions,
+            chosen_logprobs=chosen_action_logprobs,
+            rejected_logprobs=rejected_action_logprobs,
+            ref_chosen_logprobs=ref_chosen_logprobs,
+            ref_rejected_logprobs=ref_rejected_logprobs,
             chosen_masks=chosen_action_masks,
-            rejected_masks=rejected_action_masks,
-            ref_chosen_log_probs=ref_chosen_logprobs,
-            ref_rejected_log_probs=ref_rejected_logprobs
+            rejected_masks=rejected_action_masks
         )
+        # loss = self.criterion.forward(
+        #     chosen_logits=chosen_logits,
+        #     rejected_logits=rejected_logits,
+        #     chosen_labels=chosen_actions,
+        #     rejected_labels=rejected_actions,
+        #     chosen_masks=chosen_action_masks,
+        #     rejected_masks=rejected_action_masks,
+        #     ref_chosen_log_probs=ref_chosen_logprobs,
+        #     ref_rejected_log_probs=ref_rejected_logprobs
+        # )
         self.backward(loss)
 
         Outputs = collections.namedtuple('Outputs', ['loss'])
