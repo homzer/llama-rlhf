@@ -48,7 +48,7 @@ def collect_verifier_buffer(
         generator_outputs = verifier_buffer_generator.forward(data.instructions, data.responses)
         verifier_rollout_buffer.extend(RolloutBuffer(
             advantages=np.take_along_axis(
-                torch.log_softmax(generator_outputs.logits, dim=-1).cpu().numpy(),
+                torch.log_softmax(generator_outputs.logits, dim=-1).half().cpu().numpy(),
                 indices=data["logits_indices"],
                 axis=-1
             ),
@@ -84,7 +84,7 @@ def collect_verifier_buffer(
         generator_outputs = reference_buffer_generator.forward(data.instructions, data.responses)
         reference_rollout_buffer.extend(RolloutBuffer(
             advantages=np.take_along_axis(
-                torch.log_softmax(generator_outputs.logits, dim=-1).cpu().numpy(),
+                torch.log_softmax(generator_outputs.logits, dim=-1).half().cpu().numpy(),
                 indices=data["logits_indices"],
                 axis=-1
             ),
