@@ -103,7 +103,8 @@ def run(
         action_probs = np.exp(policy_rollout_buffer["action_logprobs"][policy_rollout_buffer["action_masks"]]).mean()
         print(f"Average Action Probs: {action_probs}")
 
-        logits_rollout_buffer["advantages"] = verifier_rollout_buffer["scores"]
+        logits_rollout_buffer["advantages"] = verifier_rollout_buffer["scores"][..., None]
+        logits_rollout_buffer["advantage_indices"] = logits_rollout_buffer["actions"][..., None]
 
         train_lco(
             rollout_buffer=logits_rollout_buffer,

@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from src.utils import powmax, masked_mean
+from src.utils import powmax, masked_mean, masked_sum
 
 
 class Loss(nn.Module):
@@ -248,18 +248,20 @@ class DPOLoss(Loss):
             chosen_logprobs: torch.Tensor,
             rejected_logprobs: torch.Tensor,
             ref_chosen_logprobs: torch.Tensor,
-            ref_rejected_logprobs: torch.Tensor
+            ref_rejected_logprobs: torch.Tensor,
+            chosen_masks: torch.Tensor,
+            rejected_masks: torch.Tensor
     ):
         if self.reduction == "mean":
-            chosen_logprobs = chosen_logprobs.mean()
-            rejected_logprobs = rejected_logprobs.mean()
-            ref_chosen_logprobs = ref_chosen_logprobs.mean()
-            ref_rejected_logprobs = ref_rejected_logprobs.mean()
+            chosen_logprobs = masked_mean(chosen_logprobs, chosen_masks, dim=-1)
+            rejected_logprobs = masked_mean(rejected_logprobs, rejected_masks, dim=-1)
+            ref_chosen_logprobs = masked_mean(ref_chosen_logprobs, chosen_masks, dim=-1)
+            ref_rejected_logprobs = masked_mean(ref_rejected_logprobs, rejected_masks, dim=-1)
         elif self.reduction == "sum":
-            chosen_logprobs = chosen_logprobs.sum()
-            rejected_logprobs = rejected_logprobs.sum()
-            ref_chosen_logprobs = ref_chosen_logprobs.sum()
-            ref_rejected_logprobs = ref_rejected_logprobs.sum()
+            chosen_logprobs = masked_sum(chosen_logprobs, chosen_masks, dim=-1)
+            rejected_logprobs = masked_sum(rejected_logprobs, rejected_masks, dim=-1)
+            ref_chosen_logprobs = masked_sum(ref_chosen_logprobs, chosen_masks, dim=-1)
+            ref_rejected_logprobs = masked_sum(ref_rejected_logprobs, rejected_masks, dim=-1)
         else:
             raise ValueError(self.reduction)
         log_probs = (chosen_logprobs - rejected_logprobs) - (ref_chosen_logprobs - ref_rejected_logprobs)

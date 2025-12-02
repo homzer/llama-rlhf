@@ -163,7 +163,7 @@ def run(
         label_file: str = None,
         max_seq_len: int = 1024,
         max_batch_size: int = 1,
-        generate_batch_size: int = 1,
+        max_generate_batch_size: int = 1,
         max_forward_batch_size: int = 1,
         lr: float = 1e-6,
         dtype: str = "bfloat16",
@@ -248,7 +248,7 @@ def run(
                 dtype=dtype,
                 epoch=epoch,
                 actor_save_dir=save_dir,
-                max_generate_batch_size=generate_batch_size,
+                max_generate_batch_size=max_generate_batch_size,
                 use_chat_template=use_chat_template
             )
 

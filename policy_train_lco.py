@@ -229,7 +229,8 @@ def run(
         print(f"Average Rewards: {verifier_rollout_buffer.mean()}")
         verifier_rollout_buffer.normalize()
 
-        logits_rollout_buffer["advantages"] = verifier_rollout_buffer["scores"]
+        logits_rollout_buffer["advantages"] = verifier_rollout_buffer["scores"][..., None]
+        logits_rollout_buffer["advantage_indices"] = logits_rollout_buffer["actions"][..., None]
 
         train_lco(
             rollout_buffer=logits_rollout_buffer,

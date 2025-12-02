@@ -327,19 +327,19 @@ class ParallelDPOTrainerForCausalLM(ParallelTrainer):
         ref_chosen_logprobs = rollout_data.ref_chosen_logprobs.to(self.policy.device())
         ref_rejected_logprobs = rollout_data.ref_rejected_logprobs.to(self.policy.device())
 
-        chosen_actions = chosen_actions.view(-1)[chosen_action_masks.view(-1)]
-        rejected_actions = rejected_actions.view(-1)[rejected_action_masks.view(-1)]
-        ref_chosen_logprobs = ref_chosen_logprobs.view(-1)[chosen_action_masks.view(-1)]
-        ref_rejected_logprobs = ref_rejected_logprobs.view(-1)[rejected_action_masks.view(-1)]
+        # chosen_actions = chosen_actions.view(-1)[chosen_action_masks.view(-1)]
+        # rejected_actions = rejected_actions.view(-1)[rejected_action_masks.view(-1)]
+        # ref_chosen_logprobs = ref_chosen_logprobs.view(-1)[chosen_action_masks.view(-1)]
+        # ref_rejected_logprobs = ref_rejected_logprobs.view(-1)[rejected_action_masks.view(-1)]
 
         chosen_logits = self.policy.forward(chosen_obs).logits
-        chosen_logits = chosen_logits.view(-1, chosen_logits.shape[-1])[chosen_action_masks.view(-1)]
+        # chosen_logits = chosen_logits.view(-1, chosen_logits.shape[-1])[chosen_action_masks.view(-1)]
         chosen_action_logprobs = torch.gather(
             torch.log_softmax(chosen_logits, dim=-1), dim=-1, index=chosen_actions.unsqueeze(-1)
         ).squeeze(-1)
 
         rejected_logits = self.policy.forward(rejected_obs).logits
-        rejected_logits = rejected_logits.view(-1, rejected_logits.shape[-1])[rejected_action_masks.view(-1)]
+        # rejected_logits = rejected_logits.view(-1, rejected_logits.shape[-1])[rejected_action_masks.view(-1)]
         rejected_action_logprobs = torch.gather(
             torch.log_softmax(rejected_logits, dim=-1), dim=-1, index=rejected_actions.unsqueeze(-1)
         ).squeeze(-1)
@@ -348,7 +348,9 @@ class ParallelDPOTrainerForCausalLM(ParallelTrainer):
             chosen_logprobs=chosen_action_logprobs,
             rejected_logprobs=rejected_action_logprobs,
             ref_chosen_logprobs=ref_chosen_logprobs,
-            ref_rejected_logprobs=ref_rejected_logprobs
+            ref_rejected_logprobs=ref_rejected_logprobs,
+            chosen_masks=chosen_action_masks,
+            rejected_masks=rejected_action_masks
         )
         self.backward(loss)
 

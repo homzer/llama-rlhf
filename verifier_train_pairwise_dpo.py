@@ -99,9 +99,7 @@ def main(
             trainer_outputs = trainer.forward(data)
             if trainer.step % 100 == 0:
                 print(f'step {trainer.step} of {timer.total} ---------------')
-                print(f'LOSS: ', trainer_outputs.loss.item(), "Acc", trainer.verifier_accuracy())
-            if trainer.step % 10000 == 0:
-                trainer.save(os.path.join(save_dir, "epoch-%03d" % (epoch + 1)))
+                print(f'LOSS: {trainer_outputs.loss.item()} | ACC: {trainer.verifier_accuracy()}')
         trainer.save(os.path.join(save_dir, "epoch-%03d" % (epoch + 1)))
         if max_num_ckpts is not None and (epoch + 1 - max_num_ckpts) > 0:
             rm_dir = os.path.join(save_dir, "epoch-%03d" % (epoch + 1 - max_num_ckpts))

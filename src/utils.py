@@ -1,17 +1,14 @@
 import collections
 import inspect
 import json
-import math
 import os
 import pickle
 import random
-from pathlib import Path
-from typing import Tuple, List, Union, Callable
+from typing import Tuple, List, Callable
 
 import numpy as np
 import safetensors
 import torch
-import torch.nn.functional as F
 from tqdm import trange
 
 
@@ -176,94 +173,26 @@ def sample_top_p(probs: torch.Tensor, p: float = 1.0, num_samples: int = 1):
     return next_tokens
 
 
-# def cross_entropy(logits, labels, weights=None, keepdim=False):
-#     """
-#     Compute Cross-Entropy Loss..
-#     :param logits: [batch_size, ..., num_classes] tensor.
-#     :param labels: [batch_size, ...] tensor. LongTensor.
-#     Same shape with 0th - (last - 1)th of logits.
-#     :param weights: [batch_size, ...] tensor, where `1` donates validate and
-#      `0` donates invalidate. Same shape with 0th - (last - 1)th of logits.
-#     :param keepdim: bool, whether not to perform reduce sum of the final result.
-#     :return: The mean of all examples' loss.
-#     """
-#     bzs = logits.shape[0]
-#     logits = logits.float()
-#     labels = labels.to(logits.device)
-#     if weights is None:
-#         weights = torch.ones_like(labels)
-#     weights = weights.float().to(logits.device)
-#     weights = torch.reshape(weights, [bzs, -1])
-#     num_classes = int(logits.size()[-1])
-#     logits = torch.reshape(logits, shape=[bzs, -1, num_classes])
-#     log_probs = F.log_softmax(logits, dim=-1)
-#     labels = torch.reshape(labels, [bzs, -1]).long()
-#     labels = F.one_hot(labels, num_classes=num_classes)
-#     loss = - torch.sum(log_probs * labels, dim=[-1])  # [b, s]
-#     if not keepdim:
-#         nrt = torch.sum(weights * loss, dim=-1)
-#         dnm = torch.sum(weights, dim=-1) + 1e-8
-#         loss = torch.mean(nrt / dnm, dim=0)
-#     return loss
-
-
-# def extract_logits(logits, p=0.8, max_n=10, min_n=5):
-#     """
-#     For extracting teacher distribution to distill.
-#     We don't need to record the whole vocabulary's probabilities which is space-consuming.
-#     Instead, we only retain those indices summed up to `p`.
-#     :param: logits, two dim tensor [s, v].
-#     :return: List[dict]
-#     """
-#     assert min_n <= max_n
-#     assert len(logits.shape) == 2
-#     probs = torch.softmax(logits, dim=-1)
-#     values, indices = torch.topk(probs, k=max_n)
-#     results = []
-#     for vas, ins, lgs in zip(values, indices, logits):
-#         end_index = 0
-#         accum = 0
-#         for v in vas:
-#             accum += v
-#             end_index += 1
-#             if accum >= p:
-#                 break
-#         if end_index < min_n:
-#             end_index = min_n
-#         result = {}
-#         for i in range(end_index):
-#             result[int(ins[i])] = round(float(lgs[ins[i]]), 6)
-#         results.append(result)
-#     return results
-
-
-# def reconstruct_logits_from_dict(logits_dict: dict, vocab_size: int = 32000) -> torch.Tensor:
-#     # logits = torch.zeros(size=(vocab_size,))
-#     logits = torch.full(size=(vocab_size,), fill_value=-1e4, dtype=torch.float16)
-#     for index, lgt in logits_dict.items():
-#         index, lgt = int(index), float(lgt)
-#         logits[index] = lgt
-#     # normalize
-#     # logits = logits / torch.sum(logits)
-#     return logits  # [v]
-
-
-# def reconstruct_logits_from_dicts(
-#         logits_dicts: List[dict], vocab_size: int = 32000
-# ) -> torch.Tensor:
-#     """ Reconstruct logits with return shape [seq_length, vocab_size] """
-#     seq_len = len(logits_dicts)
-#     logits = torch.zeros(size=(seq_len, vocab_size))
-#     for i, logits_dict in enumerate(logits_dicts):
-#         logits[i, :] = reconstruct_logits_from_dict(logits_dict, vocab_size)
-#     return logits
-
-
 def powmax(tensor, exponent=1, dim=-1, eps=1e-12):
     """ Similar to softmax, perform power max on vectors along one specific dimension. """
     numerator = torch.pow(tensor, exponent=exponent)
     denominator = torch.sum(numerator, dim=dim, keepdim=True)
     return (numerator.float() / torch.clamp(denominator.float(), min=eps)).type_as(tensor)
+
+
+def masked_sum(x, mask=None, dim: int = None, keepdim: bool = False):
+    if type(x) is torch.Tensor:
+        if mask is None:
+            mask = torch.full_like(x, fill_value=True)
+        assert x.shape == mask.shape
+        return torch.sum(x * mask, dim=dim, keepdim=keepdim)
+    elif type(x) is np.ndarray:
+        if mask is None:
+            mask = np.full_like(x, fill_value=True)
+        assert x.shape == mask.shape
+        return np.sum(x * mask, axis=dim, keepdims=keepdim)
+    else:
+        raise TypeError(type(x))
 
 
 def masked_mean(x, mask=None, dim: int = None, keepdim: bool = False):
@@ -284,7 +213,7 @@ def masked_mean(x, mask=None, dim: int = None, keepdim: bool = False):
         mask_sum = mask_sum.astype(x.dtype)
         return np.sum(x * mask, axis=dim, keepdims=keepdim) / mask_sum
     else:
-        raise TypeError
+        raise TypeError(type(x))
 
 
 def masked_std(x, mask=None, dim: int = -1, keepdim: bool = False, eps: float = 1e-12):
@@ -312,6 +241,15 @@ def masked_std(x, mask=None, dim: int = -1, keepdim: bool = False, eps: float = 
             ) / (np.sum(mask, axis=dim, keepdims=keepdim) + eps)
         )
         return std
+    else:
+        raise TypeError
+
+
+def normalize(x, dim: int = -1):
+    if type(x) is torch.Tensor:
+        return (x - torch.mean(x, dim=dim, keepdim=True)) / torch.std(x, dim=dim, keepdim=True)
+    elif type(x) is np.ndarray:
+        return (x - np.mean(x, axis=dim, keepdims=True)) / np.std(x, axis=dim, keepdims=True)
     else:
         raise TypeError
 
@@ -415,20 +353,22 @@ def create_lco_log_target(old_logits: torch.Tensor, advantages: torch.Tensor, be
 
 @torch.no_grad()
 def estimate_vocab_adv(
-        old_logits: torch.Tensor, advantages: torch.Tensor, actions: torch.Tensor
+        old_logits: torch.Tensor, advantages: torch.Tensor, advantage_indices: torch.Tensor
 ) -> torch.Tensor:
     """
     Estimate the missing values of vocab-size advantages according minimizing derivative principle.
     :param old_logits: [..., vocab_size]
     :param advantages: [..., known_size]
-    :param actions: [..., known_size]
+    :param advantage_indices: [..., known_size]
     :return: estimated advantages with shape of [..., vocab_size]
     """
-    old_probs = torch.gather(torch.softmax(old_logits, dim=-1), dim=-1, index=actions)
+    assert len(old_logits.shape) == len(advantages.shape)
+    assert advantage_indices.shape == advantages.shape
+    old_probs = torch.gather(torch.softmax(old_logits, dim=-1), dim=-1, index=advantage_indices)
     advantages = advantages * (1 - old_probs)  # smoothing
     estimated_adv = - torch.sum(old_probs * advantages, dim=-1) / torch.clamp(1 - old_probs.sum(-1), min=0.1)
     estimated_adv = torch.repeat_interleave(estimated_adv.unsqueeze(-1), repeats=old_logits.shape[-1], dim=-1)
-    estimated_adv[torch.arange(estimated_adv.shape[0])[:, None], actions] = advantages
+    estimated_adv[torch.arange(estimated_adv.shape[0])[:, None], advantage_indices] = advantages
     return estimated_adv
 
 
@@ -439,79 +379,6 @@ def load_safetensors(f: str) -> dict:
         for k in reader.keys():
             state_dict[k] = reader.get_tensor(k)
     return state_dict
-
-
-# def merge_lora_checkpoints(
-#         ckpt_dir,
-#         world_size=8,
-#         layers=32
-# ):
-#     """ Merge lora checkpoint. """
-#     checkpoints = sorted(Path(ckpt_dir).glob("*.pth"))
-#     state_dicts = []
-#     for checkpoint in checkpoints:
-#         state_dicts.append(torch.load(checkpoint, map_location='cpu'))
-#
-#     with torch.no_grad():
-#         for i in range(layers):
-#             for j in range(world_size):
-#                 for wx in ['wq', 'wk', 'wv', 'w1', 'w3', 'wo', 'w2']:
-#                     module = 'feed_forward' if wx in ['w1', 'w2', 'w3'] else 'attention'
-#                     w = state_dicts[j][f"layers.{i}.{module}.{wx}.weight"]
-#                     a = state_dicts[j].pop(f"layers.{i}.{module}.lora_a_{wx}.weight")
-#                     b = state_dicts[j].pop(f"layers.{i}.{module}.lora_b_{wx}.weight")
-#                     state_dicts[j][f"layers.{i}.{module}.{wx}.weight"] = (w + b @ a).clone().to(w.dtype)
-#         # output
-#         for j in range(world_size):
-#             w = state_dicts[j][f"output.weight"]
-#             a = state_dicts[j].pop(f"lora_a_output.weight")
-#             b = state_dicts[j].pop(f"lora_b_output.weight")
-#             state_dicts[j][f"output.weight"] = (w + b @ a).clone().to(w.dtype)
-#
-#     saved_path = os.path.join(ckpt_dir, 'merged')
-#     print(f"Saving checkpoint to {saved_path} ......")
-#     for rank in trange(world_size):
-#         os.makedirs(saved_path, exist_ok=True)
-#         torch.save(state_dicts[rank], os.path.join(ckpt_dir, 'merged', f'consolidated.0{rank}.pth'))
-
-
-# def masked_normalize(x: Union[torch.Tensor, np.ndarray], masks: Union[torch.Tensor, np.ndarray] = None):
-#     """ mean to be 0, std to be 1 """
-#     if type(x) is torch.Tensor:
-#         bzs = x.shape[0]
-#         if masks is None:
-#             masks = torch.full_like(x, fill_value=True, dtype=torch.bool)
-#         for i in range(bzs):
-#             data = x[i][masks[i]]
-#             x[i][masks[i]] = (data - data.mean()) / (data.std() + 1e-8)
-#         return x
-#     elif type(x) is np.ndarray:
-#         bzs = x.shape[0]
-#         if masks is None:
-#             masks = np.full_like(x, fill_value=True, dtype=np.bool_)
-#         for i in range(bzs):
-#             data = x[i][masks[i]]
-#             x[i][masks[i]] = (data - data.mean()) / (data.std() + 1e-8)
-#         return x
-#     else:
-#         raise TypeError('Unknown type: ', type(x))
-
-
-# def clamp(x: torch.Tensor, disable: bool = False) -> torch.Tensor:
-#     """
-#     Clamp inf values to enable fp16 training.
-#     Will slow down speed, disable it when you don't need it.
-#     """
-#     if disable or not x.requires_grad:
-#         return x
-#     if x.dtype == torch.float16:
-#         clamp_value = torch.where(
-#             torch.isinf(x).any(),
-#             torch.finfo(x.dtype).max - 1000,
-#             torch.finfo(x.dtype).max
-#         ).item()
-#         x = torch.clamp(x, min=-clamp_value, max=clamp_value)
-#     return x
 
 
 def apply_lora(x: torch.Tensor, lora_a: torch.nn.Module, lora_b: torch.nn.Module):
@@ -553,25 +420,6 @@ def convert_dataloader_data_to_list(data: dict) -> List[dict]:
             result_dict[k] = v[i]
         result_dicts.append(result_dict)
     return result_dicts
-
-
-# def logits_assignment(
-#         logits: torch.Tensor, indices: torch.Tensor, targets: Union[torch.Tensor, int, float]
-# ) -> torch.Tensor:
-#     """
-#     assignment targets to logits according to the indices.
-#     :param logits: [b, s, v]
-#     :param indices: [b, s]
-#     :param targets: [b, s] or scalar
-#     :return: modified logits.
-#     """
-#     assert len(logits.shape) == 3
-#     assert len(indices.shape) == 2
-#     batch_indices, sequence_indices = torch.meshgrid(
-#         torch.arange(logits.shape[0]), torch.arange(logits.shape[1]), indexing="ij"
-#     )
-#     logits[batch_indices, sequence_indices, indices] = targets
-#     return logits
 
 
 def print_current_func_args():

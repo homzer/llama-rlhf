@@ -26,13 +26,13 @@ class ParallelLCOTrainerForCausalLM(ParallelTrainer):
         self.policy.train()
 
         obs = rollout_data.obs.to(self.policy.device())
-        actions = rollout_data.actions.to(self.policy.device())
         action_masks = rollout_data.action_masks.to(self.policy.device())
         advantages = rollout_data.advantages.to(self.policy.device())
+        advantage_indices = rollout_data.advantage_indices.to(self.policy.device())
         old_logits = rollout_data.logits.to(self.policy.device())
 
-        actions = actions.view(-1)[action_masks.view(-1)]
-        advantages = advantages.view(-1)[action_masks.view(-1)]
+        advantages = advantages.view(-1, advantages.shape[-1])[action_masks.view(-1)]
+        advantage_indices = advantage_indices.view(-1, advantage_indices.shape[-1])[action_masks.view(-1)]
         old_logits = old_logits.view(-1, old_logits.shape[-1])[action_masks.view(-1)]
         pos_advantage_masks = advantages > 0
         neg_advantage_masks = ~ pos_advantage_masks
@@ -40,7 +40,7 @@ class ParallelLCOTrainerForCausalLM(ParallelTrainer):
         logits = self.policy.forward(obs).logits
         logits = logits.view(-1, logits.shape[-1])[action_masks.view(-1)]
 
-        advantages = estimate_vocab_adv(old_logits, advantages.unsqueeze(-1), actions.unsqueeze(-1))
+        advantages = estimate_vocab_adv(old_logits, advantages, advantage_indices)
 
         # compute loss for positive advantage tokens
         pos_log_targets = create_lco_log_target(
