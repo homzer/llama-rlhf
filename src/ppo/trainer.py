@@ -313,7 +313,7 @@ class ParallelDPOTrainerForCausalLM(ParallelTrainer):
             accumulation_steps=accumulation_steps
         )
         self.policy = policy
-        self.criterion = DPOLoss(beta=beta)
+        self.criterion = DPOLoss(beta=beta, reduction="sum")
         # self.criterion = DPOLossV0(beta=beta)
 
     def forward(self, rollout_data):
