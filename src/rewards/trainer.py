@@ -19,6 +19,7 @@ from src.rewards.strategy import (
 )
 from src.tokenizers import Tokenizer
 from src.trainer import ParallelVerifierTrainer, ParallelModelTrainer, ParallelTrainer
+from src.utils import masked_mean
 
 
 class ParallelPointwiseVerifierTrainerForLastToken(ParallelVerifierTrainer):
@@ -396,7 +397,7 @@ class ParallelVerifierTrainerForDPO(ParallelTrainer):
             save_optim=save_optim,
             accumulation_steps=accumulation_steps
         )
-        self.criterion = DPOLoss()
+        self.criterion = DPOLoss(beta=0.1, reduction="sum")
         self.predictions = []
 
     def forward(self, rollout_data):
@@ -411,19 +412,12 @@ class ParallelVerifierTrainerForDPO(ParallelTrainer):
         ref_chosen_logprobs = rollout_data.ref_chosen_logprobs.to(self.model.device())
         ref_rejected_logprobs = rollout_data.ref_rejected_logprobs.to(self.model.device())
 
-        chosen_actions = chosen_actions.view(-1)[chosen_action_masks.view(-1)]
-        rejected_actions = rejected_actions.view(-1)[rejected_action_masks.view(-1)]
-        ref_chosen_logprobs = ref_chosen_logprobs.view(-1)[chosen_action_masks.view(-1)]
-        ref_rejected_logprobs = ref_rejected_logprobs.view(-1)[rejected_action_masks.view(-1)]
-
         chosen_logits = self.model.forward(chosen_obs).logits
-        chosen_logits = chosen_logits.view(-1, chosen_logits.shape[-1])[chosen_action_masks.view(-1)]
         chosen_action_logprobs = torch.gather(
             torch.log_softmax(chosen_logits, dim=-1), dim=-1, index=chosen_actions.unsqueeze(-1)
         ).squeeze(-1)
 
         rejected_logits = self.model.forward(rejected_obs).logits
-        rejected_logits = rejected_logits.view(-1, rejected_logits.shape[-1])[rejected_action_masks.view(-1)]
         rejected_action_logprobs = torch.gather(
             torch.log_softmax(rejected_logits, dim=-1), dim=-1, index=rejected_actions.unsqueeze(-1)
         ).squeeze(-1)
@@ -432,14 +426,19 @@ class ParallelVerifierTrainerForDPO(ParallelTrainer):
             chosen_logprobs=chosen_action_logprobs,
             rejected_logprobs=rejected_action_logprobs,
             ref_chosen_logprobs=ref_chosen_logprobs,
-            ref_rejected_logprobs=ref_rejected_logprobs
+            ref_rejected_logprobs=ref_rejected_logprobs,
+            chosen_masks=chosen_action_masks,
+            rejected_masks=rejected_action_masks
         )
         self.backward(loss)
 
-        self.predictions.append(
-            (chosen_action_logprobs.mean() - ref_chosen_logprobs.mean()) >
-            (rejected_action_logprobs.mean() - ref_rejected_logprobs.mean())
-        )
+        # logging
+        chosen_logprobs = masked_mean(chosen_action_logprobs, chosen_action_masks, dim=-1)
+        rejected_logprobs = masked_mean(rejected_action_logprobs, rejected_action_masks, dim=-1)
+        ref_chosen_logprobs = masked_mean(ref_chosen_logprobs, chosen_action_masks, dim=-1)
+        ref_rejected_logprobs = masked_mean(ref_rejected_logprobs, rejected_action_masks, dim=-1)
+        logprobs = (chosen_logprobs - ref_chosen_logprobs) - (rejected_logprobs - ref_rejected_logprobs)
+        self.predictions.extend([x > 0 for x in logprobs])
         Output = collections.namedtuple('Output', ['loss'])
         return Output(loss=loss)
 
