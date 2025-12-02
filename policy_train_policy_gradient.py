@@ -13,14 +13,11 @@ from src.modeling import get_parallel_model
 from src.parallel.initialize import setup_model_parallel, set_barrier, get_rank
 from src.parallel.optimizer import ParallelOptimizer
 from src.ppo.buffer import PPORolloutBuffer, RolloutBuffer
-from src.ppo.trainer import (
-    ParallelPolicyGradientTrainerForCausalLM,
-    ParallelGRPOTrainerForCausalLM,
-)
-from src.ppo.trainer_logits_convex import ParallelPolicyGradientLogitsConvexTrainerForCausalLM
+from src.ppo.trainer import ParallelPolicyGradientTrainerForCausalLM
 from src.utils import json_load, print_current_func_args
 
 
+# TODO: deprecated
 def re_scoring_eos_rewards(buffer: PPORolloutBuffer | RolloutBuffer):
     # Setting the reward of [EOS] token to average reward of the sequence.
     if isinstance(buffer, PPORolloutBuffer):
@@ -52,10 +49,6 @@ def train_policy_gradient(
         inner_epochs: int,
         save_dir: str,
         max_batch_size: int,
-        train_strategy: str = "vanilla",  # "ratio" or "convex"
-        rho_pos: float = 1.8,
-        rho_neg: float = 0.9,
-        clip_range: float = 0.2,
         save_optim: bool = False,
         accumulation_steps: int = 1,
         max_num_ckpts: int = None
@@ -70,20 +63,12 @@ def train_policy_gradient(
         lora_dtype=lora_dtype
     )
     optimizer = ParallelOptimizer(torch.optim.Adam(policy.parameters(), lr=lr))
-    if train_strategy == "vanilla":
-        print("Using ParallelPolicyGradientTrainerForCausalLM")
-        trainer = ParallelPolicyGradientTrainerForCausalLM(
-            policy, optimizer, save_optim=save_optim, accumulation_steps=accumulation_steps)
-    elif train_strategy == "ratio":
-        print("Using ParallelGRPOTrainerForCausalLM")
-        trainer = ParallelGRPOTrainerForCausalLM(
-            policy, optimizer, clip_range=clip_range, save_optim=save_optim, accumulation_steps=accumulation_steps)
-    elif train_strategy == "convex":
-        print("Using ParallelPolicyGradientConvexBoundedTrainerForCausalLM")
-        trainer = ParallelPolicyGradientLogitsConvexTrainerForCausalLM(
-            policy, optimizer, rho_pos=rho_pos, rho_neg=rho_neg, save_optim=save_optim, accumulation_steps=accumulation_steps)
-    else:
-        raise ValueError(train_strategy)
+    trainer = ParallelPolicyGradientTrainerForCausalLM(
+        policy=policy,
+        optimizer=optimizer,
+        save_optim=save_optim,
+        accumulation_steps=accumulation_steps
+    )
 
     trainer.load_model(policy_ckpt_dir) if (
             epoch == 0
@@ -97,7 +82,7 @@ def train_policy_gradient(
             if trainer.step % 100 == 0:
                 print(f'--------- STEP {trainer.step} OF {timer.total} ---------')
                 print(f'Loss: {trainer_outputs.loss}')
-                print(f'Rewards: {trainer_outputs.rewards}')
+                print(f'Advantages: {trainer_outputs.advantages}')
     trainer.save(os.path.join(save_dir, "epoch-%03d" % (epoch + 1)))
     if max_num_ckpts is not None and (epoch + 1 - max_num_ckpts) > 0:
         rm_dir = os.path.join(save_dir, "epoch-%03d" % (epoch + 1 - max_num_ckpts))
@@ -111,6 +96,82 @@ def train_policy_gradient(
     torch.cuda.empty_cache()
     gc.collect()
     set_barrier()
+
+
+# def train_policy_gradient(
+#         rollout_buffer: RolloutBuffer,
+#         policy_ckpt_dir: str,
+#         policy_model_type: str,
+#         policy_config_file: str,
+#         policy_tokenizer_file: str,
+#         max_seq_len: int,
+#         lora_rank: int,
+#         dtype: str,
+#         lora_dtype: str,
+#         lr: float,
+#         epoch: int,
+#         inner_epochs: int,
+#         save_dir: str,
+#         max_batch_size: int,
+#         train_strategy: str = "vanilla",  # "ratio" or "convex"
+#         rho_pos: float = 1.8,
+#         rho_neg: float = 0.9,
+#         clip_range: float = 0.2,
+#         save_optim: bool = False,
+#         accumulation_steps: int = 1,
+#         max_num_ckpts: int = None
+# ):
+#     policy, policy_tokenizer = get_parallel_model(
+#         model_type=policy_model_type,
+#         config_file=policy_config_file,
+#         max_seq_len=max_seq_len,
+#         tokenizer_file=policy_tokenizer_file,
+#         lora_rank=lora_rank,
+#         dtype=dtype,
+#         lora_dtype=lora_dtype
+#     )
+#     optimizer = ParallelOptimizer(torch.optim.Adam(policy.parameters(), lr=lr))
+#     if train_strategy == "vanilla":
+#         print("Using ParallelPolicyGradientTrainerForCausalLM")
+#         trainer = ParallelPolicyGradientTrainerForCausalLM(
+#             policy, optimizer, save_optim=save_optim, accumulation_steps=accumulation_steps)
+#     elif train_strategy == "ratio":
+#         print("Using ParallelGRPOTrainerForCausalLM")
+#         trainer = ParallelGRPOTrainerForCausalLM(
+#             policy, optimizer, clip_range=clip_range, save_optim=save_optim, accumulation_steps=accumulation_steps)
+#     elif train_strategy == "convex":
+#         print("Using ParallelPolicyGradientConvexBoundedTrainerForCausalLM")
+#         trainer = ParallelPolicyGradientLogitsConvexTrainerForCausalLM(
+#             policy, optimizer, rho_pos=rho_pos, rho_neg=rho_neg, save_optim=save_optim, accumulation_steps=accumulation_steps)
+#     else:
+#         raise ValueError(train_strategy)
+#
+#     trainer.load_model(policy_ckpt_dir) if (
+#             epoch == 0
+#     ) else trainer.load(os.path.join(save_dir, "epoch-%03d" % epoch))
+#     print('Policy training ...')
+#     timer = Timer(total=(rollout_buffer.size() // max_batch_size) * inner_epochs, episode=100)
+#     for inner_epoch in range(inner_epochs):
+#         for data in rollout_buffer.get(max_batch_size, shuffle=True, output_tensor=True):
+#             timer.step()
+#             trainer_outputs = trainer.forward(data)
+#             if trainer.step % 100 == 0:
+#                 print(f'--------- STEP {trainer.step} OF {timer.total} ---------')
+#                 print(f'Loss: {trainer_outputs.loss}')
+#                 print(f'Rewards: {trainer_outputs.rewards}')
+#     trainer.save(os.path.join(save_dir, "epoch-%03d" % (epoch + 1)))
+#     if max_num_ckpts is not None and (epoch + 1 - max_num_ckpts) > 0:
+#         rm_dir = os.path.join(save_dir, "epoch-%03d" % (epoch + 1 - max_num_ckpts))
+#         if get_rank() == 0 and os.path.exists(rm_dir):
+#             shutil.rmtree(rm_dir)
+#
+#     policy.cpu()
+#     del policy
+#     del optimizer
+#     del trainer
+#     torch.cuda.empty_cache()
+#     gc.collect()
+#     set_barrier()
 
 
 def run(

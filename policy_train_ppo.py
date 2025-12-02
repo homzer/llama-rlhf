@@ -1,5 +1,6 @@
 import gc
 import os
+import shutil
 
 import fire
 import torch
@@ -8,7 +9,7 @@ from src.dataset import JsonDataset, ChatTemplateDataset
 from src.entities import Timer, IterationHandler
 from src.modeling import get_parallel_model, get_parallel_verifier
 from src.parallel.data_parallel.dataloader import ParallelDataLoader
-from src.parallel.initialize import setup_model_parallel, set_barrier
+from src.parallel.initialize import setup_model_parallel, set_barrier, get_rank
 from src.parallel.optimizer import ParallelOptimizer
 from src.ppo.buffer import (
     CriticRolloutBuffer,
@@ -17,7 +18,7 @@ from src.ppo.buffer import (
     RolloutBuffer
 )
 from src.ppo.collector import CriticBufferCollector, LogitsBufferCollectorV0, ActorBufferCollector
-from src.ppo.trainer import ParallelPPOActorTrainerForCausalLM, ParallelPPOCriticTrainerForCausalLM
+from src.ppo.trainer import ParallelPPOCriticTrainerForCausalLM, ParallelPPOTrainerForCausalLM
 from src.utils import json_load, print_current_func_args
 
 
@@ -226,23 +227,24 @@ def collect_verifier_buffer(
 
 
 def train_actor(
-        actor_model_type: str,
-        actor_config_file: str,
-        max_seq_len: int,
-        actor_tokenizer_file: str,
-        actor_lora_rank: int,
-        dtype: str,
-        actor_lora_dtype: str,
-        lr: float,
-        epoch: int,
+        rollout_buffer: RolloutBuffer,
         actor_ckpt_dir: str,
         actor_save_dir: str,
-        rollout_buffer: PPORolloutBuffer,
+        actor_model_type: str,
+        actor_config_file: str,
+        actor_tokenizer_file: str,
+        actor_lora_rank: int,
+        actor_lora_dtype: str,
+        dtype: str,
+        max_seq_len: int,
+        lr: float,
+        epoch: int,
         actor_max_batch_size: int,
         inner_epochs: int,
         clip_range: float = 0.2,
         save_optim: bool = False,
         accumulation_steps: int = 1,
+        max_num_ckpts: int = None
 ):
     actor, actor_tokenizer = get_parallel_model(
         model_type=actor_model_type,
@@ -254,23 +256,31 @@ def train_actor(
         lora_dtype=actor_lora_dtype
     )
     actor_optimizer = ParallelOptimizer(torch.optim.Adam(actor.parameters(), lr=lr))
-    actor_trainer = ParallelPPOActorTrainerForCausalLM(
-        actor, actor_optimizer, clip_range=clip_range, save_optim=save_optim, accumulation_steps=accumulation_steps)
+    actor_trainer = ParallelPPOTrainerForCausalLM(
+        policy=actor,
+        optimizer=actor_optimizer,
+        clip_range=clip_range,
+        save_optim=save_optim,
+        accumulation_steps=accumulation_steps
+    )
     actor_trainer.load_model(actor_ckpt_dir) if (
             epoch == 0
     ) else actor_trainer.load(os.path.join(actor_save_dir, "epoch-%03d" % epoch))
     print('Actor training ...')
-    timer = Timer(total=(len(rollout_buffer) // actor_max_batch_size) * inner_epochs, episode=100)
+    timer = Timer(total=(rollout_buffer.size() // actor_max_batch_size) * inner_epochs, episode=100)
     for inner_epoch in range(inner_epochs):
-        for data in rollout_buffer.get(actor_max_batch_size):
+        for data in rollout_buffer.get(actor_max_batch_size, shuffle=True, output_tensor=True):
             timer.step()
             trainer_outputs = actor_trainer.forward(data)
             if actor_trainer.step % 100 == 0:
                 print(f'--------- STEP {actor_trainer.step} OF {timer.total} ---------')
-                print('Loss: ', trainer_outputs.loss)
-                print('Advantages: ', trainer_outputs.advantages)
-                print('KL Divergence: ', trainer_outputs.kl)
+                print(f'Loss: {trainer_outputs.loss}')
+                print(f'Advantages: {trainer_outputs.advantages}')
     actor_trainer.save(os.path.join(actor_save_dir, "epoch-%03d" % (epoch + 1)))
+    if max_num_ckpts is not None and (epoch + 1 - max_num_ckpts) > 0:
+        rm_dir = os.path.join(actor_save_dir, "epoch-%03d" % (epoch + 1 - max_num_ckpts))
+        if get_rank() == 0 and os.path.exists(rm_dir):
+            shutil.rmtree(rm_dir)
 
     actor.cpu()
     del actor

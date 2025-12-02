@@ -2,22 +2,21 @@ import gc
 import os
 
 import fire
-import numpy as np
 import torch
 
-from policy_train_lco import collect_logits_buffer, train_lco
-from policy_train_ppo import collect_actor_buffer
+from policy_train_ppo import collect_actor_buffer, train_actor
+from policy_train_ppo_with_evaluate import evaluate_actor
 from src.dataset import JsonDataset
 from src.entities import Timer, IterationHandler
 from src.modeling import get_parallel_model
 from src.parallel.initialize import setup_model_parallel, set_barrier
-from src.ppo.buffer import RolloutBuffer, LogitsRolloutBuffer
-from src.ppo.generator import ActorLogitsGeneratorForCausalLM
-from src.utils import json_load, print_current_func_args, normalize
+from src.ppo.buffer import RolloutBuffer, CriticRolloutBuffer
+from src.ppo.collector import ActorForwardBufferCollector
+from src.utils import json_load, print_current_func_args
 
 
 def collect_verifier_buffer(
-        logits_rollout_buffer: LogitsRolloutBuffer,
+        policy_rollout_buffer: RolloutBuffer,
         verifier_model_type: str,
         verifier_ckpt_dir: str,
         verifier_config_file: str,
@@ -26,7 +25,7 @@ def collect_verifier_buffer(
         max_seq_len: int,
         max_forward_batch_size: int,
         dtype: str,
-) -> RolloutBuffer:
+) -> CriticRolloutBuffer:
     verifier, verifier_tokenizer = get_parallel_model(
         model_type=verifier_model_type,
         config_file=verifier_config_file,
@@ -35,30 +34,24 @@ def collect_verifier_buffer(
         dtype=dtype
     )
     verifier.load(verifier_ckpt_dir)
-    verifier_buffer_generator = ActorLogitsGeneratorForCausalLM(
-        model=verifier,
+    verifier_buffer_collector = ActorForwardBufferCollector(
+        actor=verifier,
         tokenizer=verifier_tokenizer,
         max_seq_len=max_seq_len
     )
-    verifier_rollout_buffer = RolloutBuffer()
-    timer = Timer(total=logits_rollout_buffer.size() // max_forward_batch_size, episode=10)
-    for data in logits_rollout_buffer.get(max_forward_batch_size):
+    verifier_rollout_buffer = CriticRolloutBuffer()
+    timer = Timer(total=policy_rollout_buffer.size() // max_forward_batch_size, episode=10)
+    for data in policy_rollout_buffer.get(max_forward_batch_size):
         timer.step()
-        generator_outputs = verifier_buffer_generator.forward(data.instructions, data.responses)
-        verifier_rollout_buffer.extend(RolloutBuffer(
-            advantages=np.take_along_axis(
-                torch.log_softmax(generator_outputs.logits, dim=-1).cpu().numpy(),
-                indices=data["logits_indices"],
-                axis=-1
-            ),
-            advantage_indices=data["logits_indices"],
-            actions=data["actions"],
-            action_masks=data["action_masks"]
+        rollout_buffer = verifier_buffer_collector.forward(data.instructions, data.responses)
+        verifier_rollout_buffer.extend(CriticRolloutBuffer(
+            scores=rollout_buffer["action_logprobs"],
+            action_masks=rollout_buffer["action_masks"]
         ))
 
     verifier.cpu()
     del verifier
-    del verifier_buffer_generator
+    del verifier_buffer_collector
     torch.cuda.empty_cache()
     gc.collect()
     set_barrier()
@@ -71,41 +64,33 @@ def collect_verifier_buffer(
         dtype=dtype
     )
     reference.load(reference_ckpt_dir)
-    reference_buffer_generator = ActorLogitsGeneratorForCausalLM(
-        model=reference,
+    reference_buffer_collector = ActorForwardBufferCollector(
+        actor=reference,
         tokenizer=reference_tokenizer,
         max_seq_len=max_seq_len
     )
     reference_rollout_buffer = RolloutBuffer()
-    timer = Timer(total=logits_rollout_buffer.size() // max_forward_batch_size, episode=10)
-    for data in logits_rollout_buffer.get(max_forward_batch_size):
+    timer = Timer(total=policy_rollout_buffer.size() // max_forward_batch_size, episode=10)
+    for data in policy_rollout_buffer.get(max_forward_batch_size):
         timer.step()
-        generator_outputs = reference_buffer_generator.forward(data.instructions, data.responses)
-        reference_rollout_buffer.extend(RolloutBuffer(
-            advantages=np.take_along_axis(
-                torch.log_softmax(generator_outputs.logits, dim=-1).cpu().numpy(),
-                indices=data["logits_indices"],
-                axis=-1
-            ),
-        ))
+        reference_rollout_buffer.extend(
+            reference_buffer_collector.forward(data.instructions, data.responses)
+        )
 
     reference.cpu()
     del reference
-    del reference_buffer_generator
+    del reference_buffer_collector
     torch.cuda.empty_cache()
     gc.collect()
     set_barrier()
 
-    verifier_rollout_buffer["advantages"] -= reference_rollout_buffer["advantages"]
-    # advantage normalization
-    verifier_rollout_buffer["advantages"] = normalize(verifier_rollout_buffer["advantages"], dim=-1)
+    verifier_rollout_buffer["scores"] -= reference_rollout_buffer["action_logprobs"]
     return verifier_rollout_buffer
 
 
 def run(
         train_file: str,
         save_dir: str,
-        log_dir: str,
         policy_ckpt_dir: str,
         policy_model_type: str,
         verifier_ckpt_dir: str,
@@ -115,14 +100,14 @@ def run(
         policy_tokenizer_file: str = None,
         verifier_config_file: str = None,
         verifier_tokenizer_file: str = None,
+        task: str = None,
+        label_file: str = None,
         lora_rank: int = -1,
         lora_dtype: str = "bfloat16",
         max_batch_size: int = 1,
         max_generate_batch_size: int = 48,
         max_forward_batch_size: int = 24,
         max_seq_len: int = 1024,
-        beta: float = 10.0,
-        logits_topk: int = 5,
         temperature: float = 1.0,
         top_p: float = 1.0,
         num_samples_per_prompt: int = 1,
@@ -133,7 +118,9 @@ def run(
         dtype: str = "bfloat16",
         begin_epoch: int = 0,
         use_chat_template: bool = False,
+        log_dir: str = None,
         seed: int = None,
+        clip_range: float = 0.2,
         save_optim: bool = False,
         accumulation_steps: int = 1,
         max_num_ckpts: int = None,
@@ -143,7 +130,7 @@ def run(
     parallel_infos = setup_model_parallel(
         seed=seed,
         log_dir=log_dir,
-        log_mode="w" if begin_epoch == 0 else "a",
+        log_mode='w' if begin_epoch == 0 else 'a',
         model_parallel_size=model_parallel_size,
         sequence_parallel_size=sequence_parallel_size
     )
@@ -162,12 +149,12 @@ def run(
         policy_rollout_buffer = collect_actor_buffer(
             actor_model_type=policy_model_type,
             actor_config_file=policy_config_file,
-            actor_tokenizer_file=policy_tokenizer_file,
-            actor_ckpt_dir=policy_ckpt_dir,
-            actor_save_dir=save_dir,
             max_seq_len=max_seq_len,
+            actor_tokenizer_file=policy_tokenizer_file,
             dtype=dtype,
+            actor_ckpt_dir=policy_ckpt_dir,
             epoch=epoch,
+            actor_save_dir=save_dir,
             use_chat_template=use_chat_template,
             dataset=dataset,
             max_generate_batch_size=max_generate_batch_size,
@@ -176,22 +163,9 @@ def run(
             num_samples_per_prompt=num_samples_per_prompt
         )
 
-        # collecting logits buffer
-        logits_rollout_buffer = collect_logits_buffer(
-            policy_rollout_buffer=policy_rollout_buffer,
-            policy_model_type=policy_model_type,
-            policy_ckpt_dir=policy_ckpt_dir,
-            policy_config_file=policy_config_file,
-            policy_tokenizer_file=policy_tokenizer_file,
-            max_seq_len=max_seq_len,
-            max_forward_batch_size=max_forward_batch_size,
-            dtype=dtype,
-            logits_topk=logits_topk
-        )
-
         # collecting verifier buffer
         verifier_rollout_buffer = collect_verifier_buffer(
-            logits_rollout_buffer=logits_rollout_buffer,
+            policy_rollout_buffer=policy_rollout_buffer,
             verifier_model_type=verifier_model_type,
             verifier_ckpt_dir=verifier_ckpt_dir,
             verifier_config_file=verifier_config_file,
@@ -201,33 +175,58 @@ def run(
             max_forward_batch_size=max_forward_batch_size,
             dtype=dtype
         )
+        print(f"Average Rewards: {verifier_rollout_buffer.mean()}")
+        verifier_rollout_buffer.normalize()
 
-        logits_rollout_buffer["advantages"] = verifier_rollout_buffer["advantages"]
-        logits_rollout_buffer["advantage_indices"] = verifier_rollout_buffer["advantage_indices"]
+        policy_rollout_buffer["advantages"] = verifier_rollout_buffer["scores"]
+        rollout_buffer = RolloutBuffer(
+            obs=policy_rollout_buffer["obs"],
+            actions=policy_rollout_buffer["actions"],
+            action_masks=policy_rollout_buffer["action_masks"],
+            action_logprobs=policy_rollout_buffer["action_logprobs"],
+            advantages=verifier_rollout_buffer["scores"]
+        )
 
-        train_lco(
-            rollout_buffer=logits_rollout_buffer,
-            policy_ckpt_dir=policy_ckpt_dir,
-            policy_model_type=policy_model_type,
-            policy_config_file=policy_config_file,
-            policy_tokenizer_file=policy_tokenizer_file,
+        train_actor(
+            rollout_buffer=rollout_buffer,
+            actor_model_type=policy_model_type,
+            actor_config_file=policy_config_file,
+            actor_tokenizer_file=policy_tokenizer_file,
+            actor_ckpt_dir=policy_ckpt_dir,
+            actor_save_dir=save_dir,
             max_seq_len=max_seq_len,
+            actor_lora_rank=lora_rank,
+            actor_lora_dtype=lora_dtype,
             dtype=dtype,
-            lora_rank=lora_rank,
-            lora_dtype=lora_dtype,
             lr=lr,
             epoch=epoch,
+            actor_max_batch_size=max_batch_size,
             inner_epochs=inner_epochs,
-            save_dir=save_dir,
-            max_batch_size=max_batch_size,
-            beta=beta,
-            max_num_ckpts=max_num_ckpts,
+            clip_range=clip_range,
             save_optim=save_optim,
-            accumulation_steps=accumulation_steps
+            accumulation_steps=accumulation_steps,
+            max_num_ckpts=max_num_ckpts
         )
 
         if parallel_infos.global_rank == 0:
-            logits_rollout_buffer.save(os.path.join(log_dir, "epoch-%03d" % (epoch + 1)))
+            rollout_buffer.save(os.path.join(log_dir, "epoch-%03d" % (epoch + 1)))
+
+        if label_file is not None:
+            assert task is not None
+            evaluate_actor(
+                task=task,
+                label_file=label_file,
+                log_dir=log_dir,
+                actor_model_type=policy_model_type,
+                actor_config_file=policy_config_file,
+                max_seq_len=max_seq_len,
+                actor_tokenizer_file=policy_tokenizer_file,
+                dtype=dtype,
+                epoch=epoch,
+                actor_save_dir=save_dir,
+                max_generate_batch_size=max_generate_batch_size,
+                use_chat_template=use_chat_template
+            )
 
 
 if __name__ == '__main__':

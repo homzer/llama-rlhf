@@ -245,7 +245,7 @@ def masked_std(x, mask=None, dim: int = -1, keepdim: bool = False, eps: float = 
         raise TypeError
 
 
-def normalize(x, dim: int = -1):
+def normalize(x, dim: int = None):
     if type(x) is torch.Tensor:
         return (x - torch.mean(x, dim=dim, keepdim=True)) / torch.std(x, dim=dim, keepdim=True)
     elif type(x) is np.ndarray:

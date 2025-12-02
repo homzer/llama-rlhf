@@ -61,6 +61,60 @@ class PPOTrainerForCausalLM(Trainer):
         )
 
 
+class ParallelPPOTrainerForCausalLM(ParallelTrainer):
+    def __init__(
+            self,
+            policy: ParallelModelForCausalLM,
+            optimizer: torch.optim.Optimizer,
+            clip_range: float = 0.2,
+            save_optim: bool = False,
+            accumulation_steps: int = 1
+    ):
+        super().__init__(
+            model=policy,
+            optimizer=optimizer,
+            save_optim=save_optim,
+            accumulation_steps=accumulation_steps
+        )
+        self.policy = policy
+        self.clip_range = clip_range
+
+    def forward(self, rollout_data):
+        self.policy.train()
+
+        obs = rollout_data.obs.to(self.policy.device())
+        actions = rollout_data.actions.to(self.policy.device())
+        action_masks = rollout_data.action_masks.to(self.policy.device())
+        advantages = rollout_data.advantages.to(self.policy.device())
+        old_action_logprobs = rollout_data.action_logprobs.to(self.policy.device())
+
+        actions = actions.view(-1)[action_masks.view(-1)]
+        advantages = advantages.view(-1)[action_masks.view(-1)]
+        old_action_logprobs = old_action_logprobs.view(-1)[action_masks.view(-1)]
+
+        logits = self.policy.forward(obs).logits
+        logits = logits.view(-1, logits.shape[-1])[action_masks.view(-1)]
+        action_logprobs = torch.gather(
+            torch.log_softmax(logits, dim=-1), dim=-1, index=actions.unsqueeze(-1)
+        ).squeeze(-1)
+
+        ratio = torch.exp(action_logprobs - old_action_logprobs)
+        # clipped surrogate loss
+        loss = advantages * ratio
+        if self.clip_range > 0:
+            clipped_loss = advantages * torch.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range)
+            loss = torch.min(loss, clipped_loss)
+        loss = - torch.mean(loss)
+
+        self.backward(loss)
+
+        Outputs = collections.namedtuple('Outputs', ['loss', 'advantages'])
+        return Outputs(
+            loss=loss.item(),
+            advantages=torch.mean(advantages).item(),
+        )
+
+
 class ParallelPPOActorTrainerForCausalLM(ParallelTrainer):
     def __init__(
             self,
@@ -148,9 +202,13 @@ class ParallelPolicyGradientTrainerForCausalLM(ParallelTrainer):
             save_optim: bool = False,
             accumulation_steps: int = 1
     ):
-        super().__init__(policy, optimizer, save_optim, accumulation_steps=accumulation_steps)
+        super().__init__(
+            model=policy,
+            optimizer=optimizer,
+            save_optim=save_optim,
+            accumulation_steps=accumulation_steps
+        )
         self.policy = policy
-        self.clip_range = 0.2
 
     def forward(self, rollout_data):
         self.policy.train()
@@ -158,26 +216,23 @@ class ParallelPolicyGradientTrainerForCausalLM(ParallelTrainer):
         obs = rollout_data.obs.to(self.policy.device())
         actions = rollout_data.actions.to(self.policy.device())
         action_masks = rollout_data.action_masks.to(self.policy.device())
-        rewards = rollout_data.rewards.to(self.policy.device())
+        advantages = rollout_data.advantages.to(self.policy.device())
+
+        actions = actions.view(-1)[action_masks.view(-1)]
+        advantages = advantages.view(-1)[action_masks.view(-1)]
 
         logits = self.policy.forward(obs).logits
-        rewards = rewards.to(logits.dtype)
-
+        logits = logits.view(-1, logits.shape[-1])[action_masks.view(-1)]
         action_logprobs = torch.gather(
             torch.log_softmax(logits, dim=-1), dim=-1, index=actions.unsqueeze(-1)
         ).squeeze(-1)
 
-        logging_log_probs = action_logprobs[0][action_masks[0]]
-        logging_rewards = rewards[0][action_masks[0]]
-
-        action_logprobs = torch.masked_select(action_logprobs.view(-1), action_masks.view(-1))
-        rewards = torch.masked_select(rewards.view(-1), action_masks.view(-1))
-        loss = - torch.mean(rewards * action_logprobs)
+        loss = - torch.mean(advantages * action_logprobs)
 
         self.backward(loss)
 
-        Outputs = collections.namedtuple('Outputs', ['loss', 'rewards', 'log_probs', 'token_rewards'])
-        return Outputs(loss=loss.item(), rewards=torch.mean(rewards).item(), log_probs=logging_log_probs, token_rewards=logging_rewards)
+        Outputs = collections.namedtuple('Outputs', ['loss', 'advantages'])
+        return Outputs(loss=loss.item(), advantages=torch.mean(advantages).item())
 
 
 class ParallelPolicyGradientGuiderTrainerForCausalLM(ParallelTrainer):
