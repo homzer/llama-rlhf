@@ -1,22 +1,18 @@
 import gc
 import os
-import shutil
 
 import fire
-import torch
 import numpy as np
+import torch
 
-from policy_train_lco import collect_logits_buffer
+from policy_train_lco import collect_logits_buffer, train_lco
 from policy_train_ppo import collect_actor_buffer
 from src.dataset import JsonDataset
 from src.entities import Timer, IterationHandler
 from src.modeling import get_parallel_model
-from src.parallel.initialize import setup_model_parallel, set_barrier, get_rank
-from src.parallel.optimizer import ParallelOptimizer
+from src.parallel.initialize import setup_model_parallel, set_barrier
 from src.ppo.buffer import RolloutBuffer, LogitsRolloutBuffer
-from src.ppo.collector import LogitsBufferCollector
 from src.ppo.generator import ActorLogitsGeneratorForCausalLM
-from src.ppo.trainer_logits_convex import ParallelLCOTrainerForCausalLM
 from src.utils import json_load, print_current_func_args, normalize
 
 
@@ -131,8 +127,6 @@ def run(
         begin_epoch: int = 0,
         use_chat_template: bool = False,
         seed: int = None,
-        use_last_token_reward: bool = False,
-        last_token_reward_only: bool = False,
         save_optim: bool = False,
         accumulation_steps: int = 1,
         max_num_ckpts: int = None,
@@ -204,6 +198,29 @@ def run(
         logits_rollout_buffer["advantages"] = verifier_rollout_buffer["advantages"]
         logits_rollout_buffer["advantage_indices"] = verifier_rollout_buffer["advantage_indices"]
 
+        train_lco(
+            rollout_buffer=logits_rollout_buffer,
+            policy_ckpt_dir=policy_ckpt_dir,
+            policy_model_type=policy_model_type,
+            policy_config_file=policy_config_file,
+            policy_tokenizer_file=policy_tokenizer_file,
+            max_seq_len=max_seq_len,
+            dtype=dtype,
+            lora_rank=lora_rank,
+            lora_dtype=lora_dtype,
+            lr=lr,
+            epoch=epoch,
+            inner_epochs=inner_epochs,
+            save_dir=save_dir,
+            max_batch_size=max_batch_size,
+            beta=beta,
+            max_num_ckpts=max_num_ckpts,
+            save_optim=save_optim,
+            accumulation_steps=accumulation_steps
+        )
+
+        if parallel_infos.global_rank == 0:
+            logits_rollout_buffer.save(os.path.join(log_dir, "epoch-%03d" % (epoch + 1)))
 
 
 if __name__ == '__main__':
