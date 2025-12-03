@@ -11,67 +11,9 @@ from src.modeling import get_parallel_model
 from src.parallel.data_parallel.dataloader import ParallelDataLoader
 from src.parallel.initialize import setup_model_parallel, set_barrier, get_rank
 from src.ppo.buffer import RolloutBuffer
-from src.ppo.collector import ActorForwardBufferCollector
 from src.rewards.trainer import ParallelVerifierTrainerForQRM
+from src.trainer import prepare_for_forward
 from src.utils import print_current_func_args, json_load
-
-
-def collect_policy_pairwise_forward_buffer(
-        dataset: PairwiseDataset,
-        policy_model_type: str,
-        policy_config_file: str,
-        max_seq_len: int,
-        policy_tokenizer_file: str,
-        dtype: str,
-        policy_ckpt_dir: str,
-        epoch: int,
-        policy_save_dir: str,
-        use_chat_template: bool,
-        max_forward_batch_size: int
-) -> RolloutBuffer:
-    if len(dataset) == 0:
-        return RolloutBuffer()
-    policy, policy_tokenizer = get_parallel_model(
-        model_type=policy_model_type,
-        config_file=policy_config_file,
-        max_seq_len=max_seq_len,
-        tokenizer_file=policy_tokenizer_file,
-        lora_rank=-1,
-        dtype=dtype
-    )
-    policy.load(policy_ckpt_dir if epoch == 0 else os.path.join(policy_save_dir, "epoch-%03d" % epoch))
-    policy_buffer_collector = ActorForwardBufferCollector(
-        actor=policy,
-        tokenizer=policy_tokenizer,
-        max_seq_len=max_seq_len
-    )
-    policy_rollout_buffer = RolloutBuffer()
-    print("Policy forward buffer collecting ...")
-    if use_chat_template:
-        dataset = ChatTemplateDataset(dataset, policy_tokenizer)
-    dataloader = ParallelDataLoader(dataset, batch_size=max_forward_batch_size)
-    timer = Timer(len(dataloader), episode=10)
-    for data in dataloader:
-        timer.step()
-        chosen_buffer = policy_buffer_collector.forward(instructions=data["instruction"], responses=data["chosen"])
-        rejected_buffer = policy_buffer_collector.forward(instructions=data["instruction"], responses=data["rejected"])
-        policy_rollout_buffer.extend(RolloutBuffer(
-            chosen_obs=chosen_buffer["obs"],
-            rejected_obs=rejected_buffer["obs"],
-            chosen_actions=chosen_buffer["actions"],
-            rejected_actions=rejected_buffer["actions"],
-            chosen_action_masks=chosen_buffer["action_masks"],
-            rejected_action_masks=rejected_buffer["action_masks"],
-        ))
-
-    policy.cpu()
-    del policy
-    del policy_buffer_collector
-    torch.cuda.empty_cache()
-    gc.collect()
-    set_barrier()
-
-    return policy_rollout_buffer
 
 
 def main(
@@ -117,20 +59,6 @@ def main(
         if len(dataset) == 0:
             continue
 
-        policy_rollout_buffer = collect_policy_pairwise_forward_buffer(
-            dataset=dataset,
-            policy_model_type=model_type,
-            policy_config_file=config_file,
-            max_seq_len=max_seq_len,
-            policy_tokenizer_file=tokenizer_file,
-            dtype=dtype,
-            policy_ckpt_dir=ckpt_dir,
-            epoch=epoch,
-            policy_save_dir=save_dir,
-            use_chat_template=use_chat_template,
-            max_forward_batch_size=max_forward_batch_size
-        )
-
         # verifier training
         verifier, verifier_tokenizer = get_parallel_model(
             model_type=model_type,
@@ -141,6 +69,35 @@ def main(
             dtype=dtype,
             lora_dtype=lora_dtype
         )
+
+        rollout_buffer = RolloutBuffer()
+        if use_chat_template:
+            dataset = ChatTemplateDataset(dataset, verifier_tokenizer)
+        dataloader = ParallelDataLoader(dataset, batch_size=max_forward_batch_size)
+        for data in dataloader:
+            prepare_chosen_outputs = prepare_for_forward(
+                instructions=data["instruction"],
+                responses=data["chosen"],
+                tokenizer=verifier_tokenizer,
+                max_seq_len=max_seq_len
+            )
+            prepare_chosen_outputs.labels[prepare_chosen_outputs.labels == -100] = 0
+            prepare_rejected_outputs = prepare_for_forward(
+                instructions=data["instruction"],
+                responses=data["rejected"],
+                tokenizer=verifier_tokenizer,
+                max_seq_len=max_seq_len
+            )
+            prepare_rejected_outputs.labels[prepare_rejected_outputs.labels == -100] = 0
+            rollout_buffer.extend(RolloutBuffer(
+                chosen_obs=prepare_chosen_outputs.tokens.cpu().numpy(),
+                rejected_obs=prepare_rejected_outputs.tokens.cpu().numpy(),
+                chosen_actions=prepare_chosen_outputs.labels.cpu().numpy(),
+                rejected_actions=prepare_rejected_outputs.labels.cpu().numpy(),
+                chosen_action_masks=prepare_chosen_outputs.masks.cpu().numpy(),
+                rejected_action_masks=prepare_rejected_outputs.masks.cpu().numpy(),
+            ))
+
         optimizer = torch.optim.Adam(verifier.parameters(), lr=lr)
         trainer = ParallelVerifierTrainerForQRM(
             model=verifier,
@@ -151,8 +108,8 @@ def main(
         verifier.load(ckpt_dir) if (
                 epoch == 0
         ) else trainer.load(os.path.join(save_dir, "epoch-%03d" % epoch))
-        timer = Timer(policy_rollout_buffer.size() // max_batch_size, episode=10)
-        for data in policy_rollout_buffer.get(max_batch_size, shuffle=True, output_tensor=True):
+        timer = Timer(rollout_buffer.size() // max_batch_size, episode=10)
+        for data in rollout_buffer.get(max_batch_size, shuffle=True, output_tensor=True):
             timer.step()
             trainer_outputs = trainer.forward(data)
             if trainer.step % 100 == 0:
