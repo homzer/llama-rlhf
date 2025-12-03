@@ -5,7 +5,7 @@ import shutil
 import fire
 import torch
 
-from src.dataset import PairwiseDataset, JsonDataset, ChatTemplateDataset
+from src.dataset import PairwiseDataset, ChatTemplateDataset
 from src.entities import Timer, IterationHandler
 from src.modeling import get_parallel_model
 from src.parallel.data_parallel.dataloader import ParallelDataLoader
@@ -16,7 +16,8 @@ from src.rewards.trainer import ParallelVerifierTrainerForQRM
 from src.utils import print_current_func_args, json_load
 
 
-def collect_policy_forward_buffer(
+def collect_policy_pairwise_forward_buffer(
+        dataset: PairwiseDataset,
         policy_model_type: str,
         policy_config_file: str,
         max_seq_len: int,
@@ -26,7 +27,6 @@ def collect_policy_forward_buffer(
         epoch: int,
         policy_save_dir: str,
         use_chat_template: bool,
-        dataset: JsonDataset,
         max_forward_batch_size: int
 ) -> RolloutBuffer:
     if len(dataset) == 0:
@@ -53,7 +53,16 @@ def collect_policy_forward_buffer(
     timer = Timer(len(dataloader), episode=10)
     for data in dataloader:
         timer.step()
-        policy_rollout_buffer.extend(policy_buffer_collector.forward(data["instruction"], data["output"]))
+        chosen_buffer = policy_buffer_collector.forward(instructions=data["instruction"], responses=data["chosen"])
+        rejected_buffer = policy_buffer_collector.forward(instructions=data["instruction"], responses=data["rejected"])
+        policy_rollout_buffer.extend(RolloutBuffer(
+            chosen_obs=chosen_buffer["obs"],
+            rejected_obs=rejected_buffer["obs"],
+            chosen_actions=chosen_buffer["actions"],
+            rejected_actions=rejected_buffer["actions"],
+            chosen_action_masks=chosen_buffer["action_masks"],
+            rejected_action_masks=rejected_buffer["action_masks"],
+        ))
 
     policy.cpu()
     del policy
@@ -108,7 +117,7 @@ def main(
         if len(dataset) == 0:
             continue
 
-        policy_rollout_buffer = collect_policy_forward_buffer(
+        policy_rollout_buffer = collect_policy_pairwise_forward_buffer(
             dataset=dataset,
             policy_model_type=model_type,
             policy_config_file=config_file,
