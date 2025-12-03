@@ -24,7 +24,6 @@ def main(
         model_type: str,
         max_seq_len: int = 512,
         max_batch_size: int = 1,
-        max_forward_batch_size: int = 32,
         lr: float = 1e-5,
         epochs: int = 1,
         begin_epoch: int = 0,
@@ -73,7 +72,7 @@ def main(
         rollout_buffer = RolloutBuffer()
         if use_chat_template:
             dataset = ChatTemplateDataset(dataset, verifier_tokenizer)
-        dataloader = ParallelDataLoader(dataset, batch_size=max_forward_batch_size)
+        dataloader = ParallelDataLoader(dataset, batch_size=512)
         timer = Timer(total=len(dataloader), episode=10)
         for data in dataloader:
             timer.step()
