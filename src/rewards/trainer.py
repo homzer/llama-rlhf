@@ -3,7 +3,7 @@ from typing import List
 
 import torch
 
-from src.criterion import DPOLoss
+from src.criterion import DPOLoss, QRMLoss
 from src.models.modeling import ParallelVerifier, ParallelModelForCausalLM
 from src.rewards.strategy import (
     PairwiseVerifierStrategyForLastToken,
@@ -379,6 +379,67 @@ class ParallelVerifierTrainerForSimPO(ParallelModelTrainer):
 
     def verifier_accuracy(self) -> float:
         accuracy = sum(self.predictions) / len(self.predictions)
+        self.predictions = []
+        return accuracy
+
+
+class ParallelVerifierTrainerForQRM(ParallelTrainer):
+    def __init__(
+            self,
+            model: ParallelModelForCausalLM,
+            optimizer: torch.optim.Optimizer,
+            beta: float = 0.2,
+            gamma: float = 2.0,
+            accumulation_steps: int = 1,
+            save_optim: bool = False
+    ):
+        super().__init__(
+            model=model,
+            optimizer=optimizer,
+            save_optim=save_optim,
+            accumulation_steps=accumulation_steps
+        )
+        self.criterion = QRMLoss(beta=beta, gamma=gamma)
+        self.predictions = []
+
+    def forward(self, rollout_data):
+        self.model.train()
+
+        chosen_obs = rollout_data.chosen_obs.to(self.model.device())
+        rejected_obs = rollout_data.rejected_obs.to(self.model.device())
+        chosen_actions = rollout_data.chosen_actions.to(self.model.device())
+        rejected_actions = rollout_data.rejected_actions.to(self.model.device())
+        chosen_action_masks = rollout_data.chosen_action_masks.to(self.model.device())
+        rejected_action_masks = rollout_data.rejected_action_masks.to(self.model.device())
+
+        chosen_logits = self.model.forward(chosen_obs).logits
+        chosen_action_logprobs = torch.gather(
+            torch.log_softmax(chosen_logits, dim=-1), dim=-1, index=chosen_actions.unsqueeze(-1)
+        ).squeeze(-1)
+
+        rejected_logits = self.model.forward(rejected_obs).logits
+        rejected_action_logprobs = torch.gather(
+            torch.log_softmax(rejected_logits, dim=-1), dim=-1, index=rejected_actions.unsqueeze(-1)
+        ).squeeze(-1)
+
+        loss = self.criterion.forward(
+            chosen_logprobs=chosen_action_logprobs,
+            rejected_logprobs=rejected_action_logprobs,
+            chosen_masks=chosen_action_masks,
+            rejected_masks=rejected_action_masks
+        )
+        self.backward(loss)
+
+        # logging
+        chosen_logprobs = masked_mean(chosen_action_logprobs, chosen_action_masks, dim=-1)
+        rejected_logprobs = masked_mean(rejected_action_logprobs, rejected_action_masks, dim=-1)
+        logprobs = (chosen_logprobs - rejected_logprobs)
+        self.predictions.extend([x > 0 for x in logprobs])
+        Output = collections.namedtuple('Output', ['loss'])
+        return Output(loss=loss)
+
+    def verifier_accuracy(self) -> float:
+        accuracy = torch.stack(self.predictions).float().mean().item()
         self.predictions = []
         return accuracy
 

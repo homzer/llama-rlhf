@@ -237,6 +237,25 @@ class SimPOLoss(Loss):
         return loss.mean()
 
 
+class QRMLoss(Loss):
+    def __init__(self, beta: float = 0.2, gamma: float = 2.0):
+        super().__init__()
+        self.beta = beta
+        self.gamma = gamma
+
+    def forward(
+            self,
+            chosen_logprobs: torch.Tensor,
+            rejected_logprobs: torch.Tensor,
+            chosen_masks: torch.Tensor,
+            rejected_masks: torch.Tensor
+    ):
+        chosen_logprobs = masked_mean(chosen_logprobs, chosen_masks, dim=-1)
+        rejected_logprobs = masked_mean(rejected_logprobs, rejected_masks, dim=-1)
+        loss = - F.logsigmoid(self.beta * (chosen_logprobs - rejected_logprobs) - self.gamma).mean().nan_to_num(0.0)
+        return loss
+
+
 class DPOLoss(Loss):
     def __init__(self, beta=0.1, reduction: str = "mean"):
         super().__init__()
