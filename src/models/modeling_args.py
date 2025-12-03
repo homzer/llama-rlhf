@@ -62,12 +62,17 @@ class Args:
         print('%30s   %s\n%s\n%s\n' % ('ATTRIBUTE', 'VALUE', '_' * 60, param_str))
 
     def from_json(self, filename: str):
+        def unpack(v, k):
+            if isinstance(v, dict):
+                for k_, v_ in v.items():
+                    unpack(v_, "_".join([k, k_]))
+            elif hasattr(self, k):
+                self._set_attribute(k, v)
+
         with open(filename, 'r', encoding='utf-8') as reader:
             config_dict = json.load(reader)
         for key, value in config_dict.items():
-            if not hasattr(self, key):
-                continue
-            self._set_attribute(key, value)
+            unpack(value, key)
         return self
 
 
@@ -208,6 +213,25 @@ class MistralArgs(BaseParallelArgs):
     sliding_window: int = None
     # If this is set, we will use MoE layers instead of dense layers.
     moe = None
+
+    def from_json(self, filename: str):
+        if not filename.endswith(".json"):
+            filename = os.path.join(filename, "config.json")
+        return super().from_json(filename)
+
+
+@dataclass
+class Mistral3Args(BaseParallelArgs):
+    text_config_hidden_size: int = None
+    text_config_intermediate_size: int = None
+    text_config_max_position_embeddings: int = None
+    text_config_head_dim: int = None
+    text_config_num_attention_heads: int = None
+    text_config_num_hidden_layers: int = None
+    text_config_num_key_value_heads: int = None
+    text_config_rms_norm_eps: float = None
+    text_config_vocab_size: int = None
+    text_config_rope_parameters_rope_theta: float = None
 
     def from_json(self, filename: str):
         if not filename.endswith(".json"):
