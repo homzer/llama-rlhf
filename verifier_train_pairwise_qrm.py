@@ -74,7 +74,9 @@ def main(
         if use_chat_template:
             dataset = ChatTemplateDataset(dataset, verifier_tokenizer)
         dataloader = ParallelDataLoader(dataset, batch_size=max_forward_batch_size)
+        timer = Timer(total=len(dataloader), episode=10)
         for data in dataloader:
+            timer.step()
             prepare_chosen_outputs = prepare_for_forward(
                 instructions=data["instruction"],
                 responses=data["chosen"],
