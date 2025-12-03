@@ -109,3 +109,47 @@ class ParallelLCOTrainerForDPORM(ParallelTrainer):
 
         Outputs = collections.namedtuple('Outputs', ['loss'])
         return Outputs(loss=loss.item())
+
+
+class ParallelLCOTrainerForQRM(ParallelTrainer):
+    def __init__(
+            self,
+            policy: ParallelModelForCausalLM,
+            optimizer: torch.optim.Optimizer,
+            beta: float = 1.0,
+            save_optim: bool = False,
+            accumulation_steps: int = 1,
+    ):
+        super().__init__(policy, optimizer, save_optim=save_optim, accumulation_steps=accumulation_steps)
+        self.policy = policy
+        self.beta = beta
+        self.criterion = torch.nn.KLDivLoss(reduction="none", log_target=True)
+
+    def forward(self, rollout_data):
+        self.policy.train()
+
+        obs = rollout_data.obs.to(self.policy.device())
+        action_masks = rollout_data.action_masks.to(self.policy.device())
+        advantages = rollout_data.advantages.to(self.policy.device())
+        advantage_indices = rollout_data.advantage_indices.to(self.policy.device())
+        old_logits = rollout_data.logits.to(self.policy.device())
+
+        advantages = advantages.view(-1, advantages.shape[-1])[action_masks.view(-1)]
+        advantage_indices = advantage_indices.view(-1, advantage_indices.shape[-1])[action_masks.view(-1)]
+        old_logits = old_logits.view(-1, old_logits.shape[-1])[action_masks.view(-1)]
+
+        logits = self.policy.forward(obs).logits
+        logits = logits.view(-1, logits.shape[-1])[action_masks.view(-1)]
+
+        advantages = (advantages / torch.std(advantages, dim=-1, keepdim=True)).nan_to_num(0.0)
+        advantages_ = torch.full_like(old_logits, fill_value=-100)
+        advantages_[torch.arange(advantages_.shape[0])[:, None], advantage_indices] = advantages
+
+        log_targets = create_lco_log_target(old_logits, advantages_, beta=self.beta)
+        loss = self.criterion.forward(
+            torch.log_softmax(logits, dim=-1), target=log_targets.to(logits)
+        ).sum(-1).mean().nan_to_num(0.0)
+        self.backward(loss)
+
+        Outputs = collections.namedtuple('Outputs', ['loss'])
+        return Outputs(loss=loss.item())
