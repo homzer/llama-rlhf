@@ -1,20 +1,23 @@
 import gc
 import os
+import shutil
 
 import fire
 import numpy as np
 import torch
 
-from policy_train_lco import collect_logits_buffer, train_lco
+from policy_train_lco import collect_logits_buffer
 from policy_train_ppo import collect_actor_buffer
 from policy_train_ppo_with_evaluate import evaluate_actor
 from src.dataset import JsonDataset
 from src.entities import Timer, IterationHandler
 from src.modeling import get_parallel_model
-from src.parallel.initialize import setup_model_parallel, set_barrier
+from src.parallel.initialize import setup_model_parallel, set_barrier, get_rank
+from src.parallel.optimizer import ParallelOptimizer
 from src.ppo.buffer import RolloutBuffer, LogitsRolloutBuffer
 from src.ppo.generator import ActorLogitsGeneratorForCausalLM
-from src.utils import json_load, print_current_func_args, normalize
+from src.ppo.trainer_lco import ParallelLCOTrainerForDPORM
+from src.utils import json_load, print_current_func_args
 
 
 def collect_verifier_buffer(
@@ -99,9 +102,71 @@ def collect_verifier_buffer(
 
     verifier_rollout_buffer["ref_logprobs"] = reference_rollout_buffer["logprobs"]
     verifier_rollout_buffer["advantages"] = verifier_rollout_buffer["logprobs"] - reference_rollout_buffer["logprobs"]
-    # advantage normalization
-    # verifier_rollout_buffer["advantages"] = normalize(verifier_rollout_buffer["advantages"], dim=-1)
     return verifier_rollout_buffer
+
+
+def train_lco(
+        rollout_buffer: LogitsRolloutBuffer,
+        policy_ckpt_dir: str,
+        policy_model_type: str,
+        policy_config_file: str,
+        policy_tokenizer_file: str,
+        max_seq_len: int,
+        dtype: str,
+        lora_rank: int,
+        lora_dtype: str,
+        lr: float,
+        epoch: int,
+        inner_epochs: int,
+        save_dir: str,
+        max_batch_size: int,
+        beta: float = 10.0,
+        save_optim: bool = False,
+        accumulation_steps: int = 1,
+        max_num_ckpts: int = None
+):
+    policy, policy_tokenizer = get_parallel_model(
+        model_type=policy_model_type,
+        config_file=policy_config_file,
+        max_seq_len=max_seq_len,
+        tokenizer_file=policy_tokenizer_file,
+        lora_rank=lora_rank,
+        dtype=dtype,
+        lora_dtype=lora_dtype
+    )
+    optimizer = ParallelOptimizer(torch.optim.Adam(policy.parameters(), lr=lr))
+    trainer = ParallelLCOTrainerForDPORM(
+        policy=policy,
+        optimizer=optimizer,
+        beta=beta,
+        save_optim=save_optim,
+        accumulation_steps=accumulation_steps
+    )
+    trainer.load_model(policy_ckpt_dir) if (
+            epoch == 0
+    ) else trainer.load(os.path.join(save_dir, "epoch-%03d" % epoch))
+    print("Policy training ...")
+    timer = Timer(total=(rollout_buffer.size() // max_batch_size) * inner_epochs, episode=100)
+    for inner_epoch in range(inner_epochs):
+        for data in rollout_buffer.get(max_batch_size, shuffle=True, output_tensor=True):
+            timer.step()
+            trainer_outputs = trainer.forward(data)
+            if trainer.step % 100 == 0:
+                print(f'--------- STEP {trainer.step} OF {timer.total} ---------')
+                print(f'Loss: {trainer_outputs.loss}')
+    trainer.save(os.path.join(save_dir, "epoch-%03d" % (epoch + 1)))
+    if max_num_ckpts is not None and (epoch + 1 - max_num_ckpts) > 0:
+        rm_dir = os.path.join(save_dir, "epoch-%03d" % (epoch + 1 - max_num_ckpts))
+        if get_rank() == 0 and os.path.exists(rm_dir):
+            shutil.rmtree(rm_dir)
+
+    policy.cpu()
+    del policy
+    del optimizer
+    del trainer
+    torch.cuda.empty_cache()
+    gc.collect()
+    set_barrier()
 
 
 def run(
@@ -125,7 +190,7 @@ def run(
         max_generate_batch_size: int = 48,
         max_forward_batch_size: int = 24,
         max_seq_len: int = 1024,
-        beta: float = 10.0,
+        beta: float = 2.0,
         logits_topk: int = 5,
         temperature: float = 1.0,
         top_p: float = 1.0,

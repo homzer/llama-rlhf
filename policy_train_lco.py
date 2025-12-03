@@ -13,7 +13,7 @@ from src.parallel.initialize import setup_model_parallel, set_barrier, get_rank
 from src.parallel.optimizer import ParallelOptimizer
 from src.ppo.buffer import RolloutBuffer, LogitsRolloutBuffer
 from src.ppo.collector import LogitsBufferCollector
-from src.ppo.trainer_logits_convex import ParallelLCOTrainerForCausalLM
+from src.ppo.trainer_lco import ParallelLCOTrainerForRuleRM
 from src.utils import json_load, print_current_func_args
 
 
@@ -91,7 +91,7 @@ def train_lco(
         lora_dtype=lora_dtype
     )
     optimizer = ParallelOptimizer(torch.optim.Adam(policy.parameters(), lr=lr))
-    trainer = ParallelLCOTrainerForCausalLM(
+    trainer = ParallelLCOTrainerForRuleRM(
         policy=policy,
         optimizer=optimizer,
         beta=beta,
