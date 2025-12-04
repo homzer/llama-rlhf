@@ -121,7 +121,7 @@ class Ministral3Attention(AttentionForCausalLM):
             position_ids=local_position_ids,
             beta=self.args.text_config_rope_parameters_llama_4_scaling_beta,
             max_position_embeddings=self.args.text_config_rope_parameters_original_max_position_embeddings
-        )
+        ).to(xq)
 
         xq = xq.transpose(1, 2)
         xk = xk.transpose(1, 2)

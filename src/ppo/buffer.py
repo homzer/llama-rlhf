@@ -182,7 +182,7 @@ class PPORolloutBuffer:
     def compute_kl_penalty(self):
         if self.ref_action_logprobs is None:
             return np.zeros_like(self.action_logprobs)
-        return np.abs(self.action_logprobs - self.ref_action_logprobs)  # using abs kl loss
+        return np.abs(self.action_logprobs - self.ref_action_logprobs)  # using abs kl estimation
 
     def compute_returns_and_advantage(self):
         if self.reward_is_q:
@@ -309,6 +309,46 @@ class RolloutBuffer(dict):
                 data[key] = torch.from_numpy(value) if output_tensor and can_convert_to_tensor(value) else value
             yield RolloutBufferSample(**data)
             start_idx += batch_size
+
+
+class GAERolloutBuffer(RolloutBuffer):
+    def __init__(
+            self,
+            rewards: np.ndarray = None,
+            values: np.ndarray = None,
+            action_masks: np.ndarray = None,
+            gamma: float = 0.99,
+            gae_lambda: float = 0.95,
+            kl_coef: float = 0.01,
+            vf_coef: float = 0.1,
+            **kwargs
+    ):
+        super().__init__()
+        self.gamma = gamma
+        self.gae_lambda = gae_lambda
+        self.kl_coef = kl_coef
+        self.vf_coef = vf_coef
+        self["advantages"] = None
+        self["returns"] = None
+        if rewards is not None:
+            self.set(rewards=rewards, values=values, action_masks=action_masks, **kwargs)
+            self["rewards"] += self.kl_coef * self.compute_kl_penalty()
+            self.compute_returns_and_advantage()
+
+    def compute_kl_penalty(self):
+        if "ref_action_logprobs" not in self or "action_logprobs" not in self:
+            return np.zeros_like(self["rewards"])
+        return np.abs(self["action_logprobs"] - self["ref_action_logprobs"])  # using abs kl estimation
+
+    def compute_returns_and_advantage(self):
+        last_gae_lam = 0
+        self["advantages"] = np.zeros_like(self["rewards"])
+        for step in reversed(range(self["rewards"].shape[1] - 1)):
+            next_values = self.vf_coef * self["values"][:, step + 1] * np.where(self["action_masks"][:, step + 1], 1, 0)
+            delta = self["rewards"][:, step] + self.gamma * next_values - self.vf_coef * self["values"][:, step]
+            last_gae_lam = delta + self.gamma * self.gae_lambda * last_gae_lam * self["action_masks"][:, step + 1]
+            self["advantages"][:, step] = last_gae_lam
+        self["returns"] = self["advantages"] + self.vf_coef * self["values"]
 
 
 class CriticRolloutBuffer(RolloutBuffer):
