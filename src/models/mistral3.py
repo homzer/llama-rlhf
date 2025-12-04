@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from src.checkpoint import CheckpointForMinistral3
+from src.checkpoint import CheckpointForMinistral3, CheckpointForMistral3
 from src.models.modeling import (
     ParallelModelForCausalLM,
     CausalLMOutputs,
@@ -215,7 +215,7 @@ class Ministral3Head(nn.Module):
         for layer in self.layers:
             layer.init_weights()
         self.norm = RMSNorm(
-            self.args.text_config_num_hidden_layers, eps=self.args.text_config_rms_norm_eps
+            self.args.text_config_hidden_size, eps=self.args.text_config_rms_norm_eps
         ).type(self.args.dtype)
 
     def forward(self, tokens: torch.Tensor, start_pos=0, use_cache=False):
@@ -293,6 +293,7 @@ class Mistral3(ParallelModelForCausalLM):
         super().__init__()
         self.args = args
         self.language_model = Ministral3(args)
+        self.checkpoint = CheckpointForMistral3()
 
     def forward(
             self,
@@ -306,7 +307,13 @@ class Mistral3(ParallelModelForCausalLM):
         self.language_model.init_weights()
 
     def load(self, ckpt_dir: str, verbose: bool = True, **kwargs):
-        self.language_model.load(ckpt_dir, verbose, **kwargs)
+        ckpt_dir = self.checkpoint.auto_split_or_merge_checkpoints(
+            ckpt_dir=ckpt_dir,
+            model_parallel_world_size=self.model_parallel_world_size,
+            global_rank=self.global_rank
+        )
+        merge_lora = kwargs.get("merge_lora", True)
+        super().load(ckpt_dir, verbose=verbose, merge_lora=merge_lora)
 
     def flush(self):
         self.language_model.flush()
