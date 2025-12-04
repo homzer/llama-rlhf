@@ -373,9 +373,9 @@ class CheckpointForMinistral3(Checkpoint):
     @classmethod
     def load_hf(cls, ckpt_files: List[str]) -> dict:
         state_dict = Checkpoint.load_hf(ckpt_files)
-        if "lm_head.weight" not in state_dict:  # for tie word embeddings
+        if "language_model.lm_head.weight" not in state_dict:  # for tie word embeddings
             print("`lm_head.weight` not found in checkpoint, copy `model.embed_tokens.weight` to replace it.")
-            state_dict["lm_head.weight"] = state_dict["model.embed_tokens.weight"].clone()
+            state_dict["language_model.lm_head.weight"] = state_dict["language_model.model.embed_tokens.weight"].clone()
         return state_dict
 
 
