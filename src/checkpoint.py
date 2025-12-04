@@ -1,5 +1,6 @@
 import os
 import random
+import re
 from collections import OrderedDict
 from pathlib import Path
 from typing import List
@@ -20,13 +21,13 @@ class Checkpoint:
 
     def is_col_parallel(self, name: str) -> bool:
         for col_parallel_name in self.col_parallel_names:
-            if col_parallel_name in name:
+            if re.search(f"{col_parallel_name}$", name):
                 return True
         return False
 
     def is_row_parallel(self, name: str) -> bool:
         for row_parallel_name in self.row_parallel_names:
-            if row_parallel_name in name:
+            if re.search(f"{row_parallel_name}$", name):
                 return True
         return False
 
