@@ -384,6 +384,8 @@ class MathEvaluator(Evaluator):
                 self.correct += 1
             else:
                 self.meter.forward(0)
+                if self.eval(output, label) is None:
+                    self.miss += 1
         return self.extract_answer(output)
 
 
