@@ -75,7 +75,7 @@ def main(
         lora_rank: int = -1,
         lora_dtype: str = "bfloat16",
         save_steps: int = None,
-        max_train_steps: int = None,
+        max_train_samples: int = None,
         begin_epoch: int = 0,
         use_chat_template: bool = False,
         seed: int = None,
@@ -144,7 +144,7 @@ def main(
                     temperature=temperature,
                     top_p=top_p
                 )
-            if max_train_steps is not None and trainer.step >= max_train_steps:
+            if max_train_samples is not None and trainer.step * max_batch_size >= max_train_samples:
                 trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))
                 evaluate_policy(
                     model=model,
