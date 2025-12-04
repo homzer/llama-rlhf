@@ -210,7 +210,7 @@ class Ministral3Head(nn.Module):
 
     def init_weights(self):
         self.embed_tokens = ParallelEmbedding(
-            self.args.text_config_vocab_size, self.args.text_config_num_hidden_layers, init_method=lambda x: x
+            self.args.text_config_vocab_size, self.args.text_config_hidden_size, init_method=lambda x: x
         ).type(self.args.dtype)
         for layer in self.layers:
             layer.init_weights()
