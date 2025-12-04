@@ -9,10 +9,10 @@ from src.entities import Timer
 from src.evaluator import DataParallelPolicyEvaluator
 from src.modeling import get_parallel_model
 from src.parallel.data_parallel.dataloader import ParallelDataLoader
-from src.parallel.initialize import setup_model_parallel
+from src.parallel.initialize import setup_model_parallel, get_rank
 from src.parallel.optimizer import ParallelOptimizer
 from src.trainer import ParallelSolverTrainer
-from src.utils import print_current_func_args, json_load
+from src.utils import print_current_func_args, json_load, json_dump
 
 
 def process_multi_outputs(datalist: list) -> list:
@@ -29,12 +29,14 @@ def process_multi_outputs(datalist: list) -> list:
 def evaluate_policy(
         model,
         tokenizer,
+        log_dir: str,
         label_file: str,
         max_generate_batch_size: int,
         max_seq_len: int,
         use_chat_template: bool,
         temperature: float,
         top_p: float,
+        epoch: int,
 ):
     if label_file is None:
         return
@@ -53,14 +55,18 @@ def evaluate_policy(
         )
         evaluator_outputs = evaluator.forward(task=task, dataset=dataset)
         print(f"{task.upper()} Evaluate Accuracy: {evaluator_outputs.acc} | Missing: {evaluator_outputs.missing}")
+        if log_dir is not None and get_rank() == 0:
+            os.makedirs(os.path.join(log_dir, "epoch-%03d" % (epoch + 1), task), exist_ok=True)
+            json_dump(evaluator_outputs.datalist, os.path.join(
+                log_dir, "epoch-%03d" % (epoch + 1), task, f'results-{round(evaluator_outputs.acc, 4)}.jsonl'))
 
 
 def main(
         ckpt_dir: str,
         save_dir: str,
         train_file: str,
+        log_dir: str,
         label_file: str = None,
-        log_dir: str = None,
         model_type: str = "llama",
         tokenizer_file: str = None,
         config_file: str = None,
@@ -119,7 +125,7 @@ def main(
         max_seq_len=max_seq_len,
         save_optim=save_optim
     )
-    trainer.load(ckpt_dir if (begin_epoch == 0) else os.path.join(save_dir, f"epoch-{begin_epoch}"))
+    trainer.load(ckpt_dir if (begin_epoch == 0) else os.path.join(save_dir, "epoch-%03d" % begin_epoch))
     for epoch in range(begin_epoch, epochs):
         timer = Timer(total=len(dataloader), episode=100)
         for data in dataloader:
@@ -133,41 +139,47 @@ def main(
                 print(f'LOSS: {outputs.loss}')
                 trainer.predict(outputs.logits, data['instruction'], data['output'])
             if save_steps is not None and trainer.step % save_steps == 0:
-                trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))
+                trainer.save(os.path.join(save_dir, "epoch-%03d" % (epoch + 1)))
                 evaluate_policy(
                     model=model,
                     tokenizer=tokenizer,
+                    log_dir=log_dir,
                     label_file=label_file,
                     max_generate_batch_size=max_generate_batch_size,
                     max_seq_len=max_seq_len,
                     use_chat_template=use_chat_template,
                     temperature=temperature,
-                    top_p=top_p
+                    top_p=top_p,
+                    epoch=epoch
                 )
             if max_train_samples is not None and trainer.step * max_batch_size >= max_train_samples:
-                trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))
+                trainer.save(os.path.join(save_dir, "epoch-%03d" % (epoch + 1)))
                 evaluate_policy(
                     model=model,
                     tokenizer=tokenizer,
+                    log_dir=log_dir,
                     label_file=label_file,
                     max_generate_batch_size=max_generate_batch_size,
                     max_seq_len=max_seq_len,
                     use_chat_template=use_chat_template,
                     temperature=temperature,
-                    top_p=top_p
+                    top_p=top_p,
+                    epoch=epoch
                 )
                 exit(0)
 
-        trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))
+        trainer.save(os.path.join(save_dir, "epoch-%03d" % (epoch + 1)))
         evaluate_policy(
             model=model,
             tokenizer=tokenizer,
+            log_dir=log_dir,
             label_file=label_file,
             max_generate_batch_size=max_generate_batch_size,
             max_seq_len=max_seq_len,
             use_chat_template=use_chat_template,
             temperature=temperature,
-            top_p=top_p
+            top_p=top_p,
+            epoch=epoch
         )
 
 

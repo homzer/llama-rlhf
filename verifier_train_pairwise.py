@@ -114,8 +114,8 @@ def main(
                 print(f"LOSS: {outputs.loss} Acc: {trainer.verifier_accuracy()}")
             timer.step()
             if trainer.step % 10000 == 0:
-                trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))
-        trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))
+                trainer.save(os.path.join(save_dir, "epoch-%03d" % (epoch + 1)))
+        trainer.save(os.path.join(save_dir, "epoch-%03d" % (epoch + 1)))
 
 
 if __name__ == '__main__':
