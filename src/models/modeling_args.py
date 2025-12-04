@@ -172,30 +172,6 @@ class LoraLlamaArgsHf(LlamaArgsHf):
     lora_dtype: str = "float32"
 
 
-# @dataclass
-# class MistralArgs(BaseParallelArgs):
-#     dim: int = None
-#     n_layers: int = None
-#     head_dim: int = None
-#     hidden_dim: int = None
-#     n_heads: int = None
-#     n_kv_heads: int = None
-#     norm_eps: float = None
-#     vocab_size: int = None
-#
-#     # For rotary embeddings. If not set, will be infered from sliding window.
-#     rope_theta: float = None
-#     # If this is set, use sliding window attention rotating cache.
-#     sliding_window: int = None
-#     # If this is set, we will use MoE layers instead of dense layers.
-#     moe = None
-#
-#     def from_json(self, filename: str):
-#         if not filename.endswith(".json"):
-#             filename = os.path.join(filename, "params.json")
-#         return super().from_json(filename)
-
-
 @dataclass
 class MistralArgs(BaseParallelArgs):
     hidden_size: int = None
@@ -232,6 +208,8 @@ class Mistral3Args(BaseParallelArgs):
     text_config_rms_norm_eps: float = None
     text_config_vocab_size: int = None
     text_config_rope_parameters_rope_theta: float = None
+    text_config_rope_parameters_llama_4_scaling_beta: float = None
+    text_config_rope_parameters_original_max_position_embeddings: int = None
 
     def from_json(self, filename: str):
         if not filename.endswith(".json"):

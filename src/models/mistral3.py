@@ -25,6 +25,11 @@ from src.parallel.sequence_parallel.mappings import (
 from src.utils import compute_position_ids, apply_rotary_pos_emb_
 
 
+def _get_llama_4_attn_scale(position_ids: torch.Tensor, beta: float, max_position_embeddings: int) -> torch.Tensor:
+    scaling = 1 + beta * torch.log(1 + torch.floor(position_ids / max_position_embeddings))
+    return scaling.unsqueeze(-1)
+
+
 class Ministral3Attention(AttentionForCausalLM):
     def __init__(self, args: Mistral3Args):
         super().__init__(args.max_seq_len)
@@ -112,6 +117,11 @@ class Ministral3Attention(AttentionForCausalLM):
         cos, sin = self.rotary_emb.forward(xv.transpose(1, 2), seq_len=seq_len + start_pos)
         xq = apply_rotary_pos_emb_(xq.transpose(1, 2), cos, sin, local_position_ids)
         xk = apply_rotary_pos_emb_(xk.transpose(1, 2), cos, sin, position_ids)
+        xq = xq * _get_llama_4_attn_scale(
+            position_ids=local_position_ids,
+            beta=self.args.text_config_rope_parameters_llama_4_scaling_beta,
+            max_position_embeddings=self.args.text_config_rope_parameters_original_max_position_embeddings
+        )
 
         xq = xq.transpose(1, 2)
         xk = xk.transpose(1, 2)
