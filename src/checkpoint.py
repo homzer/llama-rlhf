@@ -360,6 +360,25 @@ class CheckpointForQwen(Checkpoint):
         return state_dict
 
 
+class CheckpointForMinistral3(Checkpoint):
+    def __init__(self):
+        col_parallel_names = [
+            "q_proj.weight", "k_proj.weight", "v_proj.weight", "gate_proj.weight", "up_proj.weight", "lm_head.weight"
+        ]
+        row_parallel_names = [
+            "o_proj.weight", "down_proj.weight", "embed_tokens.weight",
+        ]
+        super().__init__(col_parallel_names, row_parallel_names)
+
+    @classmethod
+    def load_hf(cls, ckpt_files: List[str]) -> dict:
+        state_dict = Checkpoint.load_hf(ckpt_files)
+        if "lm_head.weight" not in state_dict:  # for tie word embeddings
+            print("`lm_head.weight` not found in checkpoint, copy `model.embed_tokens.weight` to replace it.")
+            state_dict["lm_head.weight"] = state_dict["model.embed_tokens.weight"].clone()
+        return state_dict
+
+
 class CheckpointForMistral(Checkpoint):
     def __init__(self):
         col_parallel_names = [

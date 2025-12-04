@@ -24,7 +24,9 @@ from src.models import (
     Qwen3,
     Gemma2,
     InternLM3,
-    Qwen3Moe
+    Qwen3Moe,
+    Mistral3,
+    Mistral3Verifier
 )
 from src.models.modeling_args import (
     LlamaArgs,
@@ -40,7 +42,8 @@ from src.models.modeling_args import (
     Llama3Args,
     Gemma2Args,
     InternLM3Args,
-    QwenMoeArgs
+    QwenMoeArgs,
+    Mistral3Args
 )
 from src.tokenizers import (
     Tokenizer,
@@ -54,6 +57,7 @@ from src.tokenizers import (
     InternLM3Tokenizer,
     Llama3TokenizerHf,
     GemmaTokenizer,
+    Mistral3Tokenizer
 )
 
 
@@ -74,7 +78,8 @@ ARGS = {
     "lora-baichuan": LoraBaichuanArgs,
     "internlm": InternLMArgs,
     "gemma2": Gemma2Args,
-    "internlm3": InternLM3Args
+    "internlm3": InternLM3Args,
+    "mistral3": Mistral3Args
 }
 
 
@@ -95,7 +100,8 @@ MODELS = {
     "lora-baichuan": LoraBaichuan,
     "internlm": InternLM,
     "gemma2": Gemma2,
-    "internlm3": InternLM3
+    "internlm3": InternLM3,
+    "mistral3": Mistral3
 }
 
 VERIFIERS = {
@@ -107,6 +113,7 @@ VERIFIERS = {
     "lora-qwen": LoraQwenVerifier,
     "baichuan": BaichuanVerifier,
     "lora-baichuan": LoraBaichuanVerifier,
+    "mistral3": Mistral3Verifier
 }
 
 TOKENIZERS = {
@@ -121,7 +128,8 @@ TOKENIZERS = {
     "baichuan": BaichuanTokenizer,
     "internlm": InternLMTokenizer,
     "internlm3": InternLM3Tokenizer,
-    "gemma2": GemmaTokenizer
+    "gemma2": GemmaTokenizer,
+    "mistral3": Mistral3Tokenizer
 }
 
 

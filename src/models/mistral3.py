@@ -9,7 +9,7 @@ from src.models.modeling import (
     ParallelModelForCausalLM,
     CausalLMOutputs,
     AttentionForCausalLM,
-)
+    ParallelVerifier, VerifierOutputs)
 from src.models.modeling_acts import Clamp, RMSNorm, RotaryEmbedding, LogitsNormalize
 from src.models.modeling_args import Mistral3Args
 from src.parallel.initialize import set_model_parallel_barrier
@@ -25,7 +25,7 @@ from src.parallel.sequence_parallel.mappings import (
 from src.utils import compute_position_ids, apply_rotary_pos_emb_
 
 
-class Mistral3Attention(AttentionForCausalLM):
+class Ministral3Attention(AttentionForCausalLM):
     def __init__(self, args: Mistral3Args):
         super().__init__(args.max_seq_len)
         self.args = args
@@ -124,7 +124,7 @@ class Mistral3Attention(AttentionForCausalLM):
         return self.o_proj_fn(output)
 
 
-class Mistral3FeedForward(nn.Module):
+class Ministral3FeedForward(nn.Module):
     def __init__(self, args: Mistral3Args):
         super().__init__()
         self.args = args
@@ -162,12 +162,12 @@ class Mistral3FeedForward(nn.Module):
         return self.down_proj_fn(F.silu(self.gate_proj_fn(x)) * self.up_proj_fn(x))
 
 
-class Mistral3TransformerBlock(nn.Module):
+class Ministral3TransformerBlock(nn.Module):
     def __init__(self, args: Mistral3Args):
         super().__init__()
         self.args = args
-        self.self_attn = Mistral3Attention(args)
-        self.mlp = Mistral3FeedForward(args)
+        self.self_attn = Ministral3Attention(args)
+        self.mlp = Ministral3FeedForward(args)
         self.clamp = Clamp(enable=args.use_clamp)
 
         self.input_layernorm = None
@@ -197,7 +197,7 @@ class Mistral3TransformerBlock(nn.Module):
         return out
 
 
-class Mistral3Head(nn.Module):
+class Ministral3Head(nn.Module):
     def __init__(self, args: Mistral3Args):
         super().__init__()
         self.args = args
@@ -205,7 +205,7 @@ class Mistral3Head(nn.Module):
         self.embed_tokens = None
         self.layers = torch.nn.ModuleList()
         for layer_id in range(args.text_config_num_hidden_layers):
-            self.layers.append(Mistral3TransformerBlock(args))
+            self.layers.append(Ministral3TransformerBlock(args))
         self.norm = None
 
     def init_weights(self):
@@ -245,7 +245,7 @@ class Ministral3(ParallelModelForCausalLM):
     def __init__(self, args: Mistral3Args):
         super().__init__()
         self.args = args
-        self.model = Mistral3Head(args)
+        self.model = Ministral3Head(args)
         self.lm_head = None
         self.lm_head_fn = lambda x: self.lm_head(x)
         self.logits_norm = LogitsNormalize(enable=self.args.use_logits_normalize)
@@ -310,3 +310,54 @@ class Mistral3(ParallelModelForCausalLM):
 
     def flush(self):
         self.language_model.flush()
+
+
+class Ministral3Verifier(ParallelVerifier):
+    def __init__(self, args: Mistral3Args):
+        super().__init__()
+        self.args = args
+        self.model = Ministral3Head(args)
+        self.v_head = None
+        self.v_head_fn = lambda x: self.v_head(x)
+        self.checkpoint = CheckpointForMinistral3()
+
+    def init_weights(self):
+        self.model.init_weights()
+        self.v_head = nn.Linear(
+            self.args.text_config_hidden_size, 1, bias=False
+        ).type(self.args.dtype)
+
+    def forward(self, tokens: torch.Tensor) -> VerifierOutputs:
+        h = self.model.forward(tokens)
+        scores = self.v_head_fn(h).squeeze(-1)  # [b, s]
+
+        # Sequence parallel op.
+        scores = gather_from_sequence_parallel_region(scores)
+
+        return VerifierOutputs(scores=scores)
+
+    # Copied from llama_hf.LlamaHf.load
+    def load(self, ckpt_dir: str, verbose: bool = True, **kwargs):
+        ckpt_dir = self.checkpoint.auto_split_or_merge_checkpoints(
+            ckpt_dir=ckpt_dir,
+            model_parallel_world_size=self.model_parallel_world_size,
+            global_rank=self.global_rank
+        )
+        merge_lora = kwargs.get("merge_lora", True)
+        super().load(ckpt_dir, verbose=verbose, merge_lora=merge_lora)
+
+
+class Mistral3Verifier(ParallelVerifier):
+    def __init__(self, args: Mistral3Args):
+        super().__init__()
+        self.args = args
+        self.language_model = Ministral3Verifier(args)
+
+    def init_weights(self):
+        self.language_model.init_weights()
+
+    def forward(self, tokens: torch.Tensor) -> VerifierOutputs:
+        return self.language_model.forward(tokens)
+
+    def load(self, ckpt_dir: str, verbose: bool = True, **kwargs):
+        self.language_model.load(ckpt_dir, verbose, **kwargs)

@@ -9,3 +9,4 @@ from src.tokenizers.tokenizer_baichuan import BaichuanTokenizer
 from src.tokenizers.tokenizer_internlm import InternLMTokenizer
 from src.tokenizers.tokenizer_internlm3 import InternLM3Tokenizer
 from src.tokenizers.tokenizer_gemma import GemmaTokenizer
+from src.tokenizers.tokenizer_mistral3 import Mistral3Tokenizer
