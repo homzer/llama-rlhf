@@ -1,3 +1,4 @@
+import math
 from typing import Optional
 
 import torch
@@ -25,9 +26,25 @@ from src.parallel.sequence_parallel.mappings import (
 from src.utils import compute_position_ids, apply_rotary_pos_emb_
 
 
+def _compute_yarn_parameters():
+
+
 def _get_llama_4_attn_scale(position_ids: torch.Tensor, beta: float, max_position_embeddings: int) -> torch.Tensor:
     scaling = 1 + beta * torch.log(1 + torch.floor(position_ids / max_position_embeddings))
     return scaling.unsqueeze(-1)
+
+
+class Ministral3RotaryEmbedding(nn.Module):
+    inv_freq: torch.Tensor
+
+    def __init__(self, args: Mistral3Args, device=None):
+        super().__init__()
+        self.max_seq_len_cached = args.text_config_max_position_embeddings
+        self.original_max_seq_len = args.text_config_max_position_embeddings
+
+        self.args = args
+
+        self.rope_type =
 
 
 class Ministral3Attention(AttentionForCausalLM):

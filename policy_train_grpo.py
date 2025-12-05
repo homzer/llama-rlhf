@@ -129,7 +129,7 @@ def train_grpo(
                 print(f'--------- STEP {trainer.step} OF {timer.total} ---------')
                 print(f'Loss: {trainer_outputs.loss}')
                 print(f'Policy Loss: {trainer_outputs.policy_loss}')
-                print(f'Advantages: {trainer_outputs.rewards}')
+                print(f'Advantages: {trainer_outputs.advantages}')
                 print(f'KL Loss: {trainer_outputs.kl_loss}')
     trainer.save(os.path.join(save_dir, "epoch-%03d" % (epoch + 1)))
 
