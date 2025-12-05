@@ -221,7 +221,7 @@ class Ministral3Attention(AttentionForCausalLM):
         if not use_cache:  # Bypass the function if performing autoregressive generation.
             local_position_ids = scatter_to_sequence_parallel_region(position_ids)
 
-        cos, sin = self.rotary_emb.forward(x, start_pos + seq_len)
+        cos, sin = self.rotary_emb.forward(x, seq_len=start_pos + seq_len)
         xq = apply_rotary_pos_emb_(xq.transpose(1, 2), cos, sin, local_position_ids)
         xk = apply_rotary_pos_emb_(xk.transpose(1, 2), cos, sin, position_ids)
         xq = xq * _get_llama_4_attn_scale(
