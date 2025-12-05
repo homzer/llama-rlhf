@@ -11,7 +11,7 @@ from src.models.modeling import (
     CausalLMOutputs,
     AttentionForCausalLM,
     ParallelVerifier, VerifierOutputs)
-from src.models.modeling_acts import Clamp, RMSNorm, RotaryEmbedding, LogitsNormalize
+from src.models.modeling_acts import Clamp, RMSNorm, LogitsNormalize
 from src.models.modeling_args import Mistral3Args
 from src.parallel.initialize import set_model_parallel_barrier
 from src.parallel.model_parallel.layers import (
@@ -23,15 +23,96 @@ from src.parallel.sequence_parallel.mappings import (
     gather_from_sequence_parallel_region,
     scatter_to_sequence_parallel_region
 )
-from src.utils import compute_position_ids, apply_rotary_pos_emb_
+from src.utils import compute_position_ids
 
 
-def _compute_yarn_parameters():
+def _compute_yarn_parameters(
+        rope_theta: float,
+        head_dim: int,
+        factor: float,
+        mscale: float,
+        mscale_all_dim: float,
+        max_position_embeddings: int,
+        device: torch.device,
+        partial_rotary_factor: float = 1.0,
+        attention_factor: float = None,
+        original_max_position_embeddings: int = None,
+        beta_fast: float = 32.,
+        beta_slow: float = 1.,
+        truncate: bool = True
+):
+    base = rope_theta
+    dim = int(head_dim * partial_rotary_factor)
+
+    if original_max_position_embeddings is not None:
+        factor = max_position_embeddings / original_max_position_embeddings
+    else:
+        original_max_position_embeddings = max_position_embeddings
+
+    def get_mscale(scale, mscale_=1.):
+        if scale <= 1:
+            return 1.0
+        return 0.1 * mscale_ * math.log(scale) + 1.0
+
+    if attention_factor is None:
+        if mscale and mscale_all_dim:
+            attention_factor = float(get_mscale(factor, mscale) / get_mscale(factor, mscale_all_dim))
+        else:
+            attention_factor = get_mscale(factor)
+
+    def find_correction_dim(num_rotations, dim_, base_, max_position_embeddings_):
+        """Inverse dimension formula to find the dimension based on the number of rotations"""
+        return (dim_ * math.log(max_position_embeddings_ / (num_rotations * 2 * math.pi))) / (2 * math.log(base_))
+
+    def find_correction_range(low_rot, high_rot, dim_, base_, max_position_embeddings_, truncate_):
+        """Find dimension range bounds based on rotations"""
+        low_ = find_correction_dim(low_rot, dim_, base_, max_position_embeddings_)
+        high_ = find_correction_dim(high_rot, dim_, base_, max_position_embeddings_)
+        if truncate_:
+            low_ = math.floor(low_)
+            high_ = math.ceil(high_)
+        return max(low_, 0), min(high_, dim_ - 1)
+
+    def linear_ramp_factor(min_, max_, dim_):
+        if min_ == max_:
+            max_ += 0.001  # Prevent singularity
+
+        linear_func = (torch.arange(dim_, dtype=torch.float32) - min_) / (max_ - min_)
+        ramp_func = torch.clamp(linear_func, 0, 1)
+        return ramp_func
+
+    pos_freqs = base ** (torch.arange(0, dim, 2).to(device=device, dtype=torch.float) / dim)
+    inv_freq_extrapolation = 1.0 / pos_freqs
+    inv_freq_interpolation = 1.0 / (factor * pos_freqs)
+
+    low, high = find_correction_range(beta_fast, beta_slow, dim, base, original_max_position_embeddings, truncate)
+
+    # Get n-dimensional rotational scaling corrected for extrapolation
+    inv_freq_extrapolation_factor = 1 - linear_ramp_factor(low, high, dim // 2).to(device=device, dtype=torch.float)
+    inv_freq = (
+            inv_freq_interpolation * (1 - inv_freq_extrapolation_factor)
+            + inv_freq_extrapolation * inv_freq_extrapolation_factor
+    )
+    return inv_freq, attention_factor
 
 
 def _get_llama_4_attn_scale(position_ids: torch.Tensor, beta: float, max_position_embeddings: int) -> torch.Tensor:
     scaling = 1 + beta * torch.log(1 + torch.floor(position_ids / max_position_embeddings))
     return scaling.unsqueeze(-1)
+
+
+def rotate_half(x):
+    x1 = x[..., :x.shape[-1] // 2]
+    x2 = x[..., x.shape[-1] // 2:]
+    return torch.cat((-x2, x1), dim=-1)
+
+
+def apply_rotary_pos_emb(q, k, cos, sin, unsqueeze_dim=1):
+    cos = cos.unsqueeze(unsqueeze_dim)
+    sin = sin.unsqueeze(unsqueeze_dim)
+    q_embed = (q * cos) + (rotate_half(q) * sin)
+    k_embed = (k * cos) + (rotate_half(k) * sin)
+    return q_embed, k_embed
 
 
 class Ministral3RotaryEmbedding(nn.Module):
@@ -44,7 +125,33 @@ class Ministral3RotaryEmbedding(nn.Module):
 
         self.args = args
 
-        self.rope_type =
+        inv_freq, self.attention_scaling = _compute_yarn_parameters(
+            rope_theta=args.text_config_rope_parameters_rope_theta,
+            head_dim=args.text_config_head_dim,
+            factor=args.text_config_rope_parameters_factor,
+            mscale=args.text_config_rope_parameters_mscale,
+            mscale_all_dim=args.text_config_rope_parameters_mscale_all_dim,
+            max_position_embeddings=args.text_config_max_position_embeddings,
+            device=device,
+            original_max_position_embeddings=args.text_config_rope_parameters_original_max_position_embeddings,
+            beta_fast=args.text_config_rope_parameters_beta_fast,
+            beta_slow=args.text_config_rope_parameters_beta_slow
+        )
+        self.register_buffer("inv_freq", inv_freq, persistent=False)
+        self.original_inv_freq = inv_freq
+
+    @torch.no_grad()
+    def forward(self, x: torch.Tensor, position_ids: torch.Tensor):
+        inv_freq_expanded = self.inv_freq[None, :, None].float().expand(position_ids.shape[0], -1, 1).to(x.device)
+        position_ids_expanded = position_ids[:, None, :].float()
+
+        device_type = x.device.type if isinstance(x.device.type, str) and x.device.type != 'mps' else 'cpu'
+        with torch.autocast(device_type=device_type, enabled=False):
+            freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(1, 2)
+            emb = torch.cat((freqs, freqs), dim=-1)
+            cos = emb.cos() * self.attention_scaling
+            sin = emb.sin() * self.attention_scaling
+        return cos.to(x), sin.to(x)
 
 
 class Ministral3Attention(AttentionForCausalLM):
@@ -58,7 +165,7 @@ class Ministral3Attention(AttentionForCausalLM):
         self.num_local_key_value_heads = self.num_key_value_heads // args.model_parallel_world_size
         self.n_rep = args.text_config_num_attention_heads // args.text_config_num_key_value_heads
 
-        self.rotary_emb = None
+        self.rotary_emb = Ministral3RotaryEmbedding(args=self.args)
 
         self.q_proj = None
         self.k_proj = None
@@ -99,11 +206,7 @@ class Ministral3Attention(AttentionForCausalLM):
             init_method=lambda x: x,
             ).type(self.args.dtype)
 
-        self.rotary_emb = RotaryEmbedding(
-            self.head_dim,
-            max_position_embeddings=self.args.text_config_max_position_embeddings,
-            base=self.args.text_config_rope_parameters_rope_theta,
-        ).type(self.args.dtype)
+        self.rotary_emb = Ministral3RotaryEmbedding(args=self.args)
 
     def forward(
             self,
@@ -131,9 +234,12 @@ class Ministral3Attention(AttentionForCausalLM):
         if not use_cache:  # Bypass the function if performing autoregressive generation.
             local_position_ids = scatter_to_sequence_parallel_region(position_ids)
 
-        cos, sin = self.rotary_emb.forward(xv.transpose(1, 2), seq_len=seq_len + start_pos)
-        xq = apply_rotary_pos_emb_(xq.transpose(1, 2), cos, sin, local_position_ids)
-        xk = apply_rotary_pos_emb_(xk.transpose(1, 2), cos, sin, position_ids)
+        cos, sin = self.rotary_emb.forward(xv, position_ids)
+        xq, xk = apply_rotary_pos_emb(xq.transpose(1, 2), xk.transpose(1, 2), cos, sin)
+
+        # cos, sin = self.rotary_emb.forward(xv.transpose(1, 2), seq_len=seq_len + start_pos)
+        # xq = apply_rotary_pos_emb_(xq.transpose(1, 2), cos, sin, local_position_ids)
+        # xk = apply_rotary_pos_emb_(xk.transpose(1, 2), cos, sin, position_ids)
         xq = xq * _get_llama_4_attn_scale(
             position_ids=local_position_ids,
             beta=self.args.text_config_rope_parameters_llama_4_scaling_beta,
