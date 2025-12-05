@@ -23,7 +23,7 @@ from src.parallel.sequence_parallel.mappings import (
     gather_from_sequence_parallel_region,
     scatter_to_sequence_parallel_region
 )
-from src.utils import compute_position_ids
+from src.utils import compute_position_ids, apply_rotary_pos_emb_
 
 
 def _compute_yarn_parameters(
@@ -101,20 +101,6 @@ def _get_llama_4_attn_scale(position_ids: torch.Tensor, beta: float, max_positio
     return scaling.unsqueeze(-1)
 
 
-def rotate_half(x):
-    x1 = x[..., :x.shape[-1] // 2]
-    x2 = x[..., x.shape[-1] // 2:]
-    return torch.cat((-x2, x1), dim=-1)
-
-
-def apply_rotary_pos_emb(q, k, cos, sin, unsqueeze_dim=1):
-    cos = cos.unsqueeze(unsqueeze_dim)
-    sin = sin.unsqueeze(unsqueeze_dim)
-    q_embed = (q * cos) + (rotate_half(q) * sin)
-    k_embed = (k * cos) + (rotate_half(k) * sin)
-    return q_embed, k_embed
-
-
 class Ministral3RotaryEmbedding(nn.Module):
     inv_freq: torch.Tensor
 
@@ -141,7 +127,8 @@ class Ministral3RotaryEmbedding(nn.Module):
         self.original_inv_freq = inv_freq
 
     @torch.no_grad()
-    def forward(self, x: torch.Tensor, position_ids: torch.Tensor):
+    def forward(self, x: torch.Tensor, seq_len: int):
+        position_ids = compute_position_ids(0, seq_len).to(x.device)
         inv_freq_expanded = self.inv_freq[None, :, None].float().expand(position_ids.shape[0], -1, 1).to(x.device)
         position_ids_expanded = position_ids[:, None, :].float()
 
@@ -151,7 +138,7 @@ class Ministral3RotaryEmbedding(nn.Module):
             emb = torch.cat((freqs, freqs), dim=-1)
             cos = emb.cos() * self.attention_scaling
             sin = emb.sin() * self.attention_scaling
-        return cos.to(x), sin.to(x)
+        return cos.to(x)[None, :, :, :], sin.to(x)[None, :, :, :]
 
 
 class Ministral3Attention(AttentionForCausalLM):
@@ -165,7 +152,7 @@ class Ministral3Attention(AttentionForCausalLM):
         self.num_local_key_value_heads = self.num_key_value_heads // args.model_parallel_world_size
         self.n_rep = args.text_config_num_attention_heads // args.text_config_num_key_value_heads
 
-        self.rotary_emb = Ministral3RotaryEmbedding(args=self.args)
+        self.rotary_emb = None
 
         self.q_proj = None
         self.k_proj = None
@@ -234,12 +221,9 @@ class Ministral3Attention(AttentionForCausalLM):
         if not use_cache:  # Bypass the function if performing autoregressive generation.
             local_position_ids = scatter_to_sequence_parallel_region(position_ids)
 
-        cos, sin = self.rotary_emb.forward(xv, position_ids)
-        xq, xk = apply_rotary_pos_emb(xq.transpose(1, 2), xk.transpose(1, 2), cos, sin)
-
-        # cos, sin = self.rotary_emb.forward(xv.transpose(1, 2), seq_len=seq_len + start_pos)
-        # xq = apply_rotary_pos_emb_(xq.transpose(1, 2), cos, sin, local_position_ids)
-        # xk = apply_rotary_pos_emb_(xk.transpose(1, 2), cos, sin, position_ids)
+        cos, sin = self.rotary_emb.forward(x, start_pos + seq_len)
+        xq = apply_rotary_pos_emb_(xq.transpose(1, 2), cos, sin, local_position_ids)
+        xk = apply_rotary_pos_emb_(xk.transpose(1, 2), cos, sin, position_ids)
         xq = xq * _get_llama_4_attn_scale(
             position_ids=local_position_ids,
             beta=self.args.text_config_rope_parameters_llama_4_scaling_beta,
