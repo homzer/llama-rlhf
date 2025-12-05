@@ -155,7 +155,7 @@ class LogitsNormalize:
 
 
 # Copied from Huggingface
-class RotaryEmbedding_(nn.Module):
+class RotaryEmbedding(nn.Module):
     def __init__(self, dim, max_position_embeddings=2048, base=10000, device=None):
         super().__init__()
         inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).type(torch.float32).to(device) / dim))
@@ -187,16 +187,16 @@ class RotaryEmbedding_(nn.Module):
         )
 
 
-class RotaryEmbedding(nn.Module):
-    def __init__(self, dim, max_position_embeddings=2048, base=10000, device=None):
-        super().__init__()
-        self.max_position_embeddings = max_position_embeddings
-        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).type(torch.float32).to(device) / dim))
-        self.register_buffer("inv_freq", inv_freq)
-
-    @torch.no_grad()
-    def forward(self, x, seq_len=None):
-        t = torch.arange(seq_len, device=self.inv_freq.device, dtype=self.inv_freq.dtype)
-        freqs = torch.einsum("i,j->ij", t, self.inv_freq)
-        emb = torch.cat((freqs, freqs), dim=-1)
-        return emb.cos()[None, None, :, :].to(x.dtype), emb.sin()[None, None, :, :].to(x.dtype)
+# class RotaryEmbedding(nn.Module):
+#     def __init__(self, dim, max_position_embeddings=2048, base=10000, device=None):
+#         super().__init__()
+#         self.max_position_embeddings = max_position_embeddings
+#         inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).type(torch.float32).to(device) / dim))
+#         self.register_buffer("inv_freq", inv_freq)
+#
+#     @torch.no_grad()
+#     def forward(self, x, seq_len=None):
+#         t = torch.arange(seq_len, device=self.inv_freq.device, dtype=self.inv_freq.dtype)
+#         freqs = torch.einsum("i,j->ij", t, self.inv_freq)
+#         emb = torch.cat((freqs, freqs), dim=-1)
+#         return emb.cos()[None, None, :, :].to(x.dtype), emb.sin()[None, None, :, :].to(x.dtype)
