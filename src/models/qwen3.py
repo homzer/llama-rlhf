@@ -83,7 +83,7 @@ class Qwen3Attention(AttentionForCausalLM):
 
         self.rotary_emb = RotaryEmbedding(
             self.head_dim,
-            max_position_embeddings=self.args.max_position_embeddings,
+            max_position_embeddings=self.args.max_seq_len,
             base=self.args.rope_theta,
         ).type(self.args.dtype)
 
