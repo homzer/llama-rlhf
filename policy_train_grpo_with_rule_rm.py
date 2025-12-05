@@ -1,3 +1,5 @@
+import os
+
 import fire
 
 from policy_train_grpo import compute_grpo_rewards, train_grpo
@@ -46,7 +48,7 @@ def run(
         model_parallel_size: int = None,
         sequence_parallel_size: int = 1
 ):
-    setup_model_parallel(
+    parallel_infos = setup_model_parallel(
         seed=seed,
         log_dir=log_dir,
         log_mode="w" if begin_epoch == 0 else "a",
@@ -111,7 +113,7 @@ def run(
             rollout_buffer = RolloutBuffer(
                 obs=policy_rollout_buffer["obs"],
                 actions=policy_rollout_buffer["actions"],
-                rewards=verifier_rollout_buffer["scores"],
+                advantages=verifier_rollout_buffer["scores"],
                 action_masks=policy_rollout_buffer["action_masks"],
                 action_logprobs=policy_rollout_buffer["action_logprobs"],
                 ref_action_logprobs=reference_rollout_buffer.output_tokens_logps
@@ -120,10 +122,13 @@ def run(
             rollout_buffer = RolloutBuffer(
                 obs=policy_rollout_buffer["obs"],
                 actions=policy_rollout_buffer["actions"],
-                rewards=verifier_rollout_buffer["scores"],
+                advantages=verifier_rollout_buffer["scores"],
                 action_masks=policy_rollout_buffer["action_masks"],
                 action_logprobs=policy_rollout_buffer["action_logprobs"]
             )
+
+        if parallel_infos.global_rank == 0:
+            rollout_buffer.save(os.path.join(log_dir, "epoch-%03d" % (epoch + 1)))
 
         train_grpo(
             rollout_buffer=rollout_buffer,

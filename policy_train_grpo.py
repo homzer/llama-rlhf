@@ -10,6 +10,7 @@ from src.dataset import JsonDataset
 from src.entities import Timer, IterationHandler
 from src.modeling import get_parallel_model
 from src.parallel.initialize import setup_model_parallel, set_barrier
+from src.parallel.optimizer import ParallelOptimizer
 from src.ppo.buffer import CriticRolloutBuffer, RolloutBuffer
 from src.ppo.parallel_buffer import ParallelRolloutBuffer
 from src.ppo.trainer import ParallelGRPOTrainerForCausalLM
@@ -67,9 +68,9 @@ def compute_grpo_rewards(
     ))
 
     # shuffle
-    randon_indices = np.random.permutation(policy_rollout_buffer.size())
-    policy_rollout_buffer.rearrange(randon_indices)
-    verifier_rollout_buffer.rearrange(randon_indices)
+    random_indices = np.random.permutation(policy_rollout_buffer.size())
+    policy_rollout_buffer.rearrange(random_indices)
+    verifier_rollout_buffer.rearrange(random_indices)
 
     policy_rollout_buffer.scatter_to_data_parallel_region()
     verifier_rollout_buffer.scatter_to_data_parallel_region()
@@ -106,7 +107,7 @@ def train_grpo(
         dtype=dtype,
         lora_dtype=lora_dtype
     )
-    optimizer = torch.optim.Adam(policy.parameters(), lr=lr)
+    optimizer = ParallelOptimizer(torch.optim.Adam(policy.parameters(), lr=lr))
     trainer = ParallelGRPOTrainerForCausalLM(
         policy=policy,
         optimizer=optimizer,
@@ -128,7 +129,7 @@ def train_grpo(
                 print(f'--------- STEP {trainer.step} OF {timer.total} ---------')
                 print(f'Loss: {trainer_outputs.loss}')
                 print(f'Policy Loss: {trainer_outputs.policy_loss}')
-                print(f'Rewards: {trainer_outputs.rewards}')
+                print(f'Advantages: {trainer_outputs.rewards}')
                 print(f'KL Loss: {trainer_outputs.kl_loss}')
     trainer.save(os.path.join(save_dir, "epoch-%03d" % (epoch + 1)))
 

@@ -2,7 +2,7 @@ import collections
 
 import torch
 
-from src.criterion import MSELoss, DPOLoss, DPOLossV0
+from src.criterion import MSELoss, DPOLoss
 from src.models.modeling import ParallelModelForCausalLM, ParallelVerifier
 from src.ppo.buffer import PPORolloutBufferSample
 from src.trainer import ParallelTrainer, Trainer
@@ -757,7 +757,7 @@ class ParallelGRPOTrainerForCausalLM(ParallelTrainer):
         obs = rollout_data.obs.to(self.policy.device())
         actions = rollout_data.actions.to(self.policy.device())
         action_masks = rollout_data.action_masks.to(self.policy.device())
-        rewards = rollout_data.rewards.to(self.policy.device())
+        advantages = rollout_data.advantages.to(self.policy.device())
         old_action_logprobs = rollout_data.action_logprobs.to(self.policy.device())
 
         outputs = self.policy.forward(obs)
@@ -765,15 +765,14 @@ class ParallelGRPOTrainerForCausalLM(ParallelTrainer):
             torch.log_softmax(outputs.logits, dim=-1), dim=-1, index=actions.unsqueeze(-1)
         ).squeeze(-1)
 
-        # Normalize rewards
-        rewards = torch.masked_select(rewards.view(-1), action_masks.view(-1))
+        advantages = torch.masked_select(advantages.view(-1), action_masks.view(-1))
         # ratio between old and new policy, should be one at the first iteration
         ratio = torch.exp(action_logprobs - old_action_logprobs)
         ratio = torch.masked_select(ratio.view(-1), action_masks.view(-1))
         # clipped surrogate loss
-        policy_loss = rewards * ratio
+        policy_loss = advantages * ratio
         if self.clip_range > 0:
-            clipped_actor_loss = rewards * torch.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range)
+            clipped_actor_loss = advantages * torch.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range)
             policy_loss = torch.min(policy_loss, clipped_actor_loss)
         policy_loss = - torch.mean(policy_loss)
 
@@ -791,11 +790,11 @@ class ParallelGRPOTrainerForCausalLM(ParallelTrainer):
         self.backward(loss)
 
         Outputs = collections.namedtuple('Outputs', [
-            'loss', "policy_loss", 'rewards', "kl_loss", "ratio"])
+            'loss', "policy_loss", 'advantages', "kl_loss", "ratio"])
         return Outputs(
             loss=loss.item(),
             policy_loss=policy_loss.item(),
-            rewards=torch.mean(rewards).item(),
+            advantages=torch.mean(advantages).item(),
             kl_loss=kl_loss.item() if isinstance(kl_loss, torch.Tensor) else kl_loss,
             ratio=torch.mean(ratio).detach().cpu().item()
         )
