@@ -476,6 +476,7 @@ class Mistral3Verifier(ParallelVerifier):
         super().__init__()
         self.args = args
         self.language_model = Ministral3Verifier(args)
+        self.checkpoint = CheckpointForMistral3()
 
     def init_weights(self):
         self.language_model.init_weights()
@@ -484,4 +485,10 @@ class Mistral3Verifier(ParallelVerifier):
         return self.language_model.forward(tokens)
 
     def load(self, ckpt_dir: str, verbose: bool = True, **kwargs):
-        self.language_model.load(ckpt_dir, verbose, **kwargs)
+        ckpt_dir = self.checkpoint.auto_split_or_merge_checkpoints(
+            ckpt_dir=ckpt_dir,
+            model_parallel_world_size=self.model_parallel_world_size,
+            global_rank=self.global_rank
+        )
+        merge_lora = kwargs.get("merge_lora", True)
+        super().load(ckpt_dir, verbose=verbose, merge_lora=merge_lora)

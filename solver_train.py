@@ -67,7 +67,7 @@ def main(
         max_seq_len=max_seq_len,
         save_optim=save_optim
     )
-    trainer.load(ckpt_dir if (begin_epoch == 0) else os.path.join(save_dir, f"epoch-{begin_epoch}"))
+    trainer.load(ckpt_dir if (begin_epoch == 0) else os.path.join(save_dir, f"epoch-%03d" % begin_epoch))
     for epoch in range(begin_epoch, epochs):
         timer = Timer(total=len(dataloader), episode=100)
         for data in dataloader:
@@ -81,8 +81,8 @@ def main(
                 print(f'LOSS: ', outputs.loss)
                 trainer.predict(outputs.logits, data['instruction'], data['output'])
             if trainer.step % save_steps == 0:
-                trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))
-        trainer.save(os.path.join(save_dir, f"epoch-{epoch + 1}"))
+                trainer.save(os.path.join(save_dir, f"epoch-%03d" % (epoch + 1)))
+        trainer.save(os.path.join(save_dir, f"epoch-%03d" % (epoch + 1)))
 
 
 if __name__ == '__main__':
