@@ -24,6 +24,8 @@ def main(
         max_batch_size: int = 1,
         max_forward_batch_size: int = 32,
         lr: float = 1e-5,
+        coef: float = 1.0,
+        ce_coef: float = 0.0,
         epochs: int = 1,
         begin_epoch: int = 0,
         chunk_size: int = None,
@@ -87,6 +89,8 @@ def main(
         trainer = ParallelVerifierTrainerForDPO(
             model=verifier,
             optimizer=optimizer,
+            coef=coef,
+            ce_coef=ce_coef,
             save_optim=save_optim,
             accumulation_steps=accumulation_steps
         )
@@ -99,7 +103,7 @@ def main(
             trainer_outputs = trainer.forward(data)
             if trainer.step % 100 == 0:
                 print(f'step {trainer.step} of {timer.total} ---------------')
-                print(f'LOSS: {trainer_outputs.loss.item()} | ACC: {trainer.verifier_accuracy()}')
+                print(f'LOSS: {trainer_outputs.loss} | CE LOSS: {trainer_outputs.ce_loss} | ACC: {trainer.verifier_accuracy()}')
         trainer.save(os.path.join(save_dir, "epoch-%03d" % (epoch + 1)))
         if max_num_ckpts is not None and (epoch + 1 - max_num_ckpts) > 0:
             rm_dir = os.path.join(save_dir, "epoch-%03d" % (epoch + 1 - max_num_ckpts))

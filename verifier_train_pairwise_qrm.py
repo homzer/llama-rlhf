@@ -33,6 +33,8 @@ def main(
         config_file: str = None,
         dtype: str = "bfloat16",
         lora_dtype: str = "float32",
+        coef: float = 1.0,
+        ce_coef: float = 1.0,
         use_chat_template: bool = False,
         seed: int = None,
         save_optim: bool = False,
@@ -72,7 +74,7 @@ def main(
         rollout_buffer = RolloutBuffer()
         if use_chat_template:
             dataset = ChatTemplateDataset(dataset, verifier_tokenizer)
-        dataloader = ParallelDataLoader(dataset, batch_size=512)
+        dataloader = ParallelDataLoader(dataset, batch_size=1024)
         timer = Timer(total=len(dataloader), episode=10)
         for data in dataloader:
             timer.step()
@@ -103,6 +105,8 @@ def main(
         trainer = ParallelVerifierTrainerForQRM(
             model=verifier,
             optimizer=optimizer,
+            ce_coef=ce_coef,
+            coef=coef,
             save_optim=save_optim,
             accumulation_steps=accumulation_steps
         )
@@ -115,7 +119,7 @@ def main(
             trainer_outputs = trainer.forward(data)
             if trainer.step % 100 == 0:
                 print(f'step {trainer.step} of {timer.total} ---------------')
-                print(f'LOSS: {trainer_outputs.loss.item()} | ACC: {trainer.verifier_accuracy()}')
+                print(f'LOSS: {trainer_outputs.loss} | CE LOSS {trainer_outputs.ce_loss} | ACC: {trainer.verifier_accuracy()}')
         trainer.save(os.path.join(save_dir, "epoch-%03d" % (epoch + 1)))
         if max_num_ckpts is not None and (epoch + 1 - max_num_ckpts) > 0:
             rm_dir = os.path.join(save_dir, "epoch-%03d" % (epoch + 1 - max_num_ckpts))

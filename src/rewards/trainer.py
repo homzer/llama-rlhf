@@ -390,6 +390,8 @@ class ParallelVerifierTrainerForQRM(ParallelTrainer):
             optimizer: torch.optim.Optimizer,
             beta: float = 0.2,
             gamma: float = 2.0,
+            coef: float = 1.0,
+            ce_coef: float = 0.0,
             accumulation_steps: int = 1,
             save_optim: bool = False
     ):
@@ -400,6 +402,9 @@ class ParallelVerifierTrainerForQRM(ParallelTrainer):
             accumulation_steps=accumulation_steps
         )
         self.criterion = QRMLoss(beta=beta, gamma=gamma)
+        self.ce_criterion = torch.nn.CrossEntropyLoss(ignore_index=-100)
+        self.ce_coef = ce_coef
+        self.coef = coef
         self.predictions = []
 
     def forward(self, rollout_data):
@@ -422,12 +427,20 @@ class ParallelVerifierTrainerForQRM(ParallelTrainer):
             torch.log_softmax(rejected_logits, dim=-1), dim=-1, index=rejected_actions.unsqueeze(-1)
         ).squeeze(-1)
 
-        loss = self.criterion.forward(
+        loss = self.coef * self.criterion.forward(
             chosen_logprobs=chosen_action_logprobs,
             rejected_logprobs=rejected_action_logprobs,
             chosen_masks=chosen_action_masks,
             rejected_masks=rejected_action_masks
         )
+        ce_loss = 0.0
+        if self.ce_coef != 0:
+            chosen_actions[~chosen_action_masks] = -100
+            ce_loss = self.ce_coef * self.ce_criterion.forward(
+                input=chosen_logits.view(-1, chosen_logits.shape[-1]),
+                target=chosen_actions.view(-1)
+            )
+            loss += ce_loss
         self.backward(loss)
 
         # logging
@@ -435,8 +448,8 @@ class ParallelVerifierTrainerForQRM(ParallelTrainer):
         rejected_logprobs = masked_mean(rejected_action_logprobs, rejected_action_masks, dim=-1)
         logprobs = (chosen_logprobs - rejected_logprobs)
         self.predictions.extend([x > 0 for x in logprobs])
-        Output = collections.namedtuple('Output', ['loss'])
-        return Output(loss=loss)
+        Output = collections.namedtuple('Output', ['loss', 'ce_loss'])
+        return Output(loss=loss.item(), ce_loss=ce_loss.item() if isinstance(ce_loss, torch.Tensor) else ce_loss)
 
     def verifier_accuracy(self) -> float:
         accuracy = torch.stack(self.predictions).float().mean().item()
@@ -449,6 +462,8 @@ class ParallelVerifierTrainerForDPO(ParallelTrainer):
             self,
             model: ParallelModelForCausalLM,
             optimizer: torch.optim.Optimizer,
+            coef: float = 1.0,
+            ce_coef: float = 0.0,
             accumulation_steps: int = 1,
             save_optim: bool = False
     ):
@@ -459,6 +474,9 @@ class ParallelVerifierTrainerForDPO(ParallelTrainer):
             accumulation_steps=accumulation_steps
         )
         self.criterion = DPOLoss(beta=0.1, reduction="sum")
+        self.ce_criterion = torch.nn.CrossEntropyLoss(ignore_index=-100)
+        self.ce_coef = ce_coef
+        self.coef = coef
         self.predictions = []
 
     def forward(self, rollout_data):
@@ -483,7 +501,7 @@ class ParallelVerifierTrainerForDPO(ParallelTrainer):
             torch.log_softmax(rejected_logits, dim=-1), dim=-1, index=rejected_actions.unsqueeze(-1)
         ).squeeze(-1)
 
-        loss = self.criterion.forward(
+        loss = self.coef * self.criterion.forward(
             chosen_logprobs=chosen_action_logprobs,
             rejected_logprobs=rejected_action_logprobs,
             ref_chosen_logprobs=ref_chosen_logprobs,
@@ -491,6 +509,14 @@ class ParallelVerifierTrainerForDPO(ParallelTrainer):
             chosen_masks=chosen_action_masks,
             rejected_masks=rejected_action_masks
         )
+        ce_loss = 0.0
+        if self.ce_coef != 0:
+            chosen_actions[~chosen_action_masks] = -100
+            ce_loss = self.ce_coef * self.ce_criterion.forward(
+                input=chosen_logits.view(-1, chosen_logits.shape[-1]),
+                target=chosen_actions.view(-1)
+            )
+            loss += ce_loss
         self.backward(loss)
 
         # logging
@@ -500,8 +526,8 @@ class ParallelVerifierTrainerForDPO(ParallelTrainer):
         ref_rejected_logprobs = masked_mean(ref_rejected_logprobs, rejected_action_masks, dim=-1)
         logprobs = (chosen_logprobs - ref_chosen_logprobs) - (rejected_logprobs - ref_rejected_logprobs)
         self.predictions.extend([x > 0 for x in logprobs])
-        Output = collections.namedtuple('Output', ['loss'])
-        return Output(loss=loss)
+        Output = collections.namedtuple('Output', ['loss', 'ce_loss'])
+        return Output(loss=loss.item(), ce_loss=ce_loss.item() if isinstance(ce_loss, torch.Tensor) else ce_loss)
 
     def verifier_accuracy(self) -> float:
         accuracy = torch.stack(self.predictions).float().mean().item()
