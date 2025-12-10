@@ -1,6 +1,7 @@
 import gc
 import os
 import random
+import shutil
 
 import fire
 import torch
@@ -42,7 +43,7 @@ def evaluate_policy(
     if label_file is None:
         return
     for file in label_file.split("++"):
-        task = os.path.basename(file).split("_")[0]
+        task = str(os.path.basename(file).split("_")[0])
         dataset = JsonDataset(file)
         if use_chat_template:
             dataset = ChatTemplateDataset(dataset, tokenizer)
@@ -74,6 +75,7 @@ def main(
         max_seq_len: int = 512,
         max_batch_size: int = 1,
         max_generate_batch_size: int = 1,
+        max_num_ckpts: int = None,
         temperature: float = 0.0,
         top_p: float = 1.0,
         lr: float = 1e-5,
@@ -108,7 +110,6 @@ def main(
         dtype=dtype,
         lora_dtype=lora_dtype
     )
-    optimizer = ParallelOptimizer(torch.optim.Adam(model.parameters(), lr=lr))
 
     datalist = []
     for file in train_file.split("++"):
@@ -124,6 +125,7 @@ def main(
         if use_chat_template:
             dataset = ChatTemplateDataset(dataset, tokenizer)
         dataloader = ParallelDataLoader(dataset, batch_size=max_batch_size)
+        optimizer = ParallelOptimizer(torch.optim.Adam(model.parameters(), lr=lr))
         trainer = ParallelSolverTrainer(
             model=model,
             tokenizer=tokenizer,
@@ -131,7 +133,7 @@ def main(
             max_seq_len=max_seq_len,
             save_optim=save_optim
         )
-        trainer.load(ckpt_dir if (begin_epoch == 0) else os.path.join(save_dir, "epoch-%03d" % begin_epoch))
+        trainer.load(ckpt_dir if (epoch == 0) else os.path.join(save_dir, "epoch-%03d" % epoch))
         timer = Timer(total=len(dataloader), episode=100)
         for data in dataloader:
             outputs = trainer.forward(
@@ -144,11 +146,16 @@ def main(
                 print(f'LOSS: {outputs.loss}')
                 trainer.predict(outputs.logits, data['instruction'], data['output'])
         trainer.save(os.path.join(save_dir, "epoch-%03d" % (epoch + 1)))
+        if max_num_ckpts is not None and (epoch + 1 - max_num_ckpts) > 0:
+            rm_dir = os.path.join(save_dir, "epoch-%03d" % (epoch + 1 - max_num_ckpts))
+            if get_rank() == 0 and os.path.exists(rm_dir):
+                shutil.rmtree(rm_dir)
 
-        # del optimizer
-        # torch.cuda.empty_cache()
-        # gc.collect()
-        # set_barrier()
+        del optimizer
+        del trainer
+        torch.cuda.empty_cache()
+        gc.collect()
+        set_barrier()
 
         evaluate_policy(
             model=model,
