@@ -97,9 +97,7 @@ class ParallelLCOTrainerForDPORM(ParallelTrainer):
         logits = self.policy.forward(obs).logits
         logits = logits.view(-1, logits.shape[-1])[action_masks.view(-1)]
 
-        advantages = (
-                (advantages - torch.mean(advantages, -1, keepdim=True)) / torch.std(advantages, -1, keepdim=True)
-        ).nan_to_num(0.0)
+        advantages = (advantages / torch.std(advantages, dim=-1, keepdim=True)).nan_to_num(0.0)
         advantages_ = torch.full_like(old_logits, fill_value=-100)
         advantages_[torch.arange(advantages_.shape[0])[:, None], advantage_indices] = advantages
 

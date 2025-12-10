@@ -248,10 +248,10 @@ def run(
         # collecting logits buffer
         logits_rollout_buffer = collect_logits_buffer(
             policy_rollout_buffer=policy_rollout_buffer,
-            policy_model_type=policy_model_type,
-            policy_ckpt_dir=policy_ckpt_dir,
-            policy_config_file=policy_config_file,
-            policy_tokenizer_file=policy_tokenizer_file,
+            policy_model_type=verifier_model_type,
+            policy_ckpt_dir=verifier_ckpt_dir,
+            policy_config_file=verifier_config_file,
+            policy_tokenizer_file=verifier_tokenizer_file,
             max_seq_len=max_seq_len,
             max_forward_batch_size=max_forward_batch_size,
             dtype=dtype,
