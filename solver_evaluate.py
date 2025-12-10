@@ -1,4 +1,5 @@
 import os
+import statistics
 
 import fire
 
@@ -17,8 +18,9 @@ def main(
         model_type: str = "llama-2-7b",
         max_seq_len: int = 512,
         max_batch_size: int = 1,
-        temperature: float = 0.0,
-        top_p: float = 1.0,
+        num_samples_per_prompt: int = 1,
+        temperature: float = 0.6,
+        top_p: float = 0.95,
         tokenizer_file: str = None,
         config_file: str = None,
         use_chat_template: bool = False,
@@ -44,22 +46,27 @@ def main(
         dtype=dtype
     )
     model.load(ckpt_dir)
-    evaluator = DataParallelPolicyEvaluator(
-        model=model,
-        tokenizer=tokenizer,
-        batch_size=max_batch_size,
-        max_seq_len=max_seq_len,
-        temperature=temperature,
-        top_p=top_p
-    )
-    dataset = JsonDataset(label_file)
-    if use_chat_template:
-        dataset = ChatTemplateDataset(dataset, tokenizer)
-    outputs = evaluator.forward(task, dataset)
-    print("Evaluate Accuracy: ", outputs.acc, "Missing: ", outputs.missing)
-    if parallel_infos.global_rank == 0:
-        os.makedirs(log_dir, exist_ok=True)
-        json_dump(outputs.datalist, os.path.join(log_dir, f'results-{round(outputs.acc, 4)}.jsonl'))
+    acc = []
+    for _ in range(num_samples_per_prompt):
+        evaluator = DataParallelPolicyEvaluator(
+            model=model,
+            tokenizer=tokenizer,
+            batch_size=max_batch_size,
+            max_seq_len=max_seq_len,
+            temperature=temperature,
+            top_p=top_p
+        )
+        dataset = JsonDataset(label_file)
+        if use_chat_template:
+            dataset = ChatTemplateDataset(dataset, tokenizer)
+        outputs = evaluator.forward(task, dataset)
+        acc.append(outputs.acc)
+        print(f"Evaluate Accuracy: {outputs.acc} | Missing: {outputs.missing}")
+        if parallel_infos.global_rank == 0:
+            os.makedirs(log_dir, exist_ok=True)
+            json_dump(outputs.datalist, os.path.join(log_dir, f'results-{round(outputs.acc, 4)}.jsonl'))
+    if num_samples_per_prompt > 1:
+        print(f"Mean {statistics.mean(acc)} | Std {statistics.stdev(acc)}")
 
 
 if __name__ == '__main__':
