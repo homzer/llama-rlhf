@@ -47,6 +47,7 @@ def main(
     )
     model.load(ckpt_dir)
     acc = []
+    results = []
     for _ in range(num_samples_per_prompt):
         evaluator = DataParallelPolicyEvaluator(
             model=model,
@@ -61,12 +62,17 @@ def main(
             dataset = ChatTemplateDataset(dataset, tokenizer)
         outputs = evaluator.forward(task, dataset)
         acc.append(outputs.acc)
+        results.extend(outputs.datalist)
         print(f"Evaluate Accuracy: {outputs.acc} | Missing: {outputs.missing}")
         if parallel_infos.global_rank == 0:
             os.makedirs(log_dir, exist_ok=True)
             json_dump(outputs.datalist, os.path.join(log_dir, f'results-{round(outputs.acc, 4)}.jsonl'))
     if num_samples_per_prompt > 1:
-        print(f"Mean {statistics.mean(acc)} | Std {statistics.stdev(acc)}")
+        mean, std = statistics.mean(acc), statistics.stdev(acc)
+        print(f"Mean {mean} | Std {std}")
+        if parallel_infos.global_rank == 0:
+            os.makedirs(log_dir, exist_ok=True)
+            json_dump(results, os.path.join(log_dir, f'results-{round(mean, 4)}-std-{round(std, 4)}.jsonl'))
 
 
 if __name__ == '__main__':
