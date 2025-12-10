@@ -6,6 +6,7 @@ import fire
 import torch
 
 from policy_train_dpo import collect_reference_buffer
+from policy_train_ppo_with_evaluate import evaluate_actor
 from src.dataset import PairwiseDataset
 from src.entities import Timer, IterationHandler
 from src.modeling import get_parallel_model
@@ -20,9 +21,12 @@ def main(
         save_dir: str,
         train_file: str,
         model_type: str,
+        task: str = None,
+        label_file: str = None,
         max_seq_len: int = 512,
         max_batch_size: int = 1,
-        max_forward_batch_size: int = 32,
+        max_forward_batch_size: int = 12,
+        max_generate_batch_size: int = 256,
         lr: float = 1e-5,
         coef: float = 1.0,
         ce_coef: float = 0.0,
@@ -117,6 +121,25 @@ def main(
         torch.cuda.empty_cache()
         gc.collect()
         set_barrier()
+
+        if label_file is not None:
+            assert task is not None
+            evaluate_actor(
+                task=task,
+                label_file=label_file,
+                log_dir=log_dir,
+                actor_model_type=model_type,
+                actor_config_file=config_file,
+                max_seq_len=max_seq_len,
+                actor_tokenizer_file=config_file,
+                dtype=dtype,
+                epoch=epoch,
+                actor_save_dir=save_dir,
+                max_generate_batch_size=max_generate_batch_size,
+                use_chat_template=use_chat_template
+            )
+
+
 
 
 if __name__ == '__main__':

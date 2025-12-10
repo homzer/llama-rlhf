@@ -435,10 +435,11 @@ class ParallelVerifierTrainerForQRM(ParallelTrainer):
         )
         ce_loss = 0.0
         if self.ce_coef != 0:
-            chosen_actions[~chosen_action_masks] = -100
+            targets = chosen_actions.clone()
+            targets[~chosen_action_masks] = -100
             ce_loss = self.ce_coef * self.ce_criterion.forward(
                 input=chosen_logits.view(-1, chosen_logits.shape[-1]),
-                target=chosen_actions.view(-1)
+                target=targets.view(-1)
             )
             loss += ce_loss
         self.backward(loss)
@@ -511,10 +512,11 @@ class ParallelVerifierTrainerForDPO(ParallelTrainer):
         )
         ce_loss = 0.0
         if self.ce_coef != 0:
-            chosen_actions[~chosen_action_masks] = -100
+            targets = chosen_actions.clone()
+            targets[~chosen_action_masks] = -100
             ce_loss = self.ce_coef * self.ce_criterion.forward(
                 input=chosen_logits.view(-1, chosen_logits.shape[-1]),
-                target=chosen_actions.view(-1)
+                target=targets.view(-1)
             )
             loss += ce_loss
         self.backward(loss)

@@ -43,9 +43,6 @@ def main(
         lora_rank=-1,
         dtype=dtype
     )
-    dataset = JsonDataset(label_file)
-    if use_chat_template:
-        dataset = ChatTemplateDataset(dataset, tokenizer)
     model.load(ckpt_dir)
     evaluator = DataParallelPolicyEvaluator(
         model=model,
@@ -55,6 +52,9 @@ def main(
         temperature=temperature,
         top_p=top_p
     )
+    dataset = JsonDataset(label_file)
+    if use_chat_template:
+        dataset = ChatTemplateDataset(dataset, tokenizer)
     outputs = evaluator.forward(task, dataset)
     print("Evaluate Accuracy: ", outputs.acc, "Missing: ", outputs.missing)
     if parallel_infos.global_rank == 0:
