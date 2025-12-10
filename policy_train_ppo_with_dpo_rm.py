@@ -176,8 +176,6 @@ def run(
             dtype=dtype
         )
         print(f"Average Rewards: {verifier_rollout_buffer.mean()}")
-        verifier_rollout_buffer.normalize()
-
         policy_rollout_buffer["advantages"] = verifier_rollout_buffer["scores"]
         rollout_buffer = RolloutBuffer(
             obs=policy_rollout_buffer["obs"],
