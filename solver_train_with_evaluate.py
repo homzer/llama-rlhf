@@ -1,3 +1,4 @@
+import gc
 import os
 import random
 
@@ -5,11 +6,11 @@ import fire
 import torch
 
 from src.dataset import JsonDataset, ChatTemplateDataset
-from src.entities import Timer
+from src.entities import Timer, IterationHandler
 from src.evaluator import DataParallelPolicyEvaluator
 from src.modeling import get_parallel_model
 from src.parallel.data_parallel.dataloader import ParallelDataLoader
-from src.parallel.initialize import setup_model_parallel, get_rank
+from src.parallel.initialize import setup_model_parallel, get_rank, set_barrier
 from src.parallel.optimizer import ParallelOptimizer
 from src.trainer import ParallelSolverTrainer
 from src.utils import print_current_func_args, json_load, json_dump
@@ -80,8 +81,7 @@ def main(
         dtype: str = "bfloat16",
         lora_rank: int = -1,
         lora_dtype: str = "bfloat16",
-        save_steps: int = None,
-        max_train_samples: int = None,
+        chunk_size: int = None,
         begin_epoch: int = 0,
         use_chat_template: bool = False,
         seed: int = None,
@@ -89,8 +89,6 @@ def main(
         model_parallel_size: int = None,
         sequence_parallel_size: int = 1
 ):
-    tokenizer_file = tokenizer_file or ckpt_dir
-    config_file = config_file or ckpt_dir
     setup_model_parallel(
         seed=seed,
         log_dir=log_dir,
@@ -98,6 +96,8 @@ def main(
         sequence_parallel_size=sequence_parallel_size
     )
     print_current_func_args()
+    tokenizer_file = tokenizer_file or ckpt_dir
+    config_file = config_file or ckpt_dir
 
     model, tokenizer = get_parallel_model(
         model_type=model_type,
@@ -108,25 +108,30 @@ def main(
         dtype=dtype,
         lora_dtype=lora_dtype
     )
+    optimizer = ParallelOptimizer(torch.optim.Adam(model.parameters(), lr=lr))
+
     datalist = []
     for file in train_file.split("++"):
         datalist.extend(json_load(file))
     datalist = process_multi_outputs(datalist)
     random.shuffle(datalist)
-    dataset = JsonDataset(f=datalist)
-    if use_chat_template:
-        dataset = ChatTemplateDataset(dataset, tokenizer)
-    dataloader = ParallelDataLoader(dataset, batch_size=max_batch_size)
-    optimizer = ParallelOptimizer(torch.optim.Adam(model.parameters(), lr=lr))
-    trainer = ParallelSolverTrainer(
-        model=model,
-        tokenizer=tokenizer,
-        optimizer=optimizer,
-        max_seq_len=max_seq_len,
-        save_optim=save_optim
-    )
-    trainer.load(ckpt_dir if (begin_epoch == 0) else os.path.join(save_dir, "epoch-%03d" % begin_epoch))
-    for epoch in range(begin_epoch, epochs):
+
+    for epoch, datalist in IterationHandler(datalist, epochs, chunk_size, begin_epoch):
+        dataset = JsonDataset(f=datalist)
+        if len(dataset) == 0:
+            continue
+
+        if use_chat_template:
+            dataset = ChatTemplateDataset(dataset, tokenizer)
+        dataloader = ParallelDataLoader(dataset, batch_size=max_batch_size)
+        trainer = ParallelSolverTrainer(
+            model=model,
+            tokenizer=tokenizer,
+            optimizer=optimizer,
+            max_seq_len=max_seq_len,
+            save_optim=save_optim
+        )
+        trainer.load(ckpt_dir if (begin_epoch == 0) else os.path.join(save_dir, "epoch-%03d" % begin_epoch))
         timer = Timer(total=len(dataloader), episode=100)
         for data in dataloader:
             outputs = trainer.forward(
@@ -138,37 +143,13 @@ def main(
                 print(f'step {trainer.step} of {len(dataloader)} -----------------------------')
                 print(f'LOSS: {outputs.loss}')
                 trainer.predict(outputs.logits, data['instruction'], data['output'])
-            if save_steps is not None and trainer.step % save_steps == 0:
-                trainer.save(os.path.join(save_dir, "epoch-%03d" % (epoch + 1)))
-                evaluate_policy(
-                    model=model,
-                    tokenizer=tokenizer,
-                    log_dir=log_dir,
-                    label_file=label_file,
-                    max_generate_batch_size=max_generate_batch_size,
-                    max_seq_len=max_seq_len,
-                    use_chat_template=use_chat_template,
-                    temperature=temperature,
-                    top_p=top_p,
-                    epoch=epoch
-                )
-            if max_train_samples is not None and trainer.step * max_batch_size >= max_train_samples:
-                trainer.save(os.path.join(save_dir, "epoch-%03d" % (epoch + 1)))
-                evaluate_policy(
-                    model=model,
-                    tokenizer=tokenizer,
-                    log_dir=log_dir,
-                    label_file=label_file,
-                    max_generate_batch_size=max_generate_batch_size,
-                    max_seq_len=max_seq_len,
-                    use_chat_template=use_chat_template,
-                    temperature=temperature,
-                    top_p=top_p,
-                    epoch=epoch
-                )
-                exit(0)
-
         trainer.save(os.path.join(save_dir, "epoch-%03d" % (epoch + 1)))
+
+        # del optimizer
+        # torch.cuda.empty_cache()
+        # gc.collect()
+        # set_barrier()
+
         evaluate_policy(
             model=model,
             tokenizer=tokenizer,

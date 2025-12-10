@@ -223,6 +223,22 @@ class Mistral3Args(BaseParallelArgs):
 
 
 @dataclass
+class Gemma3Args(BaseParallelArgs):
+    text_config_hidden_size: int = None
+    text_config_intermediate_size: int = None
+    text_config_num_hidden_layers: int = None
+    text_config_num_attention_heads: int = 8
+    text_config_num_key_value_heads: int = 4
+    text_config_head_dim: int = 256
+    text_config_rope_scaling_factor: float = None
+
+    def from_json(self, filename: str):
+        if not filename.endswith(".json"):
+            filename = os.path.join(filename, "config.json")
+        return super().from_json(filename)
+
+
+@dataclass
 class QwenArgs(BaseParallelArgs):
     hidden_size: int = None
     intermediate_size: int = None
