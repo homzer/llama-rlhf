@@ -443,7 +443,7 @@ class ParallelMiniLLMTrainerForCausalLM(ParallelTrainer):
             self.alpha * teacher_action_logprobs.exp() + (1 - self.alpha) * old_action_logprobs.exp()
         )
         normed_rewards = torch.cumsum((teacher_action_logprobs - old_action_logprobs).flip(-1), dim=-1).flip(-1)
-        normed_rewards = normed_rewards / torch.cumsum(action_masks.filp(-1), dim=-1).flip(-1)
+        normed_rewards = normed_rewards / torch.cumsum(action_masks.flip(-1), dim=-1).flip(-1)
 
         logits = self.policy.forward(obs).logits
         logits = logits.view(-1, logits.shape[-1])[action_masks.view(-1)]
@@ -476,6 +476,7 @@ class ParallelGKDTrainerForCausalLM(ParallelTrainer):
             self,
             policy: ParallelModelForCausalLM,
             optimizer: torch.optim.Optimizer,
+            beta: float = 0.9,
             save_optim: bool = False,
             accumulation_steps: int = 1,
     ):
@@ -485,6 +486,7 @@ class ParallelGKDTrainerForCausalLM(ParallelTrainer):
             save_optim=save_optim,
             accumulation_steps=accumulation_steps
         )
+        self.beta = beta
         self.policy = policy
         self.criterion = torch.nn.KLDivLoss(reduction="none", log_target=True)
 
@@ -498,9 +500,15 @@ class ParallelGKDTrainerForCausalLM(ParallelTrainer):
         logits = self.policy.forward(obs).logits
         logits = logits.view(-1, logits.shape[-1])[action_masks.view(-1)]
         teacher_logits = teacher_logits.view(-1, teacher_logits.shape[-1])[action_masks.view(-1)]
-        loss = self.criterion.forward(
-            torch.log_softmax(teacher_logits.to(logits), dim=-1), target=torch.log_softmax(logits, dim=-1)
-        ).sum(-1).mean()
+        log_inputs = (self.beta * torch.softmax(logits, dim=-1) + (1 - self.beta) * torch.softmax(logits, dim=-1)).log()
+        log_inputs = torch.nan_to_num(log_inputs, neginf=-100)
+        loss = self.beta * self.criterion.forward(
+            log_inputs, target=torch.log_softmax(teacher_logits.to(logits), dim=-1)
+        ).sum(-1)
+        loss += (1 - self.beta) * self.criterion.forward(
+            log_inputs, target=torch.log_softmax(logits, dim=-1)
+        ).sum(-1)
+        loss = loss.mean()
 
         self.backward(loss)
         Outputs = collections.namedtuple('Outputs', ['loss'])
