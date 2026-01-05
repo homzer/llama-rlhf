@@ -445,7 +445,7 @@ class LogitsRolloutBuffer(RolloutBuffer):
             kwargs["vocab_sizes"] = np.full(shape=logits.shape[0], fill_value=logits.shape[-1])
             kwargs["logits_values"] = logits_values.detach().cpu().numpy()
             kwargs["logits_indices"] = logits_indices.detach().cpu().numpy()
-            self.set(**kwargs)
+        self.set(**kwargs)
 
     @classmethod
     def load(cls, buffer_dir: str, start: int = 0, stop: int = None, **kwargs) -> "LogitsRolloutBuffer":

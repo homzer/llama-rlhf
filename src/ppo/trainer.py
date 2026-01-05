@@ -369,7 +369,6 @@ class ParallelDPOTrainerForCausalLM(ParallelTrainer):
         )
         self.policy = policy
         self.criterion = DPOLoss(beta=beta, reduction="sum")
-        # self.criterion = DPOLossV0(beta=beta)
 
     def forward(self, rollout_data):
         self.policy.train()
@@ -407,6 +406,71 @@ class ParallelDPOTrainerForCausalLM(ParallelTrainer):
         return Outputs(loss=loss.item())
 
 
+class ParallelMiniLLMTrainerForCausalLM(ParallelTrainer):
+    def __init__(
+            self,
+            policy: ParallelModelForCausalLM,
+            optimizer: torch.optim.Optimizer,
+            alpha: float = 0.2,
+            clip_range: float = 0.2,
+            save_optim: bool = False,
+            accumulation_steps: int = 1,
+    ):
+        super().__init__(
+            model=policy,
+            optimizer=optimizer,
+            save_optim=save_optim,
+            accumulation_steps=accumulation_steps
+        )
+        self.alpha = alpha
+        self.clip_range = clip_range
+        self.policy = policy
+        self.criterion = torch.nn.KLDivLoss(reduction="none", log_target=True)
+
+    def forward(self, rollout_data):
+        self.policy.train()
+
+        obs = rollout_data.obs.to(self.policy.device())
+        actions = rollout_data.actions.to(self.policy.device())
+        action_masks = rollout_data.action_masks.to(self.policy.device())
+        old_action_logprobs = rollout_data.old_action_logprobs.to(self.policy.device())
+        teacher_logits = rollout_data.logits.to(self.policy.device())
+        teacher_action_logprobs = rollout_data.action_logprobs.to(self.policy.device())
+
+        old_action_logprobs[~action_masks] = 0.0
+        teacher_action_logprobs[~action_masks] = 0.0
+        mix_action_logprobs = torch.log(
+            self.alpha * teacher_action_logprobs.exp() + (1 - self.alpha) * old_action_logprobs.exp()
+        )
+        importance_weights = torch.cumsum(old_action_logprobs - mix_action_logprobs, dim=-1).exp()
+        normed_rewards = torch.cumsum((teacher_action_logprobs - old_action_logprobs).flip(-1), dim=-1).flip(-1)
+
+        logits = self.policy.forward(obs).logits
+        logits = logits.view(-1, logits.shape[-1])[action_masks.view(-1)]
+        teacher_logits = teacher_logits.view(-1, teacher_logits.shape[-1])[action_masks.view(-1)]
+        actions = actions.view(-1)[action_masks.view(-1)]
+        mix_action_logprobs = mix_action_logprobs.view(-1)[action_masks.view(-1)]
+        importance_weights = importance_weights.view(-1)[action_masks.view(-1)]
+        normed_rewards = normed_rewards.view(-1)[action_masks.view(-1)]
+
+        action_logprobs = torch.gather(
+            torch.log_softmax(logits, dim=-1), dim=-1, index=actions.unsqueeze(-1)
+        ).squeeze(-1)
+
+        loss_single = importance_weights * self.criterion.forward(
+            torch.log_softmax(teacher_logits, dim=-1), target=torch.log_softmax(logits, dim=-1)
+        ).sum(-1)
+
+        ratio = torch.exp(action_logprobs - mix_action_logprobs)
+        loss_long = normed_rewards * ratio
+        loss_long = torch.min(loss_long, normed_rewards * torch.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range))
+
+        loss = (loss_single - loss_long).mean()
+        self.backward(loss)
+        Outputs = collections.namedtuple('Outputs', ['loss'])
+        return Outputs(loss=loss.item())
+
+
 class ParallelGKDTrainerForCausalLM(ParallelTrainer):
     def __init__(
             self,
@@ -435,7 +499,7 @@ class ParallelGKDTrainerForCausalLM(ParallelTrainer):
         logits = logits.view(-1, logits.shape[-1])[action_masks.view(-1)]
         teacher_logits = teacher_logits.view(-1, teacher_logits.shape[-1])[action_masks.view(-1)]
         loss = self.criterion.forward(
-            torch.log_softmax(logits, dim=-1), target=torch.log_softmax(teacher_logits.to(logits), dim=-1)
+            torch.log_softmax(teacher_logits.to(logits), dim=-1), target=torch.log_softmax(logits, dim=-1)
         ).sum(-1).mean()
 
         self.backward(loss)

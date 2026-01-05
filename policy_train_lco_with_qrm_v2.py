@@ -1,36 +1,33 @@
 import gc
 import os
-import shutil
 
 import fire
 import numpy as np
 import torch
 
-from policy_train_lco import collect_logits_buffer
+from policy_train_lco_with_qrm import train_lco
 from policy_train_ppo import collect_actor_buffer
 from policy_train_ppo_with_evaluate import evaluate_actor
 from src.dataset import JsonDataset
 from src.entities import Timer, IterationHandler
 from src.modeling import get_parallel_model
-from src.parallel.initialize import setup_model_parallel, set_barrier, get_rank
-from src.parallel.optimizer import ParallelOptimizer
+from src.parallel.initialize import setup_model_parallel, set_barrier
 from src.ppo.buffer import RolloutBuffer, LogitsRolloutBuffer
 from src.ppo.generator import ActorLogitsGeneratorForCausalLM
-from src.ppo.trainer_lco import ParallelLCOTrainerForDPORM
 from src.utils import json_load, print_current_func_args
 
 
 def collect_verifier_buffer(
-        logits_rollout_buffer: LogitsRolloutBuffer,
+        policy_rollout_buffer: RolloutBuffer,
         verifier_model_type: str,
         verifier_ckpt_dir: str,
         verifier_config_file: str,
         verifier_tokenizer_file: str,
-        reference_ckpt_dir: str,
         max_seq_len: int,
         max_forward_batch_size: int,
         dtype: str,
-) -> RolloutBuffer:
+        logits_topk: int,
+) -> LogitsRolloutBuffer:
     verifier, verifier_tokenizer = get_parallel_model(
         model_type=verifier_model_type,
         config_file=verifier_config_file,
@@ -44,21 +41,29 @@ def collect_verifier_buffer(
         tokenizer=verifier_tokenizer,
         max_seq_len=max_seq_len
     )
-    verifier_rollout_buffer = RolloutBuffer()
-    timer = Timer(total=logits_rollout_buffer.size() // max_forward_batch_size, episode=10)
-    for data in logits_rollout_buffer.get(max_forward_batch_size):
+    verifier_rollout_buffer = LogitsRolloutBuffer()
+    print("Verifier buffer collecting ...")
+    timer = Timer(total=policy_rollout_buffer.size() // max_forward_batch_size, episode=10)
+    for data in policy_rollout_buffer.get(max_forward_batch_size):
         timer.step()
         generator_outputs = verifier_buffer_generator.forward(data.instructions, data.responses)
-        verifier_rollout_buffer.extend(RolloutBuffer(
-            logprobs=np.take_along_axis(
-                torch.log_softmax(generator_outputs.logits, dim=-1).half().cpu().numpy(),
-                indices=data.logits_indices,
-                axis=-1
-            ),
-            advantage_indices=data.logits_indices,
-            actions=data.actions,
-            action_masks=data.action_masks
-        ))
+        buffer = LogitsRolloutBuffer(
+            instructions=data.instructions,
+            obs=generator_outputs.obs.cpu().numpy(),
+            actions=generator_outputs.actions.cpu().numpy(),
+            action_masks=generator_outputs.action_masks.cpu().numpy(),
+            action_logprobs=generator_outputs.action_logprobs.float().cpu().numpy(),
+            logits=generator_outputs.logits,
+            responses=data.responses,
+            logits_topk=logits_topk
+        )
+        buffer["advantages"] = np.take_along_axis(
+            torch.log_softmax(generator_outputs.logits, dim=-1).half().cpu().numpy(),
+            indices=buffer["logits_indices"],
+            axis=-1
+        )
+        buffer["advantage_indices"] = buffer["logits_indices"]
+        verifier_rollout_buffer.extend(buffer)
 
     verifier.cpu()
     del verifier
@@ -67,106 +72,77 @@ def collect_verifier_buffer(
     gc.collect()
     set_barrier()
 
-    reference, reference_tokenizer = get_parallel_model(
-        model_type=verifier_model_type,
-        config_file=verifier_config_file,
-        tokenizer_file=verifier_tokenizer_file,
-        max_seq_len=max_seq_len,
-        dtype=dtype
-    )
-    reference.load(reference_ckpt_dir)
-    reference_buffer_generator = ActorLogitsGeneratorForCausalLM(
-        model=reference,
-        tokenizer=reference_tokenizer,
-        max_seq_len=max_seq_len
-    )
-    reference_rollout_buffer = RolloutBuffer()
-    timer = Timer(total=logits_rollout_buffer.size() // max_forward_batch_size, episode=10)
-    for data in logits_rollout_buffer.get(max_forward_batch_size):
-        timer.step()
-        generator_outputs = reference_buffer_generator.forward(data.instructions, data.responses)
-        reference_rollout_buffer.extend(RolloutBuffer(
-            logprobs=np.take_along_axis(
-                torch.log_softmax(generator_outputs.logits, dim=-1).half().cpu().numpy(),
-                indices=data.logits_indices,
-                axis=-1
-            ),
-        ))
-
-    reference.cpu()
-    del reference
-    del reference_buffer_generator
-    torch.cuda.empty_cache()
-    gc.collect()
-    set_barrier()
-
-    verifier_rollout_buffer["ref_logprobs"] = reference_rollout_buffer["logprobs"]
-    verifier_rollout_buffer["advantages"] = verifier_rollout_buffer["logprobs"] - reference_rollout_buffer["logprobs"]
     return verifier_rollout_buffer
 
 
-def train_lco(
-        rollout_buffer: LogitsRolloutBuffer,
-        policy_ckpt_dir: str,
+def collect_logits_buffer(
+        verifier_rollout_buffer: LogitsRolloutBuffer,
         policy_model_type: str,
+        policy_ckpt_dir: str,
         policy_config_file: str,
         policy_tokenizer_file: str,
         max_seq_len: int,
-        dtype: str,
-        lora_rank: int,
-        lora_dtype: str,
-        lr: float,
+        max_forward_batch_size: int,
         epoch: int,
-        inner_epochs: int,
         save_dir: str,
-        max_batch_size: int,
-        beta: float = 10.0,
-        save_optim: bool = False,
-        accumulation_steps: int = 1,
-        max_num_ckpts: int = None
-):
+        dtype: str,
+) -> LogitsRolloutBuffer:
     policy, policy_tokenizer = get_parallel_model(
         model_type=policy_model_type,
         config_file=policy_config_file,
-        max_seq_len=max_seq_len,
         tokenizer_file=policy_tokenizer_file,
-        lora_rank=lora_rank,
-        dtype=dtype,
-        lora_dtype=lora_dtype
+        max_seq_len=max_seq_len,
+        dtype=dtype
     )
-    optimizer = ParallelOptimizer(torch.optim.Adam(policy.parameters(), lr=lr))
-    trainer = ParallelLCOTrainerForDPORM(
-        policy=policy,
-        optimizer=optimizer,
-        beta=beta,
-        save_optim=save_optim,
-        accumulation_steps=accumulation_steps
+    policy.load(policy_ckpt_dir if epoch == 0 else os.path.join(save_dir, "epoch-%03d" % epoch))
+    print("Logits buffer collecting ...")
+    logits_buffer_generator = ActorLogitsGeneratorForCausalLM(
+        model=policy,
+        tokenizer=policy_tokenizer,
+        max_seq_len=max_seq_len
     )
-    trainer.load_model(policy_ckpt_dir) if (
-            epoch == 0
-    ) else trainer.load(os.path.join(save_dir, "epoch-%03d" % epoch))
-    print("Policy training ...")
-    timer = Timer(total=(rollout_buffer.size() // max_batch_size) * inner_epochs, episode=100)
-    for inner_epoch in range(inner_epochs):
-        for data in rollout_buffer.get(max_batch_size, shuffle=True, output_tensor=True):
-            timer.step()
-            trainer_outputs = trainer.forward(data)
-            if trainer.step % 100 == 0:
-                print(f'--------- STEP {trainer.step} OF {timer.total} ---------')
-                print(f'Loss: {trainer_outputs.loss}')
-    trainer.save(os.path.join(save_dir, "epoch-%03d" % (epoch + 1)))
-    if max_num_ckpts is not None and (epoch + 1 - max_num_ckpts) > 0:
-        rm_dir = os.path.join(save_dir, "epoch-%03d" % (epoch + 1 - max_num_ckpts))
-        if get_rank() == 0 and os.path.exists(rm_dir):
-            shutil.rmtree(rm_dir)
+    logits_rollout_buffer = RolloutBuffer()
+    timer = Timer(total=verifier_rollout_buffer.size() // max_forward_batch_size, episode=10)
+    for data in verifier_rollout_buffer.get(max_forward_batch_size):
+        timer.step()
+        generator_outputs = logits_buffer_generator.forward(data.instructions, data.responses)
+        logits_rollout_buffer.extend(RolloutBuffer(
+            logits_values=np.take_along_axis(
+                generator_outputs.logits.half().cpu().numpy(),
+                indices=data.logits_indices,
+                axis=-1
+            ),
+            logits_indices=data.logits_indices,
+            vocab_sizes=np.full(shape=generator_outputs.logits.shape[0], fill_value=generator_outputs.logits.shape[-1])
+        ))
 
     policy.cpu()
     del policy
-    del optimizer
-    del trainer
+    del logits_buffer_generator
     torch.cuda.empty_cache()
     gc.collect()
     set_barrier()
+
+    vocab_sizes = verifier_rollout_buffer["vocab_sizes"]
+    if not np.array_equal(verifier_rollout_buffer["vocab_sizes"], logits_rollout_buffer["vocab_sizes"]):
+        print(f"Warming: vocab size is not equal, setting to policy's vocab size")
+        print(f"Verifier vocab size: {verifier_rollout_buffer['vocab_sizes'][0]}")
+        print(f"Policy vocab size: {logits_rollout_buffer['vocab_sizes'][0]}")
+        vocab_sizes = logits_rollout_buffer["vocab_sizes"]
+
+    return LogitsRolloutBuffer(
+        instructions=verifier_rollout_buffer["instructions"],
+        obs=verifier_rollout_buffer["obs"],
+        actions=verifier_rollout_buffer["actions"],
+        action_masks=verifier_rollout_buffer["action_masks"],
+        action_logprobs=verifier_rollout_buffer["action_logprobs"],
+        responses=verifier_rollout_buffer["responses"],
+        logits_values=logits_rollout_buffer["logits_values"],
+        logits_indices=logits_rollout_buffer["logits_indices"],
+        vocab_sizes=vocab_sizes,
+        advantages=verifier_rollout_buffer["advantages"],
+        advantage_indices=verifier_rollout_buffer["advantage_indices"],
+    )
 
 
 def run(
@@ -177,7 +153,6 @@ def run(
         policy_model_type: str,
         verifier_ckpt_dir: str,
         verifier_model_type: str,
-        reference_ckpt_dir: str,
         policy_config_file: str = None,
         policy_tokenizer_file: str = None,
         verifier_config_file: str = None,
@@ -245,36 +220,32 @@ def run(
             num_samples_per_prompt=num_samples_per_prompt
         )
 
-        # collecting logits buffer
-        logits_rollout_buffer = collect_logits_buffer(
+        # collecting verifier buffer
+        verifier_rollout_buffer = collect_verifier_buffer(
             policy_rollout_buffer=policy_rollout_buffer,
-            policy_model_type=policy_model_type,
-            policy_ckpt_dir=policy_ckpt_dir,
-            policy_config_file=policy_config_file,
-            policy_tokenizer_file=policy_tokenizer_file,
+            verifier_model_type=verifier_model_type,
+            verifier_ckpt_dir=verifier_ckpt_dir,
+            verifier_config_file=verifier_config_file,
+            verifier_tokenizer_file=verifier_tokenizer_file,
             max_seq_len=max_seq_len,
             max_forward_batch_size=max_forward_batch_size,
             dtype=dtype,
             logits_topk=logits_topk
         )
 
-        # collecting verifier buffer
-        verifier_rollout_buffer = collect_verifier_buffer(
-            logits_rollout_buffer=logits_rollout_buffer,
-            verifier_model_type=verifier_model_type,
-            verifier_ckpt_dir=verifier_ckpt_dir,
-            verifier_config_file=verifier_config_file,
-            verifier_tokenizer_file=verifier_tokenizer_file,
-            reference_ckpt_dir=reference_ckpt_dir,
+        # collecting logits buffer
+        logits_rollout_buffer = collect_logits_buffer(
+            verifier_rollout_buffer=verifier_rollout_buffer,
+            policy_model_type=policy_model_type,
+            policy_ckpt_dir=policy_ckpt_dir,
+            policy_config_file=policy_config_file,
+            policy_tokenizer_file=policy_tokenizer_file,
             max_seq_len=max_seq_len,
             max_forward_batch_size=max_forward_batch_size,
+            epoch=epoch,
+            save_dir=save_dir,
             dtype=dtype
         )
-
-        logits_rollout_buffer["logprobs"] = verifier_rollout_buffer["logprobs"]
-        logits_rollout_buffer["ref_logprobs"] = verifier_rollout_buffer["ref_logprobs"]
-        logits_rollout_buffer["advantages"] = verifier_rollout_buffer["advantages"]
-        logits_rollout_buffer["advantage_indices"] = verifier_rollout_buffer["advantage_indices"]
 
         if parallel_infos.global_rank == 0:
             logits_rollout_buffer.save(os.path.join(log_dir, "epoch-%03d" % (epoch + 1)))

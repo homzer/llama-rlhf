@@ -1,5 +1,6 @@
 import gc
 import os
+import shutil
 
 import fire
 import numpy as np
@@ -9,7 +10,7 @@ from policy_train_ppo import collect_actor_buffer, collect_reference_buffer, col
 from src.dataset import JsonDataset
 from src.entities import Timer, IterationHandler
 from src.modeling import get_parallel_model
-from src.parallel.initialize import setup_model_parallel, set_barrier
+from src.parallel.initialize import setup_model_parallel, set_barrier, get_rank
 from src.parallel.optimizer import ParallelOptimizer
 from src.ppo.buffer import CriticRolloutBuffer, RolloutBuffer
 from src.ppo.parallel_buffer import ParallelRolloutBuffer
@@ -97,6 +98,7 @@ def train_grpo(
         kl_coef: float = 0.04,
         save_optim: bool = False,
         accumulation_steps: int = 1,
+        max_num_ckpts: int = None
 ):
     policy, policy_tokenizer = get_parallel_model(
         model_type=policy_model_type,
@@ -132,6 +134,10 @@ def train_grpo(
                 print(f'Advantages: {trainer_outputs.advantages}')
                 print(f'KL Loss: {trainer_outputs.kl_loss}')
     trainer.save(os.path.join(save_dir, "epoch-%03d" % (epoch + 1)))
+    if max_num_ckpts is not None and (epoch + 1 - max_num_ckpts) > 0:
+        rm_dir = os.path.join(save_dir, "epoch-%03d" % (epoch + 1 - max_num_ckpts))
+        if get_rank() == 0 and os.path.exists(rm_dir):
+            shutil.rmtree(rm_dir)
 
     policy.cpu()
     del policy

@@ -3,6 +3,7 @@ import os
 import shutil
 
 import fire
+import numpy as np
 import torch.cuda
 
 from policy_train_ppo import collect_actor_buffer
@@ -10,6 +11,7 @@ from policy_train_ppo_with_evaluate import evaluate_actor
 from src.dataset import JsonDataset
 from src.entities import IterationHandler, Timer
 from src.modeling import get_parallel_model
+from src.models.modeling_args import QwenArgs
 from src.parallel.initialize import setup_model_parallel, set_barrier, get_rank
 from src.parallel.optimizer import ParallelOptimizer
 from src.ppo.buffer import RolloutBuffer, LogitsRolloutBuffer
@@ -58,6 +60,18 @@ def collect_logits_buffer(
     torch.cuda.empty_cache()
     gc.collect()
     set_barrier()
+
+    return logits_rollout_buffer
+
+
+def check_vocab_size(logits_rollout_buffer: LogitsRolloutBuffer, policy_config_file: str) -> LogitsRolloutBuffer:
+    args = QwenArgs(max_seq_len=0).from_json(policy_config_file)
+    if logits_rollout_buffer["vocab_sizes"][0].item() != args.vocab_size:
+        print(f"Warming: vocab size is not equal, setting to policy's vocab size")
+        print(f"Teacher vocab size: {logits_rollout_buffer['vocab_sizes'][0]}")
+        print(f"Policy vocab size: {args.vocab_size}")
+        logits_rollout_buffer["vocab_sizes"] = np.full_like(
+            logits_rollout_buffer["vocab_sizes"], fill_value=args.vocab_size)
 
     return logits_rollout_buffer
 
@@ -129,7 +143,6 @@ def run(
         log_dir: str,
         save_dir: str,
         train_file: str,
-        label_file: str,
         policy_ckpt_dir: str,
         policy_model_type: str,
         policy_config_file: str,
@@ -142,6 +155,7 @@ def run(
         max_generate_batch_size: int,
         max_forward_batch_size: int,
         max_seq_len: int,
+        label_file: str = None,
         logits_topk: int = 5,
         temperature: float = 1.0,
         top_p: float = 1.0,
@@ -210,6 +224,9 @@ def run(
             dtype=dtype,
             logits_topk=logits_topk
         )
+
+        if policy_model_type == "qwen":
+            logits_rollout_buffer = check_vocab_size(logits_rollout_buffer, policy_config_file)
 
         train_gkd(
             rollout_buffer=logits_rollout_buffer,
