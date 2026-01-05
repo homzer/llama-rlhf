@@ -449,15 +449,14 @@ class ParallelMiniLLMTrainerForCausalLM(ParallelTrainer):
         logits = logits.view(-1, logits.shape[-1])[action_masks.view(-1)]
         teacher_logits = teacher_logits.view(-1, teacher_logits.shape[-1])[action_masks.view(-1)]
         actions = actions.view(-1)[action_masks.view(-1)]
+        old_action_logprobs = old_action_logprobs.view(-1)[action_masks.view(-1)]
         mix_action_logprobs = mix_action_logprobs.view(-1)[action_masks.view(-1)]
         normed_rewards = normed_rewards.view(-1)[action_masks.view(-1)]
-        importance_weights = (old_action_logprobs - mix_action_logprobs).exp()
-
         action_logprobs = torch.gather(
             torch.log_softmax(logits, dim=-1), dim=-1, index=actions.unsqueeze(-1)
         ).squeeze(-1)
 
-        loss_single = importance_weights * self.criterion.forward(
+        loss_single = (old_action_logprobs - mix_action_logprobs).exp() * self.criterion.forward(
             torch.log_softmax(teacher_logits, dim=-1), target=torch.log_softmax(logits, dim=-1)
         ).sum(-1)
 
