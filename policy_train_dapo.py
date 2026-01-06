@@ -1,5 +1,6 @@
 import gc
 import os
+import shutil
 
 import fire
 import numpy as np
@@ -11,7 +12,7 @@ from policy_train_ppo_with_evaluate import evaluate_actor
 from src.dataset import JsonDataset
 from src.entities import IterationHandler, Timer
 from src.modeling import get_parallel_model
-from src.parallel.initialize import setup_model_parallel, set_barrier
+from src.parallel.initialize import setup_model_parallel, set_barrier, get_rank
 from src.ppo.buffer import RolloutBuffer, CriticRolloutBuffer
 from src.ppo.parallel_buffer import ParallelRolloutBuffer
 from src.ppo.trainer import ParallelDAPOTrainerForCausalLM
@@ -89,6 +90,7 @@ def train_dapo(
         clip_range_lower: float = 0.20,
         save_optim: bool = False,
         accumulation_steps: int = 1,
+        max_num_ckpts: int = None
 ):
     policy, policy_tokenizer = get_parallel_model(
         model_type=policy_model_type,
@@ -120,9 +122,13 @@ def train_dapo(
             if trainer.step % 100 == 0:
                 print(f'--------- STEP {trainer.step} OF {timer.total} ---------')
                 print(f'Loss: {trainer_outputs.loss}')
-                print(f'Rewards: {trainer_outputs.rewards}')
+                print(f'Advantages: {trainer_outputs.advantages}')
                 print(f"Ratio: {trainer_outputs.ratio}")
     trainer.save(os.path.join(save_dir, "epoch-%03d" % (epoch + 1)))
+    if max_num_ckpts is not None and (epoch + 1 - max_num_ckpts) > 0:
+        rm_dir = os.path.join(save_dir, "epoch-%03d" % (epoch + 1 - max_num_ckpts))
+        if get_rank() == 0 and os.path.exists(rm_dir):
+            shutil.rmtree(rm_dir)
 
     policy.cpu()
     del policy
@@ -134,6 +140,7 @@ def train_dapo(
 
 
 def run(
+        task: str,
         train_file: str,
         save_dir: str,
         policy_ckpt_dir: str,
@@ -231,7 +238,7 @@ def run(
         rollout_buffer = RolloutBuffer(
             obs=policy_rollout_buffer["obs"],
             actions=policy_rollout_buffer["actions"],
-            rewards=verifier_rollout_buffer["scores"],
+            advantages=verifier_rollout_buffer["scores"],
             action_masks=policy_rollout_buffer["action_masks"],
             action_logprobs=policy_rollout_buffer["action_logprobs"],
         )
@@ -259,6 +266,7 @@ def run(
 
         if label_file is not None:
             evaluate_actor(
+                task=task,
                 label_file=label_file,
                 log_dir=log_dir,
                 actor_model_type=policy_model_type,

@@ -679,32 +679,32 @@ class ParallelDAPOTrainerForCausalLM(ParallelTrainer):
         obs = rollout_data.obs.to(self.policy.device())
         actions = rollout_data.actions.to(self.policy.device())
         action_masks = rollout_data.action_masks.to(self.policy.device())
-        rewards = rollout_data.rewards.to(self.policy.device())
+        advantages = rollout_data.advantages.to(self.policy.device())
         old_action_logprobs = rollout_data.action_logprobs.to(self.policy.device())
 
         actions = torch.masked_select(actions.view(-1), action_masks.view(-1))
-        rewards = torch.masked_select(rewards.view(-1), action_masks.view(-1))
+        advantages = torch.masked_select(advantages.view(-1), action_masks.view(-1))
         old_action_logprobs = torch.masked_select(old_action_logprobs.view(-1), action_masks.view(-1))
 
         logits = self.policy.forward(obs).logits
         logits = logits.view(-1, logits.shape[-1])[action_masks.view(-1)]
-        rewards = rewards.to(logits.dtype)
+        advantages = advantages.to(logits.dtype)
         action_logprobs = torch.gather(
             torch.log_softmax(logits, dim=-1), dim=-1, index=actions.unsqueeze(-1)
         ).squeeze(-1)
 
         ratio = torch.exp(action_logprobs - old_action_logprobs)
-        policy_loss = rewards * ratio
-        clipped_actor_loss = rewards * torch.clamp(ratio, 1 - self.clip_range_lower, 1 + self.clip_range_higher)
+        policy_loss = advantages * ratio
+        clipped_actor_loss = advantages * torch.clamp(ratio, 1 - self.clip_range_lower, 1 + self.clip_range_higher)
         policy_loss = torch.min(policy_loss, clipped_actor_loss)
         policy_loss = - torch.sum(policy_loss)  # Token-level policy gradient loss in DAPO
 
         self.backward(policy_loss)
 
-        Outputs = collections.namedtuple('Outputs', ['loss', 'rewards', "ratio"])
+        Outputs = collections.namedtuple('Outputs', ['loss', 'advantages', "ratio"])
         return Outputs(
             loss=policy_loss.item(),
-            rewards=torch.mean(rewards).item(),
+            advantages=torch.mean(advantages).item(),
             ratio=torch.mean(ratio).detach().cpu().item()
         )
 
@@ -728,7 +728,7 @@ class ParallelGSPOTrainerForCausalLM(ParallelTrainer):
         obs = rollout_data.obs.to(self.policy.device())
         actions = rollout_data.actions.to(self.policy.device())
         action_masks = rollout_data.action_masks.to(self.policy.device())
-        rewards = rollout_data.rewards.to(self.policy.device())
+        advantages = rollout_data.advantages.to(self.policy.device())
         old_action_logprobs = rollout_data.action_logprobs.to(self.policy.device())
 
         logits = self.policy.forward(obs).logits
@@ -739,20 +739,20 @@ class ParallelGSPOTrainerForCausalLM(ParallelTrainer):
         # sequence-level ratio
         ratio = torch.exp(masked_mean(action_logprobs - old_action_logprobs, mask=action_masks, dim=-1))
         # sequence-level reward
-        rewards = masked_mean(rewards, mask=action_masks, dim=-1)
+        advantages = masked_mean(advantages, mask=action_masks, dim=-1)
 
-        policy_loss = rewards * ratio
+        policy_loss = advantages * ratio
         if self.clip_range > 0:
-            clipped_policy_loss = rewards * torch.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range)
+            clipped_policy_loss = advantages * torch.clamp(ratio, 1 - self.clip_range, 1 + self.clip_range)
             policy_loss = torch.min(policy_loss, clipped_policy_loss)
         policy_loss = - torch.mean(policy_loss)
 
         self.backward(policy_loss)
 
-        Outputs = collections.namedtuple('Outputs', ['loss', 'rewards', "ratio"])
+        Outputs = collections.namedtuple('Outputs', ['loss', 'advantages', "ratio"])
         return Outputs(
             loss=policy_loss.item(),
-            rewards=torch.mean(rewards).item(),
+            advantages=torch.mean(advantages).item(),
             ratio=torch.mean(ratio).detach().cpu().item()
         )
 
