@@ -91,6 +91,7 @@ def train_gkd(
         inner_epochs: int,
         save_dir: str,
         max_batch_size: int,
+        beta: float = 0.1,
         save_optim: bool = False,
         accumulation_steps: int = 1,
         max_num_ckpts: int = None
@@ -108,6 +109,7 @@ def train_gkd(
     trainer = ParallelGKDTrainerForCausalLM(
         policy=policy,
         optimizer=optimizer,
+        beta=beta,
         save_optim=save_optim,
         accumulation_steps=accumulation_steps
     )
@@ -161,6 +163,7 @@ def run(
         top_p: float = 1.0,
         num_samples_per_prompt: int = 1,
         epochs: int = 1,
+        beta: float = 0.1,
         chunk_size: int = None,
         inner_epochs: int = 1,
         lr: float = 1e-5,
@@ -243,6 +246,7 @@ def run(
             inner_epochs=inner_epochs,
             save_dir=save_dir,
             max_batch_size=max_batch_size,
+            beta=beta,
             save_optim=save_optim,
             accumulation_steps=accumulation_steps,
             max_num_ckpts=max_num_ckpts
