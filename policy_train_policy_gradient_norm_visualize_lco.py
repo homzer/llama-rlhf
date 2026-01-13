@@ -178,8 +178,6 @@ class ParallelLCOTrainerForQRM(ParallelTrainer):
             self.optimizer.step()
             self.optimizer.zero_grad()
 
-        self.backward(loss)
-
         action_probs = compute_average_action_probs(logits, actions)
 
         return Outputs(gradient=gradient, action_probs=action_probs)
