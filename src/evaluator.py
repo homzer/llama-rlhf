@@ -72,7 +72,7 @@ class PolicyEvaluator:
 class DataParallelPolicyEvaluator(PolicyEvaluator):
     def __init__(
             self,
-            model: Union[ModelForCausalLM, ParallelModelForCausalLM],
+            model: ParallelModelForCausalLM,
             tokenizer: Tokenizer,
             batch_size: int,
             max_seq_len: int,
@@ -93,7 +93,9 @@ class DataParallelPolicyEvaluator(PolicyEvaluator):
         dataloader = ParallelDataLoader(dataset, batch_size=self.batch_size)
         print(f"Evaluating {task}.........")
         results = self.model_forward(dataloader)
+        self.generator.model.cpu()
         results = gather_object_from_data_parallel_region(results)
+        self.generator.model.cuda(self.generator.model.local_rank)
 
         evaluator = Evaluator()
         if task in EVALUATORS:
