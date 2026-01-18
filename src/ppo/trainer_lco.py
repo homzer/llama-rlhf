@@ -191,7 +191,9 @@ class ParallelLCOWithLogCoshTrainerForQRM(ParallelTrainer):
         ).nan_to_num(0.0)
         old_logits = old_logits[torch.arange(old_logits.shape[0])[:, None], advantage_indices]
         logits = logits[torch.arange(logits.shape[0])[:, None], advantage_indices]
-        loss = self.criterion.forward(logits, old_logits + advantages / self.beta).sum(-1).mean().nan_to_num(0.0)
+        loss = self.criterion.forward(
+            logits, targets=(old_logits + advantages / self.beta).to(logits)
+        ).sum(-1).mean().nan_to_num(0.0)
 
         self.backward(loss)
 
@@ -234,7 +236,9 @@ class ParallelLCOWithMSETrainerForQRM(ParallelTrainer):
         ).nan_to_num(0.0)
         old_logits = old_logits[torch.arange(old_logits.shape[0])[:, None], advantage_indices]
         logits = logits[torch.arange(logits.shape[0])[:, None], advantage_indices]
-        loss = self.criterion.forward(logits, old_logits + advantages / self.beta).sum(-1).mean().nan_to_num(0.0)
+        loss = self.criterion.forward(
+            logits, target=(old_logits + advantages / self.beta).to(logits)
+        ).sum(-1).mean().nan_to_num(0.0)
 
         self.backward(loss)
 
