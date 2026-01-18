@@ -16,7 +16,11 @@ from src.parallel.initialize import setup_model_parallel, set_barrier, get_rank
 from src.parallel.optimizer import ParallelOptimizer
 from src.ppo.buffer import RolloutBuffer, LogitsRolloutBuffer
 from src.ppo.generator import ActorLogitsGeneratorForCausalLM
-from src.ppo.trainer_lco import ParallelLCOTrainerForQRM
+from src.ppo.trainer_lco import (
+    ParallelLCOWithFKLTrainerForQRM,
+    ParallelLCOWithLogCoshTrainerForQRM,
+    ParallelLCOWithMSETrainerForQRM
+)
 from src.utils import json_load, print_current_func_args
 
 
@@ -87,7 +91,8 @@ def train_lco(
         beta: float = 10.0,
         save_optim: bool = False,
         accumulation_steps: int = 1,
-        max_num_ckpts: int = None
+        max_num_ckpts: int = None,
+        strategy: str = "fkl"  # or log-cosh, or mse
 ):
     policy, policy_tokenizer = get_parallel_model(
         model_type=policy_model_type,
@@ -99,13 +104,35 @@ def train_lco(
         lora_dtype=lora_dtype
     )
     optimizer = ParallelOptimizer(torch.optim.Adam(policy.parameters(), lr=lr))
-    trainer = ParallelLCOTrainerForQRM(
-        policy=policy,
-        optimizer=optimizer,
-        beta=beta,
-        save_optim=save_optim,
-        accumulation_steps=accumulation_steps
-    )
+    if strategy == "fkl":
+        print("Using Forward KL Trainer")
+        trainer = ParallelLCOWithFKLTrainerForQRM(
+            policy=policy,
+            optimizer=optimizer,
+            beta=beta,
+            save_optim=save_optim,
+            accumulation_steps=accumulation_steps
+        )
+    elif strategy == "log-cosh":
+        print("Using Log-cosh Trainer")
+        trainer = ParallelLCOWithLogCoshTrainerForQRM(
+            policy=policy,
+            optimizer=optimizer,
+            beta=beta,
+            save_optim=save_optim,
+            accumulation_steps=accumulation_steps
+        )
+    elif strategy == "mse":
+        print("Using MSE Trainer")
+        trainer = ParallelLCOWithMSETrainerForQRM(
+            policy=policy,
+            optimizer=optimizer,
+            beta=beta,
+            save_optim=save_optim,
+            accumulation_steps=accumulation_steps
+        )
+    else:
+        raise ValueError(strategy)
     trainer.load_model(policy_ckpt_dir) if (
             epoch == 0
     ) else trainer.load(os.path.join(save_dir, "epoch-%03d" % epoch))

@@ -159,6 +159,7 @@ def run(
         verifier_tokenizer_file: str = None,
         label_file: str = None,
         task: str = None,
+        strategy: str = "fkl",
         lora_rank: int = -1,
         lora_dtype: str = "bfloat16",
         max_batch_size: int = 1,
@@ -268,7 +269,8 @@ def run(
             beta=beta,
             max_num_ckpts=max_num_ckpts,
             save_optim=save_optim,
-            accumulation_steps=accumulation_steps
+            accumulation_steps=accumulation_steps,
+            strategy=strategy
         )
 
         if label_file is not None:

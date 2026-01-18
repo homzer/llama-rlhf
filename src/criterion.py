@@ -1,3 +1,4 @@
+import math
 from typing import Union, List
 
 import torch
@@ -127,6 +128,16 @@ class JSDivLoss(KLDivLoss):
                 masks = masks.view(-1).to(logits.device)
                 loss = loss * masks
             return loss.view(bzs, -1)  # [b, s]
+
+
+class LogCoshLoss(Loss):
+    def __init__(self, reduction="none"):
+        super().__init__()
+        self.reduction = reduction
+
+    def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        abs_diff = torch.abs(inputs - targets)
+        return abs_diff + torch.log(1 + torch.exp(-2 * abs_diff)) - math.log(2)
 
 
 class MSELoss(Loss):
