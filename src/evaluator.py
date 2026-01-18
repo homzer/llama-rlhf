@@ -2,7 +2,6 @@ import collections
 import re
 from typing import Union
 
-import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -12,7 +11,6 @@ from src.generator import GeneratorForCausalLM, GeneratorForVerifier
 from src.models.modeling import ModelForCausalLM, ParallelModelForCausalLM, Verifier, ParallelVerifier
 from src.parallel.data_parallel.dataloader import ParallelDataLoader
 from src.parallel.data_parallel.utils import gather_object_from_data_parallel_region
-from src.parallel.initialize import set_barrier
 from src.tokenizers.tokenizer import Tokenizer
 from src.utils import convert_dataloader_data_to_list
 
@@ -95,11 +93,7 @@ class DataParallelPolicyEvaluator(PolicyEvaluator):
         dataloader = ParallelDataLoader(dataset, batch_size=self.batch_size)
         print(f"Evaluating {task}.........")
         results = self.model_forward(dataloader)
-        self.generator.model.cpu()
-        torch.cuda.empty_cache()
-        set_barrier()
         results = gather_object_from_data_parallel_region(results)
-        self.generator.model.cuda(self.generator.model.local_rank)
 
         evaluator = Evaluator()
         if task in EVALUATORS:
@@ -595,6 +589,9 @@ EVALUATORS = {
     "mmlu-boxed": MMLUEvaluatorWithBoxed,
     "mmlu-pro-boxed": MMLUProEvaluatorWithBoxed,
     "mmlu-redux-boxed": MMLUEvaluatorWithBoxed,
+    "mmlu-boxed-preview": MMLUEvaluatorWithBoxed,
+    "mmlu-pro-boxed-preview": MMLUProEvaluatorWithBoxed,
+    "mmlu-redux-boxed-preview": MMLUEvaluatorWithBoxed,
     "arc": MultiChoicesEvaluator,
     "csqa": MultiChoicesEvaluator,
     "bbh": BBHEvaluator,
