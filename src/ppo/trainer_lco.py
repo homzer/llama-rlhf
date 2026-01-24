@@ -136,7 +136,7 @@ class ParallelLCOWithKLDTrainerForRuleRM(ParallelTrainer):
         old_logits = rollout_data.logits.to(self.policy.device())
 
         actions = actions.view(-1)[action_masks.view(-1)]
-        advantages = advantages.view(-1)[action_masks.view(-1)]
+        advantages = advantages.view(-1)[action_masks.view(-1)].to(old_logits)
         old_logits = old_logits.view(-1, old_logits.shape[-1])[action_masks.view(-1)]
 
         logits = self.policy.forward(obs).logits
