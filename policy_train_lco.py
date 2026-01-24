@@ -27,6 +27,8 @@ def collect_logits_buffer(
         max_forward_batch_size: int,
         dtype: str,
         logits_topk: int,
+        epoch: int,
+        save_dir: str
 ) -> LogitsRolloutBuffer:
     policy, policy_tokenizer = get_parallel_model(
         model_type=policy_model_type,
@@ -35,7 +37,7 @@ def collect_logits_buffer(
         max_seq_len=max_seq_len,
         dtype=dtype
     )
-    policy.load(policy_ckpt_dir)
+    policy.load(policy_ckpt_dir if epoch == 0 else os.path.join(save_dir, "epoch-%03d" % epoch))
     logits_buffer_collector = LogitsBufferCollector(
         model=policy,
         tokenizer=policy_tokenizer,
@@ -210,7 +212,9 @@ def run(
             max_seq_len=max_seq_len,
             max_forward_batch_size=max_forward_batch_size,
             dtype=dtype,
-            logits_topk=logits_topk
+            logits_topk=logits_topk,
+            epoch=epoch,
+            save_dir=save_dir
         )
 
         # collecting verifier buffer

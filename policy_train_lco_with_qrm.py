@@ -245,7 +245,9 @@ def run(
             max_seq_len=max_seq_len,
             max_forward_batch_size=max_forward_batch_size,
             dtype=dtype,
-            logits_topk=logits_topk
+            logits_topk=logits_topk,
+            epoch=epoch,
+            save_dir=save_dir
         )
 
         # collecting verifier buffer

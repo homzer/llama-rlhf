@@ -337,7 +337,9 @@ def create_target_distribution(
 
 
 @torch.no_grad()
-def create_lco_log_target(old_logits: torch.Tensor, advantages: torch.Tensor, beta: float) -> torch.Tensor:
+def create_lco_log_target(
+        old_logits: torch.Tensor, advantages: torch.Tensor, beta: float | torch.Tensor
+) -> torch.Tensor:
     """
     Create LCO log targets for KL loss.
     :param old_logits: [..., vocab_size]
@@ -345,7 +347,10 @@ def create_lco_log_target(old_logits: torch.Tensor, advantages: torch.Tensor, be
     :param beta: control original KL penalty, a larger value for greater penalty
     :return: tensor with shape [..., vocab_size]
     """
-    assert beta > 0
+    if isinstance(beta, float):
+        assert beta > 0
+    if isinstance(beta, torch.Tensor):
+        assert torch.all(beta > 0)
     log_target = torch.log_softmax(old_logits, dim=-1) + advantages / beta
     log_target = log_target - torch.logsumexp(log_target, dim=-1, keepdim=True)  # [..., 1]
     return log_target
