@@ -135,8 +135,8 @@ class LogCoshLoss(Loss):
         super().__init__()
         self.reduction = reduction
 
-    def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-        abs_diff = torch.abs(inputs - targets)
+    def forward(self, input_: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        abs_diff = torch.abs(input_ - target)
         return abs_diff + torch.log(1 + torch.exp(-2 * abs_diff)) - math.log(2)
 
 

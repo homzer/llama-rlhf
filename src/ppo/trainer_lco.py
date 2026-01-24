@@ -112,7 +112,130 @@ class ParallelLCOTrainerForDPORM(ParallelTrainer):
         return Outputs(loss=loss.item())
 
 
-class ParallelLCOWithFKLTrainerForQRM(ParallelTrainer):
+class ParallelLCOWithKLDTrainerForRuleRM(ParallelTrainer):
+    def __init__(
+            self,
+            policy: ParallelModelForCausalLM,
+            optimizer: torch.optim.Optimizer,
+            beta: float = 1.0,
+            save_optim: bool = False,
+            accumulation_steps: int = 1,
+    ):
+        super().__init__(policy, optimizer, save_optim=save_optim, accumulation_steps=accumulation_steps)
+        self.policy = policy
+        self.beta = beta
+        self.criterion = torch.nn.KLDivLoss(reduction="none", log_target=True)
+
+    def forward(self, rollout_data):
+        self.policy.train()
+
+        obs = rollout_data.obs.to(self.policy.device())
+        actions = rollout_data.actions.to(self.policy.device())
+        action_masks = rollout_data.action_masks.to(self.policy.device())
+        advantages = rollout_data.advantages.to(self.policy.device())
+        old_logits = rollout_data.logits.to(self.policy.device())
+
+        actions = actions.view(-1)[action_masks.view(-1)]
+        advantages = advantages.view(-1)[action_masks.view(-1)]
+        old_logits = old_logits.view(-1, old_logits.shape[-1])[action_masks.view(-1)]
+
+        logits = self.policy.forward(obs).logits
+        logits = logits.view(-1, logits.shape[-1])[action_masks.view(-1)]
+
+        advantages_ = torch.full_like(old_logits, fill_value=0.0)
+        advantages_[torch.arange(advantages_.shape[0])[:, None], actions[:, None]] = advantages[:, None]
+
+        log_targets = create_lco_log_target(old_logits, advantages_, beta=self.beta)
+        loss = self.criterion.forward(
+            torch.log_softmax(logits, dim=-1), target=log_targets.to(logits)
+        ).sum(-1).mean().nan_to_num(0.0)
+        self.backward(loss)
+
+        Outputs = collections.namedtuple('Outputs', ['loss'])
+        return Outputs(loss=loss.item())
+
+
+class ParallelLCOWithLogCoshTrainerForRuleRM(ParallelTrainer):
+    def __init__(
+            self,
+            policy: ParallelModelForCausalLM,
+            optimizer: torch.optim.Optimizer,
+            beta: float = 1.0,
+            save_optim: bool = False,
+            accumulation_steps: int = 1,
+    ):
+        super().__init__(policy, optimizer, save_optim=save_optim, accumulation_steps=accumulation_steps)
+        self.policy = policy
+        self.beta = beta
+        self.criterion = LogCoshLoss(reduction='none')
+        self.threshold = -0.02
+
+    def forward(self, rollout_data):
+        self.policy.train()
+
+        obs = rollout_data.obs.to(self.policy.device())
+        actions = rollout_data.actions.to(self.policy.device())
+        action_masks = rollout_data.action_masks.to(self.policy.device())
+        advantages = rollout_data.advantages.to(self.policy.device())
+
+        actions = actions.view(-1)[action_masks.view(-1)]
+        advantages = advantages.view(-1)[action_masks.view(-1)]
+
+        logits = self.policy.forward(obs).logits
+        logits = logits.view(-1, logits.shape[-1])[action_masks.view(-1)]
+        logits = torch.gather(logits, dim=-1, index=actions.unsqueeze(-1)).squeeze(-1)
+
+        loss = self.criterion.forward(
+            logits, target=(logits.detach() + advantages / self.beta).to(logits)
+        ).mean().nan_to_num(0.0)
+
+        self.backward(loss)
+
+        Outputs = collections.namedtuple('Outputs', ['loss'])
+        return Outputs(loss=loss.item())
+
+
+class ParallelLCOWithMSETrainerForRuleRM(ParallelTrainer):
+    def __init__(
+            self,
+            policy: ParallelModelForCausalLM,
+            optimizer: torch.optim.Optimizer,
+            beta: float = 1.0,
+            save_optim: bool = False,
+            accumulation_steps: int = 1,
+    ):
+        super().__init__(policy, optimizer, save_optim=save_optim, accumulation_steps=accumulation_steps)
+        self.policy = policy
+        self.beta = beta
+        self.criterion = torch.nn.MSELoss(reduction='none')
+        self.threshold = -0.02
+
+    def forward(self, rollout_data):
+        self.policy.train()
+
+        obs = rollout_data.obs.to(self.policy.device())
+        actions = rollout_data.actions.to(self.policy.device())
+        action_masks = rollout_data.action_masks.to(self.policy.device())
+        advantages = rollout_data.advantages.to(self.policy.device())
+
+        actions = actions.view(-1)[action_masks.view(-1)]
+        advantages = advantages.view(-1)[action_masks.view(-1)]
+
+        logits = self.policy.forward(obs).logits
+        logits = logits.view(-1, logits.shape[-1])[action_masks.view(-1)]
+        logits = torch.gather(logits, dim=-1, index=actions.unsqueeze(-1)).squeeze(-1)
+
+        loss = self.criterion.forward(
+            logits, target=(logits.detach() + advantages / self.beta).to(logits)
+        ).mean().nan_to_num(0.0)
+
+        self.backward(loss)
+
+        Outputs = collections.namedtuple('Outputs', ['loss'])
+        return Outputs(loss=loss.item())
+
+
+class ParallelLCOWithKLDTrainerForQRM(ParallelTrainer):
     def __init__(
             self,
             policy: ParallelModelForCausalLM,
@@ -199,7 +322,7 @@ class ParallelLCOWithLogCoshTrainerForQRM(ParallelTrainer):
         ).nan_to_num(0.0)
         logits = logits[torch.arange(logits.shape[0])[:, None], advantage_indices]
         loss = self.criterion.forward(
-            logits, targets=(logits.detach() + advantages / expanded_beta).to(logits)
+            logits, target=(logits.detach() + advantages / expanded_beta).to(logits)
         ).sum(-1).mean().nan_to_num(0.0)
 
         self.backward(loss)

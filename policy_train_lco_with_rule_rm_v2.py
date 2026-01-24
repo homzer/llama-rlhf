@@ -7,70 +7,20 @@ import numpy as np
 import torch
 
 from policy_train_lco import collect_logits_buffer
-from policy_train_ppo import collect_actor_buffer
 from policy_train_ppo_with_evaluate import evaluate_actor
+from policy_train_ppo_with_rule_rm import collect_actor_buffer_with_label, collect_rule_based_verifier_buffer
 from src.dataset import JsonDataset
 from src.entities import Timer, IterationHandler
 from src.modeling import get_parallel_model
 from src.parallel.initialize import setup_model_parallel, set_barrier, get_rank
 from src.parallel.optimizer import ParallelOptimizer
-from src.ppo.buffer import RolloutBuffer, LogitsRolloutBuffer
-from src.ppo.generator import ActorLogitsGeneratorForCausalLM
+from src.ppo.buffer import LogitsRolloutBuffer
 from src.ppo.trainer_lco import (
-    ParallelLCOWithKLDTrainerForQRM,
-    ParallelLCOWithLogCoshTrainerForQRM,
-    ParallelLCOWithMSETrainerForQRM
+    ParallelLCOWithMSETrainerForRuleRM,
+    ParallelLCOWithLogCoshTrainerForRuleRM,
+    ParallelLCOWithKLDTrainerForRuleRM
 )
 from src.utils import json_load, print_current_func_args
-
-
-def collect_verifier_buffer(
-        logits_rollout_buffer: LogitsRolloutBuffer,
-        verifier_model_type: str,
-        verifier_ckpt_dir: str,
-        verifier_config_file: str,
-        verifier_tokenizer_file: str,
-        max_seq_len: int,
-        max_forward_batch_size: int,
-        dtype: str,
-) -> RolloutBuffer:
-    verifier, verifier_tokenizer = get_parallel_model(
-        model_type=verifier_model_type,
-        config_file=verifier_config_file,
-        tokenizer_file=verifier_tokenizer_file,
-        max_seq_len=max_seq_len,
-        dtype=dtype
-    )
-    verifier.load(verifier_ckpt_dir)
-    verifier_buffer_generator = ActorLogitsGeneratorForCausalLM(
-        model=verifier,
-        tokenizer=verifier_tokenizer,
-        max_seq_len=max_seq_len
-    )
-    verifier_rollout_buffer = RolloutBuffer()
-    timer = Timer(total=logits_rollout_buffer.size() // max_forward_batch_size, episode=10)
-    for data in logits_rollout_buffer.get(max_forward_batch_size):
-        timer.step()
-        generator_outputs = verifier_buffer_generator.forward(data.instructions, data.responses)
-        verifier_rollout_buffer.extend(RolloutBuffer(
-            advantages=np.take_along_axis(
-                torch.log_softmax(generator_outputs.logits, dim=-1).half().cpu().numpy(),
-                indices=data.logits_indices,
-                axis=-1
-            ),
-            advantage_indices=data.logits_indices,
-            actions=data.actions,
-            action_masks=data.action_masks
-        ))
-
-    verifier.cpu()
-    del verifier
-    del verifier_buffer_generator
-    torch.cuda.empty_cache()
-    gc.collect()
-    set_barrier()
-
-    return verifier_rollout_buffer
 
 
 def train_lco(
@@ -106,7 +56,7 @@ def train_lco(
     optimizer = ParallelOptimizer(torch.optim.Adam(policy.parameters(), lr=lr))
     if strategy == "kld":
         print("Using Forward KL Trainer")
-        trainer = ParallelLCOWithKLDTrainerForQRM(
+        trainer = ParallelLCOWithKLDTrainerForRuleRM(
             policy=policy,
             optimizer=optimizer,
             beta=beta,
@@ -115,7 +65,7 @@ def train_lco(
         )
     elif strategy == "log-cosh":
         print("Using Log-cosh Trainer")
-        trainer = ParallelLCOWithLogCoshTrainerForQRM(
+        trainer = ParallelLCOWithLogCoshTrainerForRuleRM(
             policy=policy,
             optimizer=optimizer,
             beta=beta,
@@ -124,7 +74,7 @@ def train_lco(
         )
     elif strategy == "mse":
         print("Using MSE Trainer")
-        trainer = ParallelLCOWithMSETrainerForQRM(
+        trainer = ParallelLCOWithMSETrainerForRuleRM(
             policy=policy,
             optimizer=optimizer,
             beta=beta,
@@ -161,19 +111,16 @@ def train_lco(
 
 
 def run(
+        task: str,
         train_file: str,
         save_dir: str,
         log_dir: str,
         policy_ckpt_dir: str,
         policy_model_type: str,
-        verifier_ckpt_dir: str,
-        verifier_model_type: str,
         policy_config_file: str = None,
         policy_tokenizer_file: str = None,
-        verifier_config_file: str = None,
-        verifier_tokenizer_file: str = None,
         label_file: str = None,
-        task: str = None,
+        strategy: str = "kld",
         lora_rank: int = -1,
         lora_dtype: str = "bfloat16",
         max_batch_size: int = 1,
@@ -209,8 +156,6 @@ def run(
     print_current_func_args()
     policy_config_file = policy_config_file or policy_ckpt_dir
     policy_tokenizer_file = policy_tokenizer_file or policy_ckpt_dir
-    verifier_config_file = verifier_config_file or verifier_ckpt_dir
-    verifier_tokenizer_file = verifier_tokenizer_file or verifier_ckpt_dir
 
     for epoch, datalist in IterationHandler(json_load(train_file), epochs, chunk_size, begin_epoch):
         dataset = JsonDataset(datalist)
@@ -218,15 +163,15 @@ def run(
             continue
 
         # collecting policy buffer
-        policy_rollout_buffer = collect_actor_buffer(
+        policy_rollout_buffer = collect_actor_buffer_with_label(
             actor_model_type=policy_model_type,
             actor_config_file=policy_config_file,
-            actor_tokenizer_file=policy_tokenizer_file,
-            actor_ckpt_dir=policy_ckpt_dir,
-            actor_save_dir=save_dir,
             max_seq_len=max_seq_len,
+            actor_tokenizer_file=policy_tokenizer_file,
             dtype=dtype,
+            actor_ckpt_dir=policy_ckpt_dir,
             epoch=epoch,
+            actor_save_dir=save_dir,
             use_chat_template=use_chat_template,
             dataset=dataset,
             max_generate_batch_size=max_generate_batch_size,
@@ -249,19 +194,14 @@ def run(
         )
 
         # collecting verifier buffer
-        verifier_rollout_buffer = collect_verifier_buffer(
-            logits_rollout_buffer=logits_rollout_buffer,
-            verifier_model_type=verifier_model_type,
-            verifier_ckpt_dir=verifier_ckpt_dir,
-            verifier_config_file=verifier_config_file,
-            verifier_tokenizer_file=verifier_tokenizer_file,
-            max_seq_len=max_seq_len,
-            max_forward_batch_size=max_forward_batch_size,
-            dtype=dtype
+        verifier_rollout_buffer = collect_rule_based_verifier_buffer(
+            actor_rollout_buffer=policy_rollout_buffer, task=task
         )
 
-        logits_rollout_buffer["advantages"] = verifier_rollout_buffer["advantages"]
-        logits_rollout_buffer["advantage_indices"] = verifier_rollout_buffer["advantage_indices"]
+        print(f"Average Rewards: {verifier_rollout_buffer.mean()}")
+        action_probs = np.exp(policy_rollout_buffer["action_logprobs"][policy_rollout_buffer["action_masks"]]).mean()
+        print(f"Average Action Probs: {action_probs}")
+        logits_rollout_buffer["advantages"] = verifier_rollout_buffer["scores"]
 
         if parallel_infos.global_rank == 0:
             logits_rollout_buffer.save(os.path.join(log_dir, "epoch-%03d" % (epoch + 1)))
@@ -284,11 +224,11 @@ def run(
             beta=beta,
             max_num_ckpts=max_num_ckpts,
             save_optim=save_optim,
-            accumulation_steps=accumulation_steps
+            accumulation_steps=accumulation_steps,
+            strategy=strategy
         )
 
         if label_file is not None:
-            assert task is not None
             evaluate_actor(
                 task=task,
                 label_file=label_file,

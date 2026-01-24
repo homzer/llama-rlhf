@@ -161,7 +161,7 @@ def run(
         verifier_tokenizer_file: str = None,
         label_file: str = None,
         task: str = None,
-        strategy: str = "fkl",
+        strategy: str = "kld",
         lora_rank: int = -1,
         lora_dtype: str = "bfloat16",
         max_batch_size: int = 1,
