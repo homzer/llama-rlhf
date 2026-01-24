@@ -184,7 +184,7 @@ class ParallelLCOWithLogCoshTrainerForRuleRM(ParallelTrainer):
         old_action_logprobs = old_action_logprobs.view(-1)[action_masks.view(-1)]
         agreement_masks = (old_action_logprobs > self.threshold)
         expanded_beta = torch.full_like(old_action_logprobs, fill_value=self.beta)
-        expanded_beta[agreement_masks] = self.beta * 10
+        expanded_beta[agreement_masks] = self.beta * 100
         expanded_beta = expanded_beta[:, None]
 
         logits = self.policy.forward(obs).logits
@@ -230,7 +230,7 @@ class ParallelLCOWithMSETrainerForRuleRM(ParallelTrainer):
         old_action_logprobs = old_action_logprobs.view(-1)[action_masks.view(-1)]
         agreement_masks = (old_action_logprobs > self.threshold)
         expanded_beta = torch.full_like(old_action_logprobs, fill_value=self.beta)
-        expanded_beta[agreement_masks] = self.beta * 10
+        expanded_beta[agreement_masks] = self.beta * 100
         expanded_beta = expanded_beta[:, None]
 
         logits = self.policy.forward(obs).logits
