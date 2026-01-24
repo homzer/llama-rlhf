@@ -304,6 +304,7 @@ def run(
             # collecting logits buffer
             rollout_buffer = collect_logits_buffer(
                 verifier_rollout_buffer=verifier_rollout_buffer,
+                policy_rollout_buffer=policy_rollout_buffer,
                 policy_model_type=policy_model_type,
                 policy_ckpt_dir=policy_ckpt_dir,
                 policy_config_file=policy_config_file,

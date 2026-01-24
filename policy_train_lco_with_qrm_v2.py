@@ -77,6 +77,7 @@ def collect_verifier_buffer(
 
 def collect_logits_buffer(
         verifier_rollout_buffer: LogitsRolloutBuffer,
+        policy_rollout_buffer: RolloutBuffer,
         policy_model_type: str,
         policy_ckpt_dir: str,
         policy_config_file: str,
@@ -131,17 +132,18 @@ def collect_logits_buffer(
         vocab_sizes = logits_rollout_buffer["vocab_sizes"]
 
     return LogitsRolloutBuffer(
-        instructions=verifier_rollout_buffer["instructions"],
-        obs=verifier_rollout_buffer["obs"],
-        actions=verifier_rollout_buffer["actions"],
-        action_masks=verifier_rollout_buffer["action_masks"],
-        action_logprobs=verifier_rollout_buffer["action_logprobs"],
-        responses=verifier_rollout_buffer["responses"],
+        instructions=policy_rollout_buffer["instructions"],
+        obs=policy_rollout_buffer["obs"],
+        actions=policy_rollout_buffer["actions"],
+        action_masks=policy_rollout_buffer["action_masks"],
+        action_logprobs=policy_rollout_buffer["action_logprobs"],
+        responses=policy_rollout_buffer["responses"],
         logits_values=logits_rollout_buffer["logits_values"],
         logits_indices=logits_rollout_buffer["logits_indices"],
         vocab_sizes=vocab_sizes,
         advantages=verifier_rollout_buffer["advantages"],
         advantage_indices=verifier_rollout_buffer["advantage_indices"],
+        verifier_action_logprobs=verifier_rollout_buffer["action_logprobs"]
     )
 
 
@@ -237,6 +239,7 @@ def run(
         # collecting logits buffer
         logits_rollout_buffer = collect_logits_buffer(
             verifier_rollout_buffer=verifier_rollout_buffer,
+            policy_rollout_buffer=policy_rollout_buffer,
             policy_model_type=policy_model_type,
             policy_ckpt_dir=policy_ckpt_dir,
             policy_config_file=policy_config_file,
