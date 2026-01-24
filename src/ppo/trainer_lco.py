@@ -176,17 +176,23 @@ class ParallelLCOWithLogCoshTrainerForRuleRM(ParallelTrainer):
         obs = rollout_data.obs.to(self.policy.device())
         actions = rollout_data.actions.to(self.policy.device())
         action_masks = rollout_data.action_masks.to(self.policy.device())
+        old_action_logprobs = rollout_data.action_logprobs.to(self.policy.device())
         advantages = rollout_data.advantages.to(self.policy.device())
 
         actions = actions.view(-1)[action_masks.view(-1)]
         advantages = advantages.view(-1)[action_masks.view(-1)]
+        old_action_logprobs = old_action_logprobs.view(-1)[action_masks.view(-1)]
+        agreement_masks = (old_action_logprobs > self.threshold)
+        expanded_beta = torch.full_like(old_action_logprobs, fill_value=self.beta)
+        expanded_beta[agreement_masks] = self.beta * 10
+        expanded_beta = expanded_beta[:, None]
 
         logits = self.policy.forward(obs).logits
         logits = logits.view(-1, logits.shape[-1])[action_masks.view(-1)]
         logits = torch.gather(logits, dim=-1, index=actions.unsqueeze(-1)).squeeze(-1)
 
         loss = self.criterion.forward(
-            logits, target=(logits.detach() + advantages / self.beta).to(logits)
+            logits, target=(logits.detach() + advantages / expanded_beta).to(logits)
         ).mean().nan_to_num(0.0)
 
         self.backward(loss)
@@ -216,17 +222,23 @@ class ParallelLCOWithMSETrainerForRuleRM(ParallelTrainer):
         obs = rollout_data.obs.to(self.policy.device())
         actions = rollout_data.actions.to(self.policy.device())
         action_masks = rollout_data.action_masks.to(self.policy.device())
+        old_action_logprobs = rollout_data.action_logprobs.to(self.policy.device())
         advantages = rollout_data.advantages.to(self.policy.device())
 
         actions = actions.view(-1)[action_masks.view(-1)]
         advantages = advantages.view(-1)[action_masks.view(-1)]
+        old_action_logprobs = old_action_logprobs.view(-1)[action_masks.view(-1)]
+        agreement_masks = (old_action_logprobs > self.threshold)
+        expanded_beta = torch.full_like(old_action_logprobs, fill_value=self.beta)
+        expanded_beta[agreement_masks] = self.beta * 10
+        expanded_beta = expanded_beta[:, None]
 
         logits = self.policy.forward(obs).logits
         logits = logits.view(-1, logits.shape[-1])[action_masks.view(-1)]
         logits = torch.gather(logits, dim=-1, index=actions.unsqueeze(-1)).squeeze(-1)
 
         loss = self.criterion.forward(
-            logits, target=(logits.detach() + advantages / self.beta).to(logits)
+            logits, target=(logits.detach() + advantages / expanded_beta).to(logits)
         ).mean().nan_to_num(0.0)
 
         self.backward(loss)
