@@ -57,9 +57,12 @@ class Checkpoint:
     def split(self, state_dict: dict, n: int) -> List[dict]:
         if n == 1:
             return [state_dict]
+        # Auto merge lora
+        state_dict = self.merge_lora_state_dict(state_dict)
         new_state_dicts = [OrderedDict() for _ in range(n)]
         with torch.no_grad():
             for name, param in state_dict.items():
+                # This case is unlikely to be reached. Keep the logic here just in case.
                 assert 'lora' not in name, 'can not split a lora checkpoint, merge it first'
                 param = param.cpu()
                 if self.is_col_parallel(name):
