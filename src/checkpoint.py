@@ -86,10 +86,14 @@ class Checkpoint:
         return new_state_dicts
 
     def merge(self, state_dict1: dict, state_dict2: dict) -> dict:
+        # Auto merge lora
+        state_dict1 = self.merge_lora_state_dict(state_dict1)
+        state_dict2 = self.merge_lora_state_dict(state_dict2)
         new_state_dicts = OrderedDict()
         with torch.no_grad():
             for name in state_dict1.keys():
-                assert 'lora' not in name, 'can not split a lora checkpoint, merge it first'
+                # This case is unlikely to be reached. Keep the logic here just in case.
+                assert 'lora' not in name, 'can not merge a lora checkpoint, merge it first'
                 param1 = state_dict1[name]
                 param2 = state_dict2[name]
                 if self.is_col_parallel(name):
