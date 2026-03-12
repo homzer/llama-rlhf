@@ -38,6 +38,7 @@ def main(
         beta: float = 1.0,
         gamma: float = 0.0,
         log_dir: str = None,
+        accumulation_steps: int = 1,
         model_parallel_size: int = None,
         sequence_parallel_size: int = 1,
 ):
@@ -69,7 +70,8 @@ def main(
         trainer = ParallelVerifierTrainerForLastToken(
             model=model,
             tokenizer=tokenizer,
-            optimizer=optimizer
+            optimizer=optimizer,
+            accumulation_steps=accumulation_steps
         )
     elif "mean-score" in strategy:
         trainer = ParallelVerifierTrainerForMeanScore(
@@ -77,25 +79,29 @@ def main(
             tokenizer=tokenizer,
             optimizer=optimizer,
             beta=beta,
-            gamma=gamma
+            gamma=gamma,
+            accumulation_steps=accumulation_steps
         )
     elif "focal-loss" in strategy:
         trainer = ParallelVerifierTrainerForFocalLoss(
             model=model,
             tokenizer=tokenizer,
-            optimizer=optimizer
+            optimizer=optimizer,
+            accumulation_steps=accumulation_steps
         )
     elif "focal-mean-score" in strategy:
         trainer = ParallelVerifierTrainerForFocalMeanScore(
             model=model,
             tokenizer=tokenizer,
-            optimizer=optimizer
+            optimizer=optimizer,
+            accumulation_steps=accumulation_steps
         )
     elif "pgtg" in strategy:
         trainer = ParallelVerifierTrainerForPGTG(
             model=model,
             tokenizer=tokenizer,
-            optimizer=optimizer
+            optimizer=optimizer,
+            accumulation_steps=accumulation_steps
         )
     else:
         raise ValueError(strategy)
