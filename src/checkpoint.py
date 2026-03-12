@@ -106,7 +106,7 @@ class Checkpoint:
                     new_state_dicts[name] = state_dict1[name]
                 # release memory
                 state_dict1[name] = None
-            state_dict2[name] = None
+                state_dict2[name] = None
 
         return new_state_dicts
 
@@ -121,20 +121,39 @@ class Checkpoint:
 
     @classmethod
     def merge_lora_state_dict(cls, state_dict: dict) -> dict:
-        res_state_dict = {}
+        results = {}
         with torch.no_grad():
+            lora_a_keys = []
+            for name in state_dict:
+                if 'lora_a_' in name:
+                    lora_a_keys.append(name)
+            if len(lora_a_keys) == 0:
+                return state_dict
             for name, param in state_dict.items():
-                if 'lora' not in name:
-                    res_state_dict[name] = param
-                elif 'lora_a_' in name:
-                    origin = name.replace('lora_a_', '')
-                    original_dtype = state_dict[origin].dtype
-                    w = state_dict[origin].float()
-                    wa = state_dict[name].float()
-                    wb = state_dict[name.replace('lora_a_', 'lora_b_')].float()
-                    res_state_dict[origin] = (w + wb @ wa).to(original_dtype)
-                    state_dict[origin] = None  # free memory
-        return res_state_dict
+                if "lora_a_" not in name and "lora_b_" not in name:
+                    results[name] = param
+                    state_dict[name] = None
+            for lora_a_key in lora_a_keys:
+                origin_key = lora_a_key.replace("lora_a_", "")
+                lora_b_key = lora_a_key.replace("lora_a_", "lora_b_")
+                wa = state_dict[lora_a_key]
+                wb = state_dict[lora_b_key]
+                results[origin_key] = results[origin_key] + (wb.float() @ wa.float()).to(results[origin_key].dtype)
+                state_dict[lora_a_key] = None
+                state_dict[lora_b_key] = None
+        return results
+
+        #     for name, param in state_dict.items():
+        #         if 'lora' not in name:
+        #             results[name] = param
+        #         elif 'lora_a_' in name:
+        #             origin = name.replace('lora_a_', '')
+        #             w = state_dict[origin]
+        #             wa = state_dict[name]
+        #             wb = state_dict[name.replace('lora_a_', 'lora_b_')]
+        #             results[origin] = w + (wb.float() @ wa.float()).to(w.dtype)
+        #             state_dict[origin] = None  # free memory
+        # return results
 
     def auto_split_huggingface_checkpoints(
             self,
@@ -178,8 +197,11 @@ class Checkpoint:
             checkpoints = sorted(Path(ckpt_dir).glob("consolidated.*.pth"))
             assert len(checkpoints) > 0
             # merge to 1 first and then split to `model_parallel_world_size`
+            print(f"Loading {len(checkpoints)} checkpoints from {ckpt_dir} ...")
             state_dicts = [torch.load(ckpt_file, map_location="cpu") for ckpt_file in checkpoints]
+            print(f"Merging {len(checkpoints)} checkpoints to 1 checkpoint ...")
             state_dicts = self.auto_merge_n_to_1(state_dicts)
+            print(f"Split into {model_parallel_world_size} checkpoints ...")
 
             state_dicts = self.split(state_dicts, model_parallel_world_size)
             os.makedirs(pl_ckpt_dir, exist_ok=True)
