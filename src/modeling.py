@@ -24,7 +24,8 @@ from src.models import (
     InternLM3,
     Qwen3Moe,
     Mistral3,
-    Mistral3Verifier
+    Mistral3Verifier,
+    Qwen3Verifier
 )
 from src.models.modeling_args import (
     LlamaArgs,
@@ -106,7 +107,8 @@ VERIFIERS = {
     "qwen": QwenVerifier,
     "lora-qwen": LoraQwenVerifier,
     "lora-baichuan": LoraBaichuanVerifier,
-    "mistral3": Mistral3Verifier
+    "mistral3": Mistral3Verifier,
+    "qwen3": Qwen3Verifier
 }
 
 TOKENIZERS = {

@@ -6,7 +6,7 @@ from src.models.llama3_hf import Llama3Hf
 from src.models.mistral import Mistral
 from src.models.gpt2 import GPT2
 from src.models.qwen import Qwen, QwenVerifier, LoraQwenVerifier, LoraQwen
-from src.models.qwen3 import Qwen3
+from src.models.qwen3 import Qwen3, Qwen3Verifier
 from src.models.qwen3_moe import Qwen3Moe
 from src.models.baichuan import Baichuan, BaichuanVerifier, LoraBaichuan, LoraBaichuanVerifier
 from src.models.internlm import InternLM

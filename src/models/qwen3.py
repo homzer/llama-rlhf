@@ -2,15 +2,14 @@ from typing import Optional
 
 import torch
 
-from src.models.modeling import (
-    AttentionForCausalLM
-)
+from src.models.modeling import AttentionForCausalLM
 from src.models.modeling_acts import RMSNorm, RotaryEmbedding
 from src.models.modeling_args import QwenArgs
 from src.models.qwen import (
     Qwen,
     QwenHead,
-    QwenTransformerBlock
+    QwenTransformerBlock,
+    QwenVerifier
 )
 from src.parallel.model_parallel.layers import (
     RowParallelLinear,
@@ -143,6 +142,12 @@ class Qwen3Head(QwenHead):
 
 
 class Qwen3(Qwen):
+    def __init__(self, args: QwenArgs):
+        super().__init__(args=args)
+        self.model = Qwen3Head(args)
+
+
+class Qwen3Verifier(QwenVerifier):
     def __init__(self, args: QwenArgs):
         super().__init__(args=args)
         self.model = Qwen3Head(args)

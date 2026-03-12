@@ -143,18 +143,6 @@ class Checkpoint:
                 state_dict[lora_b_key] = None
         return results
 
-        #     for name, param in state_dict.items():
-        #         if 'lora' not in name:
-        #             results[name] = param
-        #         elif 'lora_a_' in name:
-        #             origin = name.replace('lora_a_', '')
-        #             w = state_dict[origin]
-        #             wa = state_dict[name]
-        #             wb = state_dict[name.replace('lora_a_', 'lora_b_')]
-        #             results[origin] = w + (wb.float() @ wa.float()).to(w.dtype)
-        #             state_dict[origin] = None  # free memory
-        # return results
-
     def auto_split_huggingface_checkpoints(
             self,
             ckpt_dir: str,
