@@ -264,6 +264,24 @@ class QwenArgs(BaseParallelArgs):
 
 
 @dataclass
+class QwenVLArgs(QwenArgs):
+    vision_config_depth: int = 32
+    vision_config_hidden_size: int = None
+    vision_config_intermediate_size: int = None
+    vision_config_num_heads: int = None
+    vision_config_in_chans: int = None
+    vision_config_out_hidden_size: int = None
+    vision_config_patch_size: int = None
+    vision_config_spatial_merge_size: int = None
+    vision_config_spatial_patch_size: int = None
+    vision_config_window_size: int = None
+    vision_config_fullatt_block_indexes: list = None
+    vision_config_tokens_per_second: int = None
+    vision_config_temporal_patch_size: int = None
+    rope_scaling_mrope_section: list = None
+
+
+@dataclass
 class LoraQwenArgs(QwenArgs):
     r: int = None  # Rank of lora
     lora_dtype: str = "float32"

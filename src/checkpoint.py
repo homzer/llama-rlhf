@@ -89,7 +89,7 @@ class Checkpoint:
         # Auto merge lora
         state_dict1 = self.merge_lora_state_dict(state_dict1)
         state_dict2 = self.merge_lora_state_dict(state_dict2)
-        new_state_dicts = OrderedDict()
+        new_state_dict = OrderedDict()
         with torch.no_grad():
             for name in state_dict1.keys():
                 # This case is unlikely to be reached. Keep the logic here just in case.
@@ -97,18 +97,18 @@ class Checkpoint:
                 param1 = state_dict1[name]
                 param2 = state_dict2[name]
                 if self.is_col_parallel(name):
-                    new_state_dicts[name] = torch.cat([param1, param2], dim=0)
+                    new_state_dict[name] = torch.cat([param1, param2], dim=0)
                 elif self.is_row_parallel(name):
                     assert len(param1.shape) == 2
                     assert len(param2.shape) == 2
-                    new_state_dicts[name] = torch.cat([param1, param2], dim=1)
+                    new_state_dict[name] = torch.cat([param1, param2], dim=1)
                 else:
-                    new_state_dicts[name] = state_dict1[name]
+                    new_state_dict[name] = state_dict1[name]
                 # release memory
                 state_dict1[name] = None
                 state_dict2[name] = None
 
-        return new_state_dicts
+        return new_state_dict
 
     def auto_merge_n_to_1(self, state_dicts: List[dict]) -> dict:
         if len(state_dicts) <= 1:
@@ -368,6 +368,108 @@ class CheckpointForQwen(Checkpoint):
             "o_proj.weight", "down_proj.weight", "embed_tokens.weight",
         ]
         super().__init__(col_parallel_names, row_parallel_names)
+
+    @classmethod
+    def load_hf(cls, ckpt_files: List[str]) -> dict:
+        state_dict = Checkpoint.load_hf(ckpt_files)
+        if "lm_head.weight" not in state_dict:  # for tie word embeddings
+            print("`lm_head.weight` not found in checkpoint, copy `model.embed_tokens.weight` to replace it.")
+            state_dict["lm_head.weight"] = state_dict["model.embed_tokens.weight"].clone()
+        return state_dict
+
+
+class CheckpointForQwenVL(Checkpoint):
+    def __init__(self):
+        col_parallel_names = [
+            "q_proj.weight", "k_proj.weight", "v_proj.weight", "gate_proj.weight", "up_proj.weight", "lm_head.weight",
+            "q_proj.bias", "k_proj.bias", "v_proj.bias", "gate_proj.bias", "up_proj.bias", "lm_head.bias",
+            "qkv.weights", "qkv.bias"
+        ]
+        row_parallel_names = [
+            "o_proj.weight", "proj.weight", "down_proj.weight", "embed_tokens.weight",
+        ]
+        self.col_qkv_parallel_names = ["qkv.weights", "qkv.bias"]
+        super().__init__(col_parallel_names, row_parallel_names)
+
+    def is_col_qkv_parallel(self, name: str) -> bool:
+        for col_qkv_parallel_name in self.col_qkv_parallel_names:
+            if re.search(f"{col_qkv_parallel_name}$", name):
+                return True
+        return False
+
+    @staticmethod
+    def reshape_to_col_qkv_parallel(param: torch.Tensor) -> torch.Tensor:
+        # reshape qkv weight from [
+        #   [q1],
+        #   [q2],
+        #   [k1],
+        #   [k2],
+        #   [v1],
+        #   [v2],
+        # ] to [
+        #   [q1, k1, v1],
+        #   [q2, k2, v2],
+        # ] in order to apply column parallel splitting
+        num_dims = len(param.shape)
+        param = torch.reshape(param.cpu(), (3, param.shape[0] // 3, -1)).transpose(-1, -2)
+        param = torch.cat(param.unbind(0), dim=0).transpose(-1, -2)
+        if num_dims == 1:
+            param = param.reshape(-1)
+        return param
+
+    @ staticmethod
+    def reshape_from_col_qkv_parallel(param: torch.Tensor) -> torch.Tensor:
+        # reshape qkv weight from [
+        #   [q1, k1, v1],
+        #   [q2, k2, v2],
+        # ] back to [
+        #   [q1],
+        #   [q2],
+        #   [k1],
+        #   [k2],
+        #   [v1],
+        #   [v2],
+        # ] after column parallel splitting
+        if len(param.shape) == 2:
+            param = param.transpose(-1, -2)
+            param = param.reshape(3, param.shape[0] // 3, -1).transpose(-1, -2)
+            param = torch.cat(param.unbind(0), dim=0).contiguous()
+        return param
+
+    def split(self, state_dict: dict, n: int) -> List[dict]:
+        # Auto merge lora
+        state_dict = self.merge_lora_state_dict(state_dict)
+        with torch.no_grad():
+            for name in state_dict:
+                if self.is_col_qkv_parallel(name):
+                    state_dict[name] = self.reshape_to_col_qkv_parallel(state_dict[name])
+
+        new_state_dicts = super().split(state_dict, n)
+        with torch.no_grad():
+            for name in new_state_dicts[0]:
+                if self.is_col_qkv_parallel(name):
+                    for new_state_dict in new_state_dicts:
+                        new_state_dict[name] = self.reshape_from_col_qkv_parallel(new_state_dict[name])
+
+        return new_state_dicts
+
+    def merge(self, state_dict1: dict, state_dict2: dict) -> dict:
+        # Auto merge lora
+        state_dict1 = self.merge_lora_state_dict(state_dict1)
+        state_dict2 = self.merge_lora_state_dict(state_dict2)
+        with torch.no_grad():
+            for name in state_dict1:
+                if self.is_col_qkv_parallel(name):
+                    state_dict1[name] = self.reshape_to_col_qkv_parallel(state_dict1[name])
+                    state_dict2[name] = self.reshape_to_col_qkv_parallel(state_dict2[name])
+
+        new_state_dict = super().merge(state_dict1, state_dict2)
+        with torch.no_grad():
+            for name in new_state_dict:
+                if self.is_col_qkv_parallel(name):
+                    new_state_dict[name] = self.reshape_from_col_qkv_parallel(new_state_dict[name])
+
+        return new_state_dict
 
     @classmethod
     def load_hf(cls, ckpt_files: List[str]) -> dict:
