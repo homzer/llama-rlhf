@@ -8,7 +8,7 @@ from src.checkpoint import CheckpointForInternLM3
 from src.models.modeling import (
     ParallelModelForCausalLM,
     CausalLMOutputs,
-    AttentionForCausalLM
+    AttentionForCausalLM, AutoModelForCausalLM
 )
 from src.models.modeling_acts import Clamp, RMSNorm, RotaryEmbedding, LogitsNormalize
 from src.models.modeling_args import InternLM3Args
@@ -232,6 +232,7 @@ class InternLM3Head(nn.Module):
         return self.norm(h)
 
 
+@AutoModelForCausalLM.register("internlm3")
 class InternLM3(ParallelModelForCausalLM):
     def __init__(self, args: InternLM3Args):
         super().__init__()

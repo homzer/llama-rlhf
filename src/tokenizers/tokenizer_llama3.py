@@ -4,9 +4,9 @@ from typing import List, Dict, cast, Iterator
 
 import tiktoken
 from tiktoken.load import load_tiktoken_bpe
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer as AutoTokenizerHf
 
-from src.tokenizers.tokenizer import Tokenizer
+from src.tokenizers.tokenizer import Tokenizer, AutoTokenizer
 
 PAT_STR = r"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+"
 TIKTOKEN_MAX_ENCODE_CHARS = 400_000
@@ -39,6 +39,7 @@ def _split_whitespaces_or_non_whitespaces(
     yield s[slice_start:]
 
 
+@AutoTokenizer.register("llama3")
 class Llama3Tokenizer(Tokenizer):
     special_tokens: Dict[str, int]
     num_reserved_special_tokens = 256
@@ -161,9 +162,10 @@ class Llama3Tokenizer(Tokenizer):
 
 
 # TODO: check for correctness
+@AutoTokenizer.register("llama3-hf")
 class Llama3TokenizerHf(Tokenizer):
     def __init__(self, model_dir: str):
-        self.model = AutoTokenizer.from_pretrained(model_dir)
+        self.model = AutoTokenizerHf.from_pretrained(model_dir)
         super().__init__(
             vocab_size=len(self.model.get_vocab()),
             bos_id=self.model.bos_token_id,

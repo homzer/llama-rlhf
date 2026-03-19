@@ -1,13 +1,15 @@
 from typing import List
 
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer as AutoTokenizerHf
 
 from src.tokenizers import Tokenizer
+from src.tokenizers.tokenizer import AutoTokenizer
 
 
+@AutoTokenizer.register("gemma2")
 class GemmaTokenizer(Tokenizer):
     def __init__(self, model_dir: str):
-        self.model = AutoTokenizer.from_pretrained(model_dir)
+        self.model = AutoTokenizerHf.from_pretrained(model_dir)
         super().__init__(
             vocab_size=self.model.vocab_size,
             bos_id=self.model.bos_token_id or self.model.convert_tokens_to_ids('<|im_start|>'),

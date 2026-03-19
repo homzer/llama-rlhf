@@ -8,7 +8,7 @@ from src.checkpoint import CheckpointForGemma2
 from src.models.modeling import (
     ParallelModelForCausalLM,
     CausalLMOutputs,
-    AttentionForCausalLM
+    AttentionForCausalLM, AutoModelForCausalLM
 )
 from src.models.modeling_acts import Gemma2RMSNorm, LogitsNormalize, RotaryEmbedding
 from src.models.modeling_args import Gemma2Args
@@ -267,6 +267,7 @@ class Gemma2Head(nn.Module):
         return self.norm(h)
 
 
+@AutoModelForCausalLM.register("gemma2")
 class Gemma2(ParallelModelForCausalLM):
     def __init__(self, args: Gemma2Args):
         super().__init__()

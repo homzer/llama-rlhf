@@ -9,7 +9,7 @@ import torch
 from policy_train_ppo import collect_actor_buffer, collect_verifier_buffer
 from src.dataset import JsonDataset
 from src.entities import Timer, IterationHandler
-from src.modeling import get_parallel_model
+from src.models.modeling import AutoModelForCausalLM
 from src.parallel.initialize import setup_model_parallel, set_barrier, get_rank
 from src.parallel.optimizer import ParallelOptimizer
 from src.ppo.buffer import PPORolloutBuffer, RolloutBuffer
@@ -39,7 +39,6 @@ def train_policy_gradient(
         policy_ckpt_dir: str,
         policy_model_type: str,
         policy_config_file: str,
-        policy_tokenizer_file: str,
         max_seq_len: int,
         lora_rank: int,
         dtype: str,
@@ -53,11 +52,10 @@ def train_policy_gradient(
         accumulation_steps: int = 1,
         max_num_ckpts: int = None
 ):
-    policy, policy_tokenizer = get_parallel_model(
+    policy = AutoModelForCausalLM.from_pretrained(
         model_type=policy_model_type,
         config_file=policy_config_file,
         max_seq_len=max_seq_len,
-        tokenizer_file=policy_tokenizer_file,
         lora_rank=lora_rank,
         dtype=dtype,
         lora_dtype=lora_dtype
@@ -203,7 +201,6 @@ def run(
         use_chat_template: bool = False,
         log_dir: str = None,
         seed: int = None,
-        train_strategy: str = "vanilla",
         use_last_token_reward: bool = False,
         last_token_reward_only: bool = False,
         save_optim: bool = False,
@@ -277,7 +274,6 @@ def run(
             policy_ckpt_dir=policy_ckpt_dir,
             policy_model_type=policy_model_type,
             policy_config_file=policy_config_file,
-            policy_tokenizer_file=policy_tokenizer_file,
             max_seq_len=max_seq_len,
             lora_rank=lora_rank,
             dtype=dtype,
@@ -287,7 +283,6 @@ def run(
             inner_epochs=inner_epochs,
             save_dir=save_dir,
             max_batch_size=max_batch_size,
-            train_strategy=train_strategy,
             accumulation_steps=accumulation_steps,
             save_optim=save_optim,
             max_num_ckpts=max_num_ckpts

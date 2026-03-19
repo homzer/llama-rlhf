@@ -22,7 +22,7 @@ def select_lowest_confidence_of_n_buffer(
         num_samples_per_prompt: int,
         num_samples_keep_per_prompt: int,
         use_last_token_reward: bool
-) -> (RolloutBuffer, CriticRolloutBuffer):
+):
     actor_rollout_buffer = ParallelRolloutBuffer(**actor_rollout_buffer)
     actor_rollout_buffer.gather_from_data_parallel_region()
     verifier_rollout_buffer = ParallelRolloutBuffer(**verifier_rollout_buffer)

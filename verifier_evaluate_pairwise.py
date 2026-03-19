@@ -4,13 +4,19 @@ import fire
 import torch
 from torch.utils.data import DataLoader
 
-from src.rewards.generator import VerifierGeneratorForLastToken, VerifierGeneratorForMeanScores, \
-    VerifierGeneratorForFocalLoss, VerifierGeneratorForFocalMeanScores
+from src.models.modeling import AutoVerifier
+from src.rewards.generator import (
+    VerifierGeneratorForLastToken,
+    VerifierGeneratorForMeanScores,
+    VerifierGeneratorForFocalLoss,
+    VerifierGeneratorForFocalMeanScores,
+    VerifierGeneratorForMeanScoreBCE
+)
 from src.dataset import PairwiseDataset, ChatTemplateDataset
 from src.entities import Timer
 from src.generator import GeneratorForVerifier
-from src.modeling import get_parallel_verifier
 from src.parallel.initialize import setup_model_parallel
+from src.tokenizers.tokenizer import AutoTokenizer
 from src.utils import json_dump
 
 
@@ -32,13 +38,16 @@ def main(
     tokenizer_file = ckpt_dir if tokenizer_file is None else tokenizer_file
     config_file = ckpt_dir if config_file is None else config_file
     parallel_infos = setup_model_parallel(seed=seed)
-    model, tokenizer = get_parallel_verifier(
+    model = AutoVerifier.from_pretrained(
         model_type=model_type,
         config_file=config_file,
         max_seq_len=max_seq_len,
-        tokenizer_file=tokenizer_file,
         lora_rank=-1,
         dtype=dtype
+    )
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_type=model_type,
+        tokenizer_file=tokenizer_file
     )
     model.load(ckpt_dir)
 
@@ -49,12 +58,14 @@ def main(
 
     if "last-token" in strategy:
         generator = VerifierGeneratorForLastToken(model, tokenizer, max_seq_len)
+    elif "mean-score-bce" in strategy:
+        generator = VerifierGeneratorForMeanScoreBCE(model, tokenizer, max_seq_len)
+    elif "focal-mean-score" in strategy:
+        generator = VerifierGeneratorForFocalMeanScores(model, tokenizer, max_seq_len)
     elif "mean-score" in strategy:
         generator = VerifierGeneratorForMeanScores(model, tokenizer, max_seq_len)
     elif "focal-loss" in strategy:
         generator = VerifierGeneratorForFocalLoss(model, tokenizer, max_seq_len)
-    elif "focal-mean-score" in strategy:
-        generator = VerifierGeneratorForFocalMeanScores(model, tokenizer, max_seq_len)
     else:
         raise ValueError(strategy)
     datalist = []

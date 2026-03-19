@@ -11,7 +11,7 @@ from src.models.modeling import (
     CausalLMOutputs,
     AttentionForCausalLM,
     ParallelVerifier,
-    VerifierOutputs
+    VerifierOutputs, AutoModelForCausalLM, AutoVerifier
 )
 from src.models.modeling_acts import RMSNorm, Clamp, LogitsNormalize
 from src.models.modeling_args import LlamaArgs, LoraLlamaArgs
@@ -186,6 +186,7 @@ class LlamaTransformerBlock(nn.Module):
         self.ffn_norm = RMSNorm(self.args.dim, eps=self.args.norm_eps).type(self.args.dtype)
 
 
+@AutoModelForCausalLM.register("llama")
 class Llama(ParallelModelForCausalLM):
     def __init__(self, args: LlamaArgs):
         super().__init__()
@@ -267,6 +268,7 @@ class Llama(ParallelModelForCausalLM):
         set_model_parallel_barrier()
 
 
+@AutoVerifier.register("llama")
 class LlamaVerifier(ParallelVerifier):
     def __init__(self, args: LlamaArgs):
         super().__init__()
@@ -323,6 +325,7 @@ class LlamaVerifier(ParallelVerifier):
             layer.init_weights()
         self.norm = RMSNorm(self.args.dim, eps=self.args.norm_eps).type(self.args.dtype)
         self.v_head = nn.Linear(self.args.dim, 1, bias=False).type(self.args.dtype)
+        init.zeros_(self.v_head.weight)
 
     def load(self, ckpt_dir: str, verbose: bool = True, **kwargs):
         ckpt_dir = self.checkpoint.auto_split_or_merge_checkpoints(
@@ -470,6 +473,7 @@ class LoraLlamaTransformerBlock(LlamaTransformerBlock):
         self.feed_forward = LoraLlamaFeedForward(args)
 
 
+@AutoModelForCausalLM.register("lora-llama")
 class LoraLlama(Llama):
     def __init__(self, args: LoraLlamaArgs):
         super().__init__(args)
@@ -513,6 +517,7 @@ class LoraLlama(Llama):
                 frozen_names.append(name)
 
 
+@AutoVerifier.register("lora-llama")
 class LoraLlamaVerifier(LlamaVerifier):
     def __init__(self, args: LoraLlamaArgs):
         super().__init__(args)

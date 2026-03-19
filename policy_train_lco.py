@@ -8,12 +8,13 @@ import torch
 from policy_train_ppo import collect_actor_buffer, collect_verifier_buffer
 from src.dataset import JsonDataset
 from src.entities import Timer, IterationHandler
-from src.modeling import get_parallel_model
+from src.models.modeling import AutoModelForCausalLM
 from src.parallel.initialize import setup_model_parallel, set_barrier, get_rank
 from src.parallel.optimizer import ParallelOptimizer
 from src.ppo.buffer import RolloutBuffer, LogitsRolloutBuffer
 from src.ppo.collector import LogitsBufferCollector
 from src.ppo.trainer_lco import ParallelLCOTrainerForRuleRM
+from src.tokenizers.tokenizer import AutoTokenizer
 from src.utils import json_load, print_current_func_args
 
 
@@ -30,12 +31,15 @@ def collect_logits_buffer(
         epoch: int,
         save_dir: str
 ) -> LogitsRolloutBuffer:
-    policy, policy_tokenizer = get_parallel_model(
+    policy = AutoModelForCausalLM.from_pretrained(
         model_type=policy_model_type,
         config_file=policy_config_file,
-        tokenizer_file=policy_tokenizer_file,
         max_seq_len=max_seq_len,
         dtype=dtype
+    )
+    policy_tokenizer = AutoTokenizer.from_pretrained(
+        model_type=policy_model_type,
+        tokenizer_file=policy_tokenizer_file
     )
     policy.load(policy_ckpt_dir if epoch == 0 else os.path.join(save_dir, "epoch-%03d" % epoch))
     logits_buffer_collector = LogitsBufferCollector(
@@ -68,7 +72,6 @@ def train_lco(
         policy_ckpt_dir: str,
         policy_model_type: str,
         policy_config_file: str,
-        policy_tokenizer_file: str,
         max_seq_len: int,
         dtype: str,
         lora_rank: int,
@@ -83,11 +86,10 @@ def train_lco(
         accumulation_steps: int = 1,
         max_num_ckpts: int = None
 ):
-    policy, policy_tokenizer = get_parallel_model(
+    policy = AutoModelForCausalLM.from_pretrained(
         model_type=policy_model_type,
         config_file=policy_config_file,
         max_seq_len=max_seq_len,
-        tokenizer_file=policy_tokenizer_file,
         lora_rank=lora_rank,
         dtype=dtype,
         lora_dtype=lora_dtype
@@ -241,7 +243,6 @@ def run(
             policy_ckpt_dir=policy_ckpt_dir,
             policy_model_type=policy_model_type,
             policy_config_file=policy_config_file,
-            policy_tokenizer_file=policy_tokenizer_file,
             max_seq_len=max_seq_len,
             dtype=dtype,
             lora_rank=lora_rank,

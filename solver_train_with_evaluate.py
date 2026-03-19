@@ -9,10 +9,11 @@ import torch
 from src.dataset import JsonDataset, ChatTemplateDataset
 from src.entities import Timer, IterationHandler
 from src.evaluator import DataParallelPolicyEvaluator
-from src.modeling import get_parallel_model
+from src.models.modeling import AutoModelForCausalLM
 from src.parallel.data_parallel.dataloader import ParallelDataLoader
 from src.parallel.initialize import setup_model_parallel, get_rank, set_barrier
 from src.parallel.optimizer import ParallelOptimizer
+from src.tokenizers.tokenizer import AutoTokenizer
 from src.trainer import ParallelSolverTrainer
 from src.utils import print_current_func_args, json_load, json_dump
 
@@ -101,14 +102,17 @@ def main(
     tokenizer_file = tokenizer_file or ckpt_dir
     config_file = config_file or ckpt_dir
 
-    model, tokenizer = get_parallel_model(
+    model = AutoModelForCausalLM.from_pretrained(
         model_type=model_type,
         config_file=config_file,
-        tokenizer_file=tokenizer_file,
         max_seq_len=max_seq_len,
         lora_rank=lora_rank,
         dtype=dtype,
         lora_dtype=lora_dtype
+    )
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_type=model_type,
+        tokenizer_file=tokenizer_file
     )
 
     datalist = []

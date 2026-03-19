@@ -5,14 +5,15 @@ import fire
 import torch
 from torch.utils.data import DataLoader
 
+from src.models.modeling import AutoModelForCausalLM
 from src.rewards.generator import VerifierGeneratorForDPO
 from src.dataset import PairwiseDataset, ChatTemplateDataset
 from src.entities import Timer
-from src.modeling import get_parallel_model
 from src.parallel.initialize import setup_model_parallel, set_barrier, get_local_rank
 from src.ppo.buffer import LogitsRolloutBufferV0
 from src.ppo.collector import LogitsBufferCollectorV0
 from src.ppo.generator import LogitsGeneratorForCausalLMV0
+from src.tokenizers.tokenizer import AutoTokenizer
 from src.utils import json_dump
 
 
@@ -41,13 +42,16 @@ def main(
     dataset = PairwiseDataset(f=label_file)
 
     if not os.path.exists(chosen_buffer_file) or not os.path.exists(rejected_buffer_file):
-        reference, reference_tokenizer = get_parallel_model(
+        reference = AutoModelForCausalLM.from_pretrained(
             model_type=model_type,
             config_file=config_file,
             max_seq_len=max_seq_len,
-            tokenizer_file=tokenizer_file,
             lora_rank=-1,
             dtype=dtype
+        )
+        reference_tokenizer = AutoTokenizer.from_pretrained(
+            model_type=model_type,
+            tokenizer_file=tokenizer_file
         )
         reference.load(reference_ckpt_dir)
         reference_buffer_collector = LogitsBufferCollectorV0(
@@ -89,13 +93,16 @@ def main(
         reference_chosen_rollout_buffer = LogitsRolloutBufferV0().load(chosen_buffer_file)
         reference_rejected_rollout_buffer = LogitsRolloutBufferV0().load(rejected_buffer_file)
 
-    policy, policy_tokenizer = get_parallel_model(
+    policy = AutoModelForCausalLM.from_pretrained(
         model_type=model_type,
         config_file=config_file,
         max_seq_len=max_seq_len,
-        tokenizer_file=tokenizer_file,
         lora_rank=-1,
         dtype=dtype
+    )
+    policy_tokenizer = AutoTokenizer.from_pretrained(
+        model_type=model_type,
+        tokenizer_file=tokenizer_file
     )
     policy.load(policy_ckpt_dir)
     generator = VerifierGeneratorForDPO(policy, policy_tokenizer, max_seq_len)

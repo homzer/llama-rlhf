@@ -1,6 +1,8 @@
+from src.tokenizers.tokenizer import AutoTokenizer
 from src.tokenizers.tokenizer_internlm import InternLMTokenizer
 
 
+@AutoTokenizer.register("internlm3")
 class InternLM3Tokenizer(InternLMTokenizer):
     def __init__(self, model_dir: str):
         super().__init__(model_dir=model_dir)

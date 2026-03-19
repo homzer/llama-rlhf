@@ -6,6 +6,7 @@ import torch
 from src.rewards.strategy import (
     PairwiseVerifierStrategyForLastToken,
     PairwiseVerifierStrategyForMeanScore,
+    PairwiseVerifierStrategyForMeanScoreBCE,
     PairwiseVerifierStrategyForFocalMeanScore,
     PairwiseVerifierStrategyForFocalLoss,
     PairwiseVerifierStrategyForDPO,
@@ -127,6 +128,17 @@ class VerifierGeneratorForMeanScores(VerifierGeneratorForLastToken):
     ):
         super().__init__(model=model, tokenizer=tokenizer, max_seq_len=max_seq_len)
         self.strategy = PairwiseVerifierStrategyForMeanScore()
+
+
+class VerifierGeneratorForMeanScoreBCE(VerifierGeneratorForLastToken):
+    def __init__(
+            self,
+            model: Union[Verifier, ParallelVerifier],
+            tokenizer: Tokenizer,
+            max_seq_len: int,
+    ):
+        super().__init__(model=model, tokenizer=tokenizer, max_seq_len=max_seq_len)
+        self.strategy = PairwiseVerifierStrategyForMeanScoreBCE()
 
 
 class VerifierGeneratorForFocalMeanScores(VerifierGeneratorForLastToken):

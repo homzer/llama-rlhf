@@ -202,8 +202,8 @@ class Checkpoint:
     def auto_split_or_merge_checkpoints(
             self,
             ckpt_dir: str,
-            model_parallel_world_size: int,
-            global_rank: int
+            model_parallel_world_size: int | torch.Tensor,
+            global_rank: int | torch.Tensor
     ) -> str:
         checkpoints = sorted(Path(ckpt_dir).glob("consolidated.*.pth"))
         if len(checkpoints) == 0:  # splitting

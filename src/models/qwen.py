@@ -11,7 +11,7 @@ from src.models.modeling import (
     CausalLMOutputs,
     AttentionForCausalLM,
     ParallelVerifier,
-    VerifierOutputs
+    VerifierOutputs, AutoModelForCausalLM, AutoVerifier
 )
 from src.models.modeling_acts import Clamp, RMSNorm, RotaryEmbedding, LogitsNormalize
 from src.models.modeling_args import QwenArgs, LoraQwenArgs
@@ -238,6 +238,7 @@ class QwenHead(nn.Module):
         return self.norm(h)
 
 
+@AutoModelForCausalLM.register("qwen")
 class Qwen(ParallelModelForCausalLM):
     def __init__(self, args: QwenArgs):
         super().__init__()
@@ -429,6 +430,7 @@ class LoraQwenHead(QwenHead):
             self.layers.append(LoraQwenTransformerBlock(args))
 
 
+@AutoModelForCausalLM.register("lora-qwen")
 class LoraQwen(Qwen):
     def __init__(self, args: LoraQwenArgs):
         super().__init__(args)
@@ -468,6 +470,7 @@ class LoraQwen(Qwen):
                 frozen_names.append(name)
 
 
+@AutoVerifier.register("qwen")
 class QwenVerifier(ParallelVerifier):
     def __init__(self, args: QwenArgs):
         super().__init__()
@@ -482,6 +485,7 @@ class QwenVerifier(ParallelVerifier):
         self.v_head = nn.Linear(
             self.args.hidden_size, 1, bias=False
         ).type(self.args.dtype)
+        init.zeros_(self.v_head.weight)
 
     def forward(self, tokens: torch.Tensor) -> VerifierOutputs:
         h = self.model.forward(tokens)
@@ -503,6 +507,7 @@ class QwenVerifier(ParallelVerifier):
         super().load(ckpt_dir, verbose=verbose, merge_lora=merge_lora)
 
 
+@AutoVerifier.register("lora-qwen")
 class LoraQwenVerifier(QwenVerifier):
     def __init__(self, args: LoraQwenArgs):
         super().__init__(args)

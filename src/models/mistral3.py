@@ -3,6 +3,7 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
+import torch.nn.init as init
 import torch.nn.functional as F
 
 from src.checkpoint import CheckpointForMinistral3, CheckpointForMistral3
@@ -10,7 +11,7 @@ from src.models.modeling import (
     ParallelModelForCausalLM,
     CausalLMOutputs,
     AttentionForCausalLM,
-    ParallelVerifier, VerifierOutputs)
+    ParallelVerifier, VerifierOutputs, AutoModelForCausalLM, AutoVerifier)
 from src.models.modeling_acts import Clamp, RMSNorm, LogitsNormalize
 from src.models.modeling_args import Mistral3Args
 from src.parallel.initialize import set_model_parallel_barrier
@@ -405,6 +406,7 @@ class Ministral3(ParallelModelForCausalLM):
         set_model_parallel_barrier()
 
 
+@AutoModelForCausalLM.register("mistral3")
 class Mistral3(ParallelModelForCausalLM):
     def __init__(self, args: Mistral3Args):
         super().__init__()
@@ -450,6 +452,7 @@ class Ministral3Verifier(ParallelVerifier):
         self.v_head = nn.Linear(
             self.args.text_config_hidden_size, 1, bias=False
         ).type(self.args.dtype)
+        init.zeros_(self.v_head.weight)
 
     def forward(self, tokens: torch.Tensor) -> VerifierOutputs:
         h = self.model.forward(tokens)
@@ -471,6 +474,7 @@ class Ministral3Verifier(ParallelVerifier):
         super().load(ckpt_dir, verbose=verbose, merge_lora=merge_lora)
 
 
+@AutoVerifier.register("mistral3")
 class Mistral3Verifier(ParallelVerifier):
     def __init__(self, args: Mistral3Args):
         super().__init__()

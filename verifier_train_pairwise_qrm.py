@@ -7,11 +7,12 @@ import torch
 
 from src.dataset import PairwiseDataset, ChatTemplateDataset
 from src.entities import Timer, IterationHandler
-from src.modeling import get_parallel_model
+from src.models.modeling import AutoModelForCausalLM
 from src.parallel.data_parallel.dataloader import ParallelDataLoader
 from src.parallel.initialize import setup_model_parallel, set_barrier, get_rank
 from src.ppo.buffer import RolloutBuffer
 from src.rewards.trainer import ParallelVerifierTrainerForQRM
+from src.tokenizers.tokenizer import AutoTokenizer
 from src.trainer import prepare_for_forward
 from src.utils import print_current_func_args, json_load
 
@@ -61,14 +62,17 @@ def main(
             continue
 
         # verifier training
-        verifier, verifier_tokenizer = get_parallel_model(
+        verifier = AutoModelForCausalLM.from_pretrained(
             model_type=model_type,
             config_file=config_file,
             max_seq_len=max_seq_len,
-            tokenizer_file=tokenizer_file,
             lora_rank=lora_rank,
             dtype=dtype,
             lora_dtype=lora_dtype
+        )
+        verifier_tokenizer = AutoTokenizer.from_pretrained(
+            model_type=model_type,
+            tokenizer_file=tokenizer_file
         )
 
         rollout_buffer = RolloutBuffer()

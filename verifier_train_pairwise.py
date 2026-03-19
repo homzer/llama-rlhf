@@ -5,16 +5,19 @@ import torch
 
 from src.dataset import PairwiseDataset, ChatTemplateDataset
 from src.entities import Timer
-from src.modeling import get_parallel_verifier
+from src.models.modeling import AutoVerifier
 from src.parallel.data_parallel.dataloader import ParallelDataLoader
 from src.parallel.initialize import setup_model_parallel
 from src.parallel.optimizer import ParallelOptimizer
 from src.rewards.trainer import (
     ParallelVerifierTrainerForLastToken,
     ParallelVerifierTrainerForMeanScore,
+    ParallelVerifierTrainerForMeanScoreBCE,
     ParallelVerifierTrainerForFocalMeanScore,
-    ParallelVerifierTrainerForFocalLoss, ParallelVerifierTrainerForPGTG,
+    ParallelVerifierTrainerForFocalLoss,
+    ParallelVerifierTrainerForPGTG,
 )
+from src.tokenizers.tokenizer import AutoTokenizer
 from src.utils import print_current_func_args
 
 
@@ -51,14 +54,17 @@ def main(
         sequence_parallel_size=sequence_parallel_size
     )
     print_current_func_args()
-    model, tokenizer = get_parallel_verifier(
+    model = AutoVerifier.from_pretrained(
         model_type=model_type,
         config_file=config_file,
         max_seq_len=max_seq_len,
-        tokenizer_file=tokenizer_file,
         lora_rank=lora_rank,
         dtype=dtype,
         lora_dtype=lora_dtype
+    )
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_type=model_type,
+        tokenizer_file=tokenizer_file
     )
 
     dataset = PairwiseDataset(f=train_file)
@@ -68,6 +74,21 @@ def main(
     optimizer = ParallelOptimizer(torch.optim.Adam(model.parameters(), lr=lr))
     if "last-token" in strategy:
         trainer = ParallelVerifierTrainerForLastToken(
+            model=model,
+            tokenizer=tokenizer,
+            optimizer=optimizer,
+            accumulation_steps=accumulation_steps
+        )
+    elif "mean-score-bce" in strategy:
+        trainer = ParallelVerifierTrainerForMeanScoreBCE(
+            model=model,
+            tokenizer=tokenizer,
+            optimizer=optimizer,
+            beta=beta,
+            accumulation_steps=accumulation_steps,
+        )
+    elif "focal-mean-score" in strategy:
+        trainer = ParallelVerifierTrainerForFocalMeanScore(
             model=model,
             tokenizer=tokenizer,
             optimizer=optimizer,
@@ -84,13 +105,6 @@ def main(
         )
     elif "focal-loss" in strategy:
         trainer = ParallelVerifierTrainerForFocalLoss(
-            model=model,
-            tokenizer=tokenizer,
-            optimizer=optimizer,
-            accumulation_steps=accumulation_steps
-        )
-    elif "focal-mean-score" in strategy:
-        trainer = ParallelVerifierTrainerForFocalMeanScore(
             model=model,
             tokenizer=tokenizer,
             optimizer=optimizer,

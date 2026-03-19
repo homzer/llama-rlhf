@@ -11,7 +11,7 @@ from policy_train_ppo_with_evaluate import evaluate_actor
 from policy_train_ppo_with_rule_rm import collect_actor_buffer_with_label, collect_rule_based_verifier_buffer
 from src.dataset import JsonDataset
 from src.entities import Timer, IterationHandler
-from src.modeling import get_parallel_model
+from src.models.modeling import AutoModelForCausalLM
 from src.parallel.initialize import setup_model_parallel, set_barrier, get_rank
 from src.parallel.optimizer import ParallelOptimizer
 from src.ppo.buffer import LogitsRolloutBuffer
@@ -28,7 +28,6 @@ def train_lco(
         policy_ckpt_dir: str,
         policy_model_type: str,
         policy_config_file: str,
-        policy_tokenizer_file: str,
         max_seq_len: int,
         dtype: str,
         lora_rank: int,
@@ -44,11 +43,10 @@ def train_lco(
         max_num_ckpts: int = None,
         strategy: str = "kld"  # or log-cosh, or mse
 ):
-    policy, policy_tokenizer = get_parallel_model(
+    policy = AutoModelForCausalLM.from_pretrained(
         model_type=policy_model_type,
         config_file=policy_config_file,
         max_seq_len=max_seq_len,
-        tokenizer_file=policy_tokenizer_file,
         lora_rank=lora_rank,
         dtype=dtype,
         lora_dtype=lora_dtype
@@ -213,7 +211,6 @@ def run(
             policy_ckpt_dir=policy_ckpt_dir,
             policy_model_type=policy_model_type,
             policy_config_file=policy_config_file,
-            policy_tokenizer_file=policy_tokenizer_file,
             max_seq_len=max_seq_len,
             dtype=dtype,
             lora_rank=lora_rank,

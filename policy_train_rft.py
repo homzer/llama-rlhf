@@ -8,10 +8,11 @@ from policy_train_ppo import collect_actor_buffer, collect_verifier_buffer
 from policy_train_ppo_best_of_n import select_best_of_n_buffer
 from src.dataset import JsonDataset
 from src.entities import Timer, IterationHandler
-from src.modeling import get_parallel_model
+from src.models.modeling import AutoModelForCausalLM
 from src.parallel.initialize import setup_model_parallel, set_barrier
 from src.parallel.optimizer import ParallelOptimizer
 from src.ppo.buffer import RolloutBuffer
+from src.tokenizers.tokenizer import AutoTokenizer
 from src.trainer import ParallelSolverTrainer
 from src.utils import json_load
 
@@ -33,14 +34,17 @@ def train_rft_policy(
         inner_epochs: int,
         accumulation_steps: int = 1
 ):
-    model, tokenizer = get_parallel_model(
+    model = AutoModelForCausalLM.from_pretrained(
         model_type=policy_model_type,
         config_file=policy_config_file,
         max_seq_len=max_seq_len,
-        tokenizer_file=policy_tokenizer_file,
         lora_dtype=lora_dtype,
         lora_rank=lora_rank,
         dtype=dtype
+    )
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_type=policy_model_type,
+        tokenizer_file=policy_tokenizer_file
     )
     optimizer = ParallelOptimizer(torch.optim.Adam(model.parameters(), lr=lr))
     trainer = ParallelSolverTrainer(

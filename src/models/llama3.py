@@ -1,3 +1,4 @@
+from src.models.modeling import AutoModelForCausalLM, AutoVerifier
 from src.parallel.model_parallel.layers import VocabParallelEmbedding
 
 from src.checkpoint import CheckpointForLlama3
@@ -6,6 +7,7 @@ from src.models.llama import LlamaVerifier, LoraLlamaVerifier
 from src.models.modeling_args import LlamaArgs, LoraLlamaArgs
 
 
+@AutoModelForCausalLM.register("llama3")
 class Llama3(Llama):
     def __init__(self, args: LlamaArgs):
         super().__init__(args)
@@ -18,6 +20,7 @@ class Llama3(Llama):
         ).type(self.args.dtype)
 
 
+@AutoModelForCausalLM.register("lora-llama3")
 class LoraLlama3(LoraLlama):
     def __init__(self, args: LoraLlamaArgs):
         super().__init__(args)
@@ -32,6 +35,7 @@ class LoraLlama3(LoraLlama):
         self._freeze()
 
 
+@AutoVerifier.register("llama3")
 class Llama3Verifier(LlamaVerifier):
     def __init__(self, args: LlamaArgs):
         super().__init__(args)
@@ -44,6 +48,7 @@ class Llama3Verifier(LlamaVerifier):
         ).type(self.args.dtype)
 
 
+@AutoVerifier.register("lora-llama3")
 class LoraLlama3Verifier(LoraLlamaVerifier):
     def __init__(self, args: LoraLlamaArgs):
         super().__init__(args)

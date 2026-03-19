@@ -10,7 +10,7 @@ from src.parallel.model_parallel.layers import (
 )
 
 from src.checkpoint import CheckpointForInternLM
-from src.models.modeling import AttentionForCausalLM, ParallelModelForCausalLM, CausalLMOutputs
+from src.models.modeling import AttentionForCausalLM, ParallelModelForCausalLM, CausalLMOutputs, AutoModelForCausalLM
 from src.models.modeling_acts import Clamp, RMSNorm, LogitsNormalize
 from src.models.modeling_args import InternLMArgs
 from src.parallel.initialize import set_model_parallel_barrier
@@ -195,6 +195,7 @@ class InternLMHead(nn.Module):
         return self.norm(h)
 
 
+@AutoModelForCausalLM.register("internlm")
 class InternLM(ParallelModelForCausalLM):
     def __init__(self, args: InternLMArgs):
         super().__init__()

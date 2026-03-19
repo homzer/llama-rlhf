@@ -8,8 +8,9 @@ from torch.utils.data import DataLoader
 from src.dataset import JsonDataset, ChatTemplateDataset, MultiOutputsDataset
 from src.entities import Timer
 from src.generator import GroupGeneratorForCausalLM, GeneratorForVerifier
-from src.modeling import get_parallel_model, get_parallel_verifier
+from src.models.modeling import AutoModelForCausalLM, AutoVerifier
 from src.parallel.initialize import setup_model_parallel, set_barrier
+from src.tokenizers.tokenizer import AutoTokenizer
 from src.utils import convert_dataloader_data_to_list, json_dump
 
 
@@ -35,7 +36,6 @@ def main(
         label_file: str,
         log_dir: str,
         num_samples_per_prompt: int,
-
         policy_ckpt_dir: str,
         policy_model_type: str,
         verifier_ckpt_dir: str,
@@ -60,13 +60,16 @@ def main(
     policy_config_file = policy_config_file or policy_ckpt_dir
 
     # policy buffer collecting
-    policy, policy_tokenizer = get_parallel_model(
+    policy = AutoModelForCausalLM.from_pretrained(
         model_type=policy_model_type,
         config_file=policy_config_file,
-        tokenizer_file=policy_tokenizer_file,
         max_seq_len=max_seq_len,
         lora_rank=-1,
         dtype=dtype
+    )
+    policy_tokenizer = AutoTokenizer.from_pretrained(
+        model_type=policy_model_type,
+        tokenizer_file=policy_tokenizer_file
     )
     policy.load(policy_ckpt_dir)
     generator = GroupGeneratorForCausalLM(
@@ -99,13 +102,16 @@ def main(
     set_barrier()
 
     # verifier buffer collecting
-    verifier, verifier_tokenizer = get_parallel_verifier(
+    verifier = AutoVerifier.from_pretrained(
         model_type=verifier_model_type,
         config_file=verifier_config_file,
         max_seq_len=max_seq_len,
-        tokenizer_file=verifier_tokenizer_file,
         lora_rank=-1,
         dtype=dtype
+    )
+    verifier_tokenizer = AutoTokenizer.from_pretrained(
+        model_type=verifier_model_type,
+        tokenizer_file=verifier_tokenizer_file
     )
     verifier.load(verifier_ckpt_dir)
     generator = GeneratorForVerifier(

@@ -190,7 +190,6 @@ def run(
             rollout_buffer=rollout_buffer,
             actor_model_type=policy_model_type,
             actor_config_file=policy_config_file,
-            actor_tokenizer_file=policy_tokenizer_file,
             actor_ckpt_dir=policy_ckpt_dir,
             actor_save_dir=save_dir,
             max_seq_len=max_seq_len,

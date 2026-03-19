@@ -270,7 +270,6 @@ def run(
             critic_model_type=critic_model_type,
             critic_config_file=critic_config_file,
             max_seq_len=max_seq_len,
-            critic_tokenizer_file=critic_tokenizer_file,
             critic_lora_rank=critic_lora_rank,
             dtype=dtype,
             lr=critic_lr,

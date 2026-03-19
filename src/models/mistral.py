@@ -8,7 +8,7 @@ from src.checkpoint import CheckpointForMistral
 from src.models.modeling import (
     ParallelModelForCausalLM,
     CausalLMOutputs,
-    AttentionForCausalLM
+    AttentionForCausalLM, AutoModelForCausalLM
 )
 from src.models.modeling_acts import Clamp, RMSNorm, RotaryEmbedding, LogitsNormalize
 from src.models.modeling_args import MistralArgs
@@ -234,6 +234,7 @@ class MistralHead(nn.Module):
         return self.norm(h)
 
 
+@AutoModelForCausalLM.register("mistral")
 class Mistral(ParallelModelForCausalLM):
     def __init__(self, args: MistralArgs):
         super().__init__()

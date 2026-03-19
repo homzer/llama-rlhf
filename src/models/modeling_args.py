@@ -103,6 +103,42 @@ class BaseParallelArgs(Args):
     use_logits_normalize: bool = True
 
 
+class AutoArgs:
+    _registry = {}
+
+    @classmethod
+    def register(cls, name):
+        def wrapper(args_cls):
+            cls._registry[name] = args_cls
+            return args_cls
+        return wrapper
+
+    @classmethod
+    def from_pretrained(
+            cls,
+            model_type: str,
+            config_file: str,
+            max_seq_len: int,
+            dtype: str = 'bfloat16',
+            lora_rank: int = -1,
+            lora_dtype: str = 'bfloat16',
+            use_logits_normalize: bool = True
+    ) -> BaseParallelArgs:
+        kwargs = dict(
+            max_seq_len=max_seq_len,
+            dtype=dtype,
+            use_clamp=False,
+            use_logits_normalize=use_logits_normalize
+        )
+        if lora_rank > 0:
+            kwargs["r"] = lora_rank
+            kwargs["lora_dtype"] = lora_dtype
+            args = cls._registry[f"lora-{model_type}"](**kwargs).from_json(config_file)
+        else:
+            args = cls._registry[model_type](**kwargs).from_json(config_file)
+        return args
+
+
 @dataclass
 class GPT2Args(BaseArgs):
     attn_pdrop: int = None
@@ -119,6 +155,7 @@ class GPT2Args(BaseArgs):
 
 
 @dataclass
+@AutoArgs.register("llama")
 class LlamaArgs(BaseParallelArgs):
     dim: int = None
     n_layers: int = None
@@ -139,17 +176,20 @@ class LlamaArgs(BaseParallelArgs):
 
 
 @dataclass
+@AutoArgs.register("llama3")
 class Llama3Args(LlamaArgs):
     rope_theta: float = None
 
 
 @dataclass
+@AutoArgs.register("lora-llama")
 class LoraLlamaArgs(LlamaArgs):
     r: int = None  # Rank of lora
     lora_dtype: str = "float32"
 
 
 @dataclass
+@AutoArgs.register("llama-hf")
 class LlamaArgsHf(BaseParallelArgs):
     hidden_size: int = None
     num_hidden_layers: int = None
@@ -167,12 +207,14 @@ class LlamaArgsHf(BaseParallelArgs):
 
 
 @dataclass
+@AutoArgs.register("lora-llama-hf")
 class LoraLlamaArgsHf(LlamaArgsHf):
     r: int = None
     lora_dtype: str = "float32"
 
 
 @dataclass
+@AutoArgs.register("mistral")
 class MistralArgs(BaseParallelArgs):
     hidden_size: int = None
     num_hidden_layers: int = None
@@ -197,6 +239,7 @@ class MistralArgs(BaseParallelArgs):
 
 
 @dataclass
+@AutoArgs.register("mistral3")
 class Mistral3Args(BaseParallelArgs):
     text_config_hidden_size: int = None
     text_config_intermediate_size: int = None
@@ -223,6 +266,7 @@ class Mistral3Args(BaseParallelArgs):
 
 
 @dataclass
+@AutoArgs.register("gemma3")
 class Gemma3Args(BaseParallelArgs):
     text_config_hidden_size: int = None
     text_config_intermediate_size: int = None
@@ -239,6 +283,8 @@ class Gemma3Args(BaseParallelArgs):
 
 
 @dataclass
+@AutoArgs.register("qwen")
+@AutoArgs.register("qwen3")
 class QwenArgs(BaseParallelArgs):
     hidden_size: int = None
     intermediate_size: int = None
@@ -264,7 +310,10 @@ class QwenArgs(BaseParallelArgs):
 
 
 @dataclass
+@AutoArgs.register("qwen-vl")
 class QwenVLArgs(QwenArgs):
+    image_token_id: int = None
+    video_token_id: int = None
     vision_config_depth: int = 32
     vision_config_hidden_size: int = None
     vision_config_intermediate_size: int = None
@@ -282,12 +331,15 @@ class QwenVLArgs(QwenArgs):
 
 
 @dataclass
+@AutoArgs.register("lora-qwen")
+@AutoArgs.register("lora-qwen3")
 class LoraQwenArgs(QwenArgs):
     r: int = None  # Rank of lora
     lora_dtype: str = "float32"
 
 
 @dataclass
+@AutoArgs.register("qwen-moe")
 class QwenMoeArgs(QwenArgs):
     moe_intermediate_size: int = None
     norm_topk_prob: bool = True
@@ -296,6 +348,7 @@ class QwenMoeArgs(QwenArgs):
 
 
 @dataclass
+@AutoArgs.register("gemma2")
 class Gemma2Args(BaseParallelArgs):
     attn_logit_softcapping: float = None
     final_logit_softcapping: float = None
@@ -318,6 +371,7 @@ class Gemma2Args(BaseParallelArgs):
 
 
 @dataclass
+@AutoArgs.register("baichuan")
 class BaichuanArgs(BaseParallelArgs):
     vocab_size: int = None
     hidden_size: int = None
@@ -337,12 +391,14 @@ class BaichuanArgs(BaseParallelArgs):
 
 
 @dataclass
+@AutoArgs.register("lora-baichuan")
 class LoraBaichuanArgs(BaichuanArgs):
     r: int = None  # Rank of lora
     lora_dtype: str = "float32"
 
 
 @dataclass
+@AutoArgs.register("internlm")
 class InternLMArgs(BaseParallelArgs):
     hidden_size: int = None
     intermediate_size: int = None
@@ -365,6 +421,7 @@ class InternLMArgs(BaseParallelArgs):
 
 
 @dataclass
+@AutoArgs.register("internlm3")
 class InternLM3Args(BaseParallelArgs):
     head_dim: int = None
     hidden_size: int = None

@@ -7,7 +7,7 @@ from policy_train_ppo import collect_actor_buffer, collect_verifier_buffer
 from src.dataset import JsonDataset
 from src.entities import IterationHandler
 from src.parallel.initialize import setup_model_parallel
-from src.ppo.buffer import CriticRolloutBuffer, PPORolloutBuffer, RolloutBuffer
+from src.ppo.buffer import CriticRolloutBuffer, RolloutBuffer
 from src.ppo.parallel_buffer import ParallelRolloutBuffer
 from src.utils import json_load
 
@@ -16,7 +16,7 @@ def compute_rloo_rewards(
         policy_rollout_buffer: RolloutBuffer,
         verifier_rollout_buffer: CriticRolloutBuffer,
         num_samples_per_prompt: int,
-) -> (RolloutBuffer, CriticRolloutBuffer):
+):
     """ Compute Leave-One-Out reward in RLOO """
     policy_rollout_buffer = ParallelRolloutBuffer(**policy_rollout_buffer)
     policy_rollout_buffer.gather_from_data_parallel_region()
@@ -143,7 +143,6 @@ def run(
             policy_ckpt_dir=policy_ckpt_dir,
             policy_model_type=policy_model_type,
             policy_config_file=policy_config_file,
-            policy_tokenizer_file=policy_tokenizer_file,
             max_seq_len=max_seq_len,
             lora_rank=lora_rank,
             dtype=dtype,

@@ -5,8 +5,9 @@ import fire
 
 from src.dataset import JsonDataset, ChatTemplateDataset
 from src.evaluator import DataParallelPolicyEvaluator
-from src.modeling import get_parallel_model
+from src.models.modeling import AutoModelForCausalLM
 from src.parallel.initialize import setup_model_parallel
+from src.tokenizers.tokenizer import AutoTokenizer
 from src.utils import json_dump, print_current_func_args
 
 
@@ -37,13 +38,16 @@ def main(
     tokenizer_file = tokenizer_file or ckpt_dir
     config_file = config_file or ckpt_dir
 
-    model, tokenizer = get_parallel_model(
+    model = AutoModelForCausalLM.from_pretrained(
         model_type=model_type,
         config_file=config_file,
         max_seq_len=max_seq_len,
-        tokenizer_file=tokenizer_file,
         lora_rank=-1,
         dtype=dtype
+    )
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_type=model_type,
+        tokenizer_file=tokenizer_file
     )
     model.load(ckpt_dir)
     acc = []

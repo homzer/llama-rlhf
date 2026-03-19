@@ -1,3 +1,4 @@
+from src.models.modeling import AutoModelForCausalLM
 from src.parallel.model_parallel.layers import VocabParallelEmbedding, ColumnParallelLinear
 
 from src.checkpoint import CheckpointForLlama3
@@ -16,6 +17,7 @@ class Llama3ModelHf(LlamaModelHf):
         ).type(self.args.dtype)
 
 
+@AutoModelForCausalLM.register("llama3-hf")
 class Llama3Hf(LlamaHf):
     def __init__(self, args: LlamaArgsHf):
         super().__init__(args)

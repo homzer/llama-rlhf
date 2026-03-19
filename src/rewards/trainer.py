@@ -8,6 +8,7 @@ from src.models.modeling import ParallelVerifier, ParallelModelForCausalLM
 from src.rewards.strategy import (
     PairwiseVerifierStrategyForLastToken,
     PairwiseVerifierStrategyForMeanScore,
+    PairwiseVerifierStrategyForMeanScoreBCE,
     PairwiseVerifierStrategyForFocalMeanScore,
     PairwiseVerifierStrategyForFocalLoss,
     PairwiseVerifierStrategyForSimPO,
@@ -273,6 +274,25 @@ class ParallelVerifierTrainerForMeanScore(ParallelVerifierTrainerForLastToken):
             accumulation_steps=accumulation_steps
         )
         self.strategy = PairwiseVerifierStrategyForMeanScore(beta=beta, gamma=gamma)
+
+
+class ParallelVerifierTrainerForMeanScoreBCE(ParallelVerifierTrainerForLastToken):
+    def __init__(
+            self,
+            model: ParallelVerifier,
+            tokenizer: Tokenizer,
+            optimizer: torch.optim.Optimizer,
+            accumulation_steps: int = 1,
+            beta: float = 1.0,
+    ):
+        super().__init__(
+            model=model,
+            tokenizer=tokenizer,
+            optimizer=optimizer,
+            accumulation_steps=accumulation_steps
+        )
+        self.strategy = PairwiseVerifierStrategyForMeanScoreBCE(beta=beta)
+
 
 
 class ParallelVerifierTrainerForFocalMeanScore(ParallelVerifierTrainerForLastToken):

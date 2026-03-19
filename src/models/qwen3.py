@@ -2,7 +2,7 @@ from typing import Optional
 
 import torch
 
-from src.models.modeling import AttentionForCausalLM
+from src.models.modeling import AttentionForCausalLM, AutoModelForCausalLM, AutoVerifier
 from src.models.modeling_acts import RMSNorm, RotaryEmbedding
 from src.models.modeling_args import QwenArgs
 from src.models.qwen import (
@@ -141,12 +141,14 @@ class Qwen3Head(QwenHead):
             self.layers.append(Qwen3TransformerBlock(args))
 
 
+@AutoModelForCausalLM.register("qwen3")
 class Qwen3(Qwen):
     def __init__(self, args: QwenArgs):
         super().__init__(args=args)
         self.model = Qwen3Head(args)
 
 
+@AutoVerifier.register("qwen3")
 class Qwen3Verifier(QwenVerifier):
     def __init__(self, args: QwenArgs):
         super().__init__(args=args)

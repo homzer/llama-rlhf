@@ -4,6 +4,7 @@ Different strategies for reward modeling
 from typing import List
 
 import torch
+import torch.nn.functional as F
 
 from src.criterion import SimPOLoss, ImplicitPRMLoss, DPOLoss
 
@@ -44,7 +45,7 @@ class PointwiseVerifierStrategyForLastToken(PointwiseVerifierStrategy):
                 continue
             end_idx = nonzero_indices[-1].item()
             score = scores[i][end_idx]
-            loss += torch.nn.functional.binary_cross_entropy_with_logits(score, labels[i])
+            loss += F.binary_cross_entropy_with_logits(score, labels[i])
         if valid_bsz > 0:
             loss = loss / valid_bsz
         return loss
@@ -87,7 +88,7 @@ class PointwiseVerifierStrategyForFocalLoss(PointwiseVerifierStrategyForLastToke
             score = scores[i][end_idx]
             p = torch.sigmoid(score)
             penalty = (1 - labels[i]) * p ** self.gamma + labels[i] * (1 - p) ** self.gamma
-            loss += penalty * torch.nn.functional.binary_cross_entropy_with_logits(score, labels[i])
+            loss += penalty * F.binary_cross_entropy_with_logits(score, labels[i])
         if valid_bsz > 0:
             loss = loss / valid_bsz
         return loss
@@ -204,7 +205,7 @@ class PairwiseVerifierStrategyForLastToken(PairwiseVerifierStrategy):
             rejected_end_idx = rejected_check_start[-1].item()
             chosen_score = chosen_scores[i][chosen_end_idx]
             rejected_score = rejected_scores[i][rejected_end_idx]
-            loss += - torch.nn.functional.logsigmoid(chosen_score - rejected_score)
+            loss += - F.logsigmoid(chosen_score - rejected_score)
         if valid_bsz > 0:
             loss = loss / valid_bsz
         return loss
@@ -251,7 +252,7 @@ class PairwiseVerifierStrategyForPGTG(PairwiseVerifierStrategy):
             c = (chosen_end_idx + rejected_end_idx - 2 * start_idx) / 2
             chosen_score = c * chosen_scores[i][start_idx: chosen_end_idx].mean()
             rejected_score = c * rejected_scores[i][start_idx: rejected_end_idx].mean()
-            loss += - torch.nn.functional.logsigmoid(chosen_score - rejected_score)
+            loss += - F.logsigmoid(chosen_score - rejected_score)
         if valid_bsz > 0:
             loss = loss / valid_bsz
         return loss
@@ -294,7 +295,7 @@ class PairwiseVerifierStrategyForMeanScore(PairwiseVerifierStrategy):
 
             chosen_score = chosen_scores[i][start_idx: chosen_end_idx].mean()
             rejected_score = rejected_scores[i][start_idx: rejected_end_idx].mean()
-            loss += - torch.nn.functional.logsigmoid(self.beta * (chosen_score - rejected_score) - self.gamma)
+            loss += - F.logsigmoid(self.beta * (chosen_score - rejected_score) - self.gamma)
         if valid_bsz > 0:
             loss = loss / valid_bsz
         return loss
@@ -306,6 +307,47 @@ class PairwiseVerifierStrategyForMeanScore(PairwiseVerifierStrategy):
         for i in range(bsz):
             reduce_scores.append(torch.masked_select(scores[i], masks[i]).mean().item())
         return reduce_scores
+
+
+class PairwiseVerifierStrategyForMeanScoreBCE(PairwiseVerifierStrategyForMeanScore):
+    """ Mean Score with Binary Cross-Entropy """
+    def __init__(self, beta: float = 0.2):
+        super().__init__(beta=beta)
+
+    def trainer_forward(
+            self,
+            chosen_scores: torch.Tensor,  # shape [batch_size, seq_length]
+            rejected_scores: torch.Tensor,
+            chosen_masks: torch.Tensor,  # shape [batch_size, seq_length]
+            rejected_masks: torch.Tensor,
+    ) -> torch.Tensor:
+        bsz, seq_len = chosen_scores.shape
+        valid_bsz = bsz
+        loss = 0
+        for i in range(bsz):
+            chosen_check_start = chosen_masks[i].nonzero()
+            if len(chosen_check_start) == 0:
+                valid_bsz -= 1
+                continue
+            start_idx = chosen_check_start[0].item()
+            rejected_check_start = rejected_masks[i].nonzero()
+            assert start_idx == rejected_check_start[0].item()
+            chosen_end_idx = chosen_check_start[-1].item() + 1
+            rejected_end_idx = rejected_check_start[-1].item() + 1
+
+            chosen_score = chosen_scores[i][start_idx: chosen_end_idx].mean()
+            rejected_score = rejected_scores[i][start_idx: rejected_end_idx].mean()
+            loss += F.binary_cross_entropy_with_logits(
+                input=self.beta * chosen_score,
+                target=torch.ones_like(chosen_score)
+            )
+            loss += F.binary_cross_entropy_with_logits(
+                input=- self.beta * rejected_score,
+                target=torch.ones_like(rejected_score)
+            )
+        if valid_bsz > 0:
+            loss = loss / valid_bsz
+        return loss
 
 
 class PairwiseVerifierStrategyForFocalMeanScore(PairwiseVerifierStrategyForMeanScore):
@@ -334,7 +376,7 @@ class PairwiseVerifierStrategyForFocalMeanScore(PairwiseVerifierStrategyForMeanS
             chosen_score = chosen_scores[i][start_idx: chosen_end_idx].mean()
             rejected_score = rejected_scores[i][start_idx: rejected_end_idx].mean()
             p_ij = torch.sigmoid(chosen_score - rejected_score)
-            loss += -((1.0 - 2.0 * torch.nn.functional.relu(p_ij - 0.5)) ** 2.0) * torch.nn.functional.logsigmoid(
+            loss += -((1.0 - 2.0 * F.relu(p_ij - 0.5)) ** 2.0) * F.logsigmoid(
                 chosen_score - rejected_score)
         if valid_bsz > 0:
             loss = loss / valid_bsz
@@ -365,11 +407,11 @@ class PairwiseVerifierStrategyForFocalLoss(PairwiseVerifierStrategyForLastToken)
             chosen_score = chosen_scores[i][chosen_end_idx]
             rejected_score = rejected_scores[i][rejected_end_idx]
             p_ij = torch.sigmoid(chosen_score - rejected_score)
-            l_rank = -((1.0 - 2.0 * torch.nn.functional.relu(p_ij - 0.5)) ** 2.0) * torch.nn.functional.logsigmoid(
+            l_rank = -((1.0 - 2.0 * F.relu(p_ij - 0.5)) ** 2.0) * F.logsigmoid(
                 chosen_score - rejected_score)
-            l_penalty_c = -(torch.nn.functional.logsigmoid(chosen_score + 5.0) + torch.nn.functional.logsigmoid(
+            l_penalty_c = -(F.logsigmoid(chosen_score + 5.0) + F.logsigmoid(
                 5.0 - chosen_score))
-            l_penalty_r = -(torch.nn.functional.logsigmoid(rejected_score + 5.0) + torch.nn.functional.logsigmoid(
+            l_penalty_r = -(F.logsigmoid(rejected_score + 5.0) + F.logsigmoid(
                 5.0 - rejected_score))
             l_penalty = (l_penalty_c + l_penalty_r) / 2.0
             loss += (l_rank + 0.02 * l_penalty)

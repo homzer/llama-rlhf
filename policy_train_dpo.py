@@ -8,7 +8,7 @@ import torch
 from policy_train_ppo_with_evaluate import evaluate_actor
 from src.dataset import PairwiseDataset, ChatTemplateDataset
 from src.entities import Timer, IterationHandler
-from src.modeling import get_parallel_model
+from src.models.modeling import AutoModelForCausalLM
 from src.parallel.data_parallel.dataloader import ParallelDataLoader
 from src.parallel.initialize import (
     setup_model_parallel,
@@ -21,6 +21,7 @@ from src.parallel.optimizer import ParallelOptimizer
 from src.ppo.buffer import RolloutBuffer
 from src.ppo.collector import ActorForwardBufferCollector
 from src.ppo.trainer import ParallelDPOTrainerForCausalLM
+from src.tokenizers.tokenizer import AutoTokenizer
 from src.utils import json_load, print_current_func_args
 
 
@@ -43,12 +44,15 @@ def collect_reference_buffer(
     if reuse_buffer and os.path.exists(os.path.join(ref_buffer_save_dir, "buffer.jsonl")):
         ref_rollout_buffer = RolloutBuffer.load(ref_buffer_save_dir)
     else:
-        reference, reference_tokenizer = get_parallel_model(
+        reference = AutoModelForCausalLM.from_pretrained(
             model_type=reference_model_type,
             config_file=reference_config_file,
-            tokenizer_file=reference_tokenizer_file,
             max_seq_len=max_seq_len,
             dtype=dtype
+        )
+        reference_tokenizer = AutoTokenizer.from_pretrained(
+            model_type=reference_model_type,
+            tokenizer_file=reference_tokenizer_file
         )
         if use_chat_template:
             dataset = ChatTemplateDataset(dataset, reference_tokenizer)
@@ -108,10 +112,9 @@ def train_dpo(
         accumulation_steps: int = 1,
         max_num_ckpts: int = None,
 ):
-    policy, policy_tokenizer = get_parallel_model(
+    policy = AutoModelForCausalLM.from_pretrained(
         model_type=policy_model_type,
         config_file=policy_config_file,
-        tokenizer_file=policy_tokenizer_file,
         max_seq_len=max_seq_len,
         dtype=dtype,
         lora_rank=lora_rank,

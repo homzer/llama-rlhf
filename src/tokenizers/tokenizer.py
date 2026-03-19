@@ -23,3 +23,18 @@ class Tokenizer:
 
     def save(self, save_dir: str):
         raise NotImplementedError
+
+
+class AutoTokenizer:
+    _registry = {}
+
+    @classmethod
+    def register(cls, name):
+        def wrapper(tokenizer_cls):
+            cls._registry[name] = tokenizer_cls
+            return tokenizer_cls
+        return wrapper
+
+    @classmethod
+    def from_pretrained(cls, model_type: str, tokenizer_file: str) -> Tokenizer:
+        return cls._registry[model_type](tokenizer_file)

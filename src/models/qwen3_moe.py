@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 
+from src.models.modeling import AutoModelForCausalLM
 from src.models.modeling_args import QwenMoeArgs
 from src.models.qwen import QwenFeedForward
 from src.models.qwen3 import Qwen3TransformerBlock, Qwen3Head, Qwen3
@@ -59,6 +60,7 @@ class Qwen3MoeHead(Qwen3Head):
         self.layers = torch.nn.ModuleList([Qwen3MoeTransformerBlock(args) for _ in range(args.num_hidden_layers)])
 
 
+@AutoModelForCausalLM.register("qwen3moe")
 class Qwen3Moe(Qwen3):
     def __init__(self, args: QwenMoeArgs):
         super().__init__(args=args)

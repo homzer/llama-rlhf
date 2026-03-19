@@ -6,7 +6,7 @@ import torch.nn.functional as F
 import torch.nn.init as init
 
 from src.checkpoint import CheckpointForLlamaHf
-from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs, AttentionForCausalLM
+from src.models.modeling import ParallelModelForCausalLM, CausalLMOutputs, AttentionForCausalLM, AutoModelForCausalLM
 from src.models.modeling_acts import RMSNorm, Clamp, RotaryEmbedding, LogitsNormalize
 from src.models.modeling_args import LlamaArgsHf, LoraLlamaArgsHf
 from src.parallel.initialize import set_model_parallel_barrier
@@ -222,6 +222,7 @@ class LlamaModelHf(nn.Module):
         return self.norm(h)
 
 
+@AutoModelForCausalLM.register("llama-hf")
 class LlamaHf(ParallelModelForCausalLM):
     def __init__(self, args: LlamaArgsHf):
         super().__init__()
@@ -412,6 +413,7 @@ class LoraLlamaModelHf(LlamaModelHf):
             self.layers.append(LlamaTransformerBlockHf(layer_id, args))
 
 
+@AutoModelForCausalLM.register("lora-llama-hf")
 class LoraLlamaHf(LlamaHf):
     def __init__(self, args: LoraLlamaArgsHf):
         super().__init__(args)

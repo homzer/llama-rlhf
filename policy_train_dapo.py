@@ -11,7 +11,7 @@ from policy_train_ppo import collect_verifier_buffer, collect_actor_buffer
 from policy_train_ppo_with_evaluate import evaluate_actor
 from src.dataset import JsonDataset
 from src.entities import IterationHandler, Timer
-from src.modeling import get_parallel_model
+from src.models.modeling import AutoModelForCausalLM
 from src.parallel.initialize import setup_model_parallel, set_barrier, get_rank
 from src.ppo.buffer import RolloutBuffer, CriticRolloutBuffer
 from src.ppo.parallel_buffer import ParallelRolloutBuffer
@@ -92,11 +92,10 @@ def train_dapo(
         accumulation_steps: int = 1,
         max_num_ckpts: int = None
 ):
-    policy, policy_tokenizer = get_parallel_model(
+    policy = AutoModelForCausalLM.from_pretrained(
         model_type=policy_model_type,
         config_file=policy_config_file,
         max_seq_len=max_seq_len,
-        tokenizer_file=policy_tokenizer_file,
         lora_rank=lora_rank,
         dtype=dtype,
         lora_dtype=lora_dtype

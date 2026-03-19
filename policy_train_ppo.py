@@ -7,7 +7,7 @@ import torch
 
 from src.dataset import JsonDataset, ChatTemplateDataset
 from src.entities import Timer, IterationHandler
-from src.modeling import get_parallel_model, get_parallel_verifier
+from src.models.modeling import AutoModelForCausalLM, AutoVerifier
 from src.parallel.data_parallel.dataloader import ParallelDataLoader
 from src.parallel.initialize import setup_model_parallel, set_barrier, get_rank
 from src.parallel.optimizer import ParallelOptimizer
@@ -19,6 +19,7 @@ from src.ppo.buffer import (
 )
 from src.ppo.collector import CriticBufferCollector, LogitsBufferCollectorV0, ActorBufferCollector
 from src.ppo.trainer import ParallelPPOCriticTrainerForCausalLM, ParallelPPOTrainerForCausalLM
+from src.tokenizers.tokenizer import AutoTokenizer
 from src.utils import json_load, print_current_func_args
 
 
@@ -50,13 +51,16 @@ def collect_actor_buffer(
 ) -> RolloutBuffer:
     dataset.repeat(num_samples_per_prompt).shuffle()
 
-    actor, actor_tokenizer = get_parallel_model(
+    actor = AutoModelForCausalLM.from_pretrained(
         model_type=actor_model_type,
         config_file=actor_config_file,
         max_seq_len=max_seq_len,
-        tokenizer_file=actor_tokenizer_file,
         lora_rank=-1,
         dtype=dtype
+    )
+    actor_tokenizer = AutoTokenizer.from_pretrained(
+        model_type=actor_model_type,
+        tokenizer_file=actor_tokenizer_file
     )
     actor.load(actor_ckpt_dir if epoch == 0 else os.path.join(actor_save_dir, "epoch-%03d" % epoch))
     actor_buffer_collector = ActorBufferCollector(
@@ -97,13 +101,16 @@ def collect_reference_buffer(
         actor_rollout_buffer: RolloutBuffer,
         max_forward_batch_size: int,
 ) -> LogitsRolloutBufferV0:
-    reference, reference_tokenizer = get_parallel_model(
+    reference = AutoModelForCausalLM.from_pretrained(
         model_type=actor_model_type,
         config_file=actor_config_file,
         max_seq_len=max_seq_len,
-        tokenizer_file=actor_tokenizer_file,
         lora_rank=-1,
         dtype=dtype
+    )
+    reference_tokenizer = AutoTokenizer.from_pretrained(
+        model_type=actor_model_type,
+        tokenizer_file=actor_tokenizer_file
     )
     reference.load(reference_ckpt_dir)
     reference_buffer_collector = LogitsBufferCollectorV0(
@@ -141,13 +148,16 @@ def collect_critic_buffer(
         max_forward_batch_size: int,
 ) -> CriticRolloutBuffer:
     epoch = 0 if epoch == 0 else 1  # TODO: for saving memory
-    critic, critic_tokenizer = get_parallel_verifier(
+    critic = AutoVerifier.from_pretrained(
         model_type=critic_model_type,
         config_file=critic_config_file,
         max_seq_len=max_seq_len,
-        tokenizer_file=critic_tokenizer_file,
         lora_rank=-1,
         dtype=dtype
+    )
+    critic_tokenizer = AutoTokenizer.from_pretrained(
+        model_type=critic_model_type,
+        tokenizer_file=critic_tokenizer_file
     )
     critic.load(critic_ckpt_dir if epoch == 0 else os.path.join(critic_save_dir, "epoch-%03d" % epoch))
     if epoch == 0:  # random initialize value head
@@ -186,13 +196,16 @@ def collect_verifier_buffer(
         use_last_token_reward: bool = False,
         last_token_reward_only: bool = False
 ) -> CriticRolloutBuffer:
-    verifier, verifier_tokenizer = get_parallel_verifier(
+    verifier = AutoVerifier.from_pretrained(
         model_type=verifier_model_type,
         config_file=verifier_config_file,
         max_seq_len=max_seq_len,
-        tokenizer_file=verifier_tokenizer_file,
         lora_rank=-1,
         dtype=dtype
+    )
+    verifier_tokenizer = AutoTokenizer.from_pretrained(
+        model_type=verifier_model_type,
+        tokenizer_file=verifier_tokenizer_file
     )
     verifier.load(verifier_ckpt_dir)
     verifier_buffer_collector = CriticBufferCollector(
@@ -232,7 +245,6 @@ def train_actor(
         actor_save_dir: str,
         actor_model_type: str,
         actor_config_file: str,
-        actor_tokenizer_file: str,
         actor_lora_rank: int,
         actor_lora_dtype: str,
         dtype: str,
@@ -246,11 +258,10 @@ def train_actor(
         accumulation_steps: int = 1,
         max_num_ckpts: int = None
 ):
-    actor, actor_tokenizer = get_parallel_model(
+    actor = AutoModelForCausalLM.from_pretrained(
         model_type=actor_model_type,
         config_file=actor_config_file,
         max_seq_len=max_seq_len,
-        tokenizer_file=actor_tokenizer_file,
         lora_rank=actor_lora_rank,
         dtype=dtype,
         lora_dtype=actor_lora_dtype
@@ -295,7 +306,6 @@ def train_critic(
         critic_model_type: str,
         critic_config_file: str,
         max_seq_len: int,
-        critic_tokenizer_file: str,
         critic_lora_rank: int,
         dtype: str,
         lr: float,
@@ -307,11 +317,10 @@ def train_critic(
         critic_max_batch_size: int,
         inner_epochs: int,
 ):
-    critic, critic_tokenizer = get_parallel_verifier(
+    critic = AutoVerifier.from_pretrained(
         model_type=critic_model_type,
         config_file=critic_config_file,
         max_seq_len=max_seq_len,
-        tokenizer_file=critic_tokenizer_file,
         lora_rank=critic_lora_rank,
         dtype=dtype,
         lora_dtype=critic_lora_dtype,
@@ -500,7 +509,6 @@ def run(
             actor_model_type=actor_model_type,
             actor_config_file=actor_config_file,
             max_seq_len=max_seq_len,
-            actor_tokenizer_file=actor_tokenizer_file,
             actor_lora_rank=actor_lora_rank,
             dtype=dtype,
             actor_lora_dtype=actor_lora_dtype,
@@ -531,7 +539,6 @@ def run(
             critic_model_type=critic_model_type,
             critic_config_file=critic_config_file,
             max_seq_len=max_seq_len,
-            critic_tokenizer_file=critic_tokenizer_file,
             critic_lora_rank=critic_lora_rank,
             dtype=dtype,
             lr=critic_lr,

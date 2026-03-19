@@ -4,7 +4,8 @@ import fire
 
 from src.dataset import PairwiseDataset, ChatTemplateDataset
 from src.evaluator import VerifierEvaluator
-from src.modeling import get_parallel_verifier
+from src.models.modeling import AutoVerifier
+from src.tokenizers.tokenizer import AutoTokenizer
 from src.utils import json_dump
 from src.parallel.initialize import setup_model_parallel
 
@@ -27,13 +28,16 @@ def main(
     tokenizer_file = ckpt_dir if tokenizer_file is None else tokenizer_file
     config_file = ckpt_dir if config_file is None else config_file
     setup_model_parallel(seed=seed)
-    model, tokenizer = get_parallel_verifier(
+    model = AutoVerifier.from_pretrained(
         model_type=model_type,
         config_file=config_file,
         max_seq_len=max_seq_len,
-        tokenizer_file=tokenizer_file,
         lora_rank=-1,
         dtype=dtype
+    )
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_type=model_type,
+        tokenizer_file=tokenizer_file
     )
     model.load(ckpt_dir)
 

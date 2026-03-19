@@ -9,7 +9,7 @@ from policy_train_dpo import collect_reference_buffer
 from policy_train_ppo_with_evaluate import evaluate_actor
 from src.dataset import PairwiseDataset
 from src.entities import Timer, IterationHandler
-from src.modeling import get_parallel_model
+from src.models.modeling import AutoModelForCausalLM
 from src.parallel.initialize import setup_model_parallel, set_barrier, get_rank
 from src.rewards.trainer import ParallelVerifierTrainerForDPO
 from src.utils import print_current_func_args, json_load
@@ -80,11 +80,10 @@ def main(
         )
 
         # verifier training
-        verifier, verifier_tokenizer = get_parallel_model(
+        verifier = AutoModelForCausalLM.from_pretrained(
             model_type=model_type,
             config_file=config_file,
             max_seq_len=max_seq_len,
-            tokenizer_file=tokenizer_file,
             lora_rank=lora_rank,
             dtype=dtype,
             lora_dtype=lora_dtype

@@ -34,6 +34,7 @@ from transformers.utils.hub import PushToHubMixin
 from transformers.utils.import_utils import is_torch_available, requires
 
 from src.tokenizers import Tokenizer
+from src.tokenizers.tokenizer import AutoTokenizer
 
 logger = logging.get_logger(__name__)
 
@@ -1970,6 +1971,7 @@ class MistralCommonBackend(PushToHubMixin):
         return mode
 
 
+@AutoTokenizer.register("mistral3")
 class Mistral3Tokenizer(Tokenizer):
     def __init__(self, model_dir: str):
         self.model = MistralCommonBackend.from_pretrained(model_dir)

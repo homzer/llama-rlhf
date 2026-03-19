@@ -6,6 +6,8 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from src.models.modeling_args import AutoArgs
 from src.parallel.initialize import (
     get_model_parallel_world_size,
     get_model_parallel_rank,
@@ -230,6 +232,78 @@ class ParallelVerifier(ParallelModule):
 
     def forward(self, tokens: torch.Tensor) -> VerifierOutputs:
         raise NotImplementedError
+
+
+class AutoModelForCausalLM:
+    _registry = {}
+
+    @classmethod
+    def register(cls, name):
+        def wrapper(model_cls):
+            cls._registry[name] = model_cls
+            return model_cls
+        return wrapper
+
+    @classmethod
+    def from_pretrained(
+            cls,
+            model_type: str,
+            config_file: str,
+            max_seq_len: int,
+            dtype: str = 'bfloat16',
+            lora_rank: int = -1,
+            lora_dtype: str = 'bfloat16',
+            use_logits_normalize: bool = True
+    ) -> ParallelModelForCausalLM:
+        args = AutoArgs.from_pretrained(
+            model_type=model_type,
+            config_file=config_file,
+            max_seq_len=max_seq_len,
+            dtype=dtype,
+            lora_rank=lora_rank,
+            lora_dtype=lora_dtype,
+            use_logits_normalize=use_logits_normalize
+        )
+        model_type = f"lora-{model_type}" if lora_rank > 0 else model_type
+        model = cls._registry[model_type](args)
+        model.init_weights()
+        return model
+
+
+class AutoVerifier:
+    _registry = {}
+
+    @classmethod
+    def register(cls, name):
+        def wrapper(model_cls):
+            cls._registry[name] = model_cls
+            return model_cls
+        return wrapper
+
+    @classmethod
+    def from_pretrained(
+            cls,
+            model_type: str,
+            config_file: str,
+            max_seq_len: int,
+            dtype: str = 'bfloat16',
+            lora_rank: int = -1,
+            lora_dtype: str = 'bfloat16',
+            use_logits_normalize: bool = True
+    ) -> ParallelVerifier:
+        args = AutoArgs.from_pretrained(
+            model_type=model_type,
+            config_file=config_file,
+            max_seq_len=max_seq_len,
+            dtype=dtype,
+            lora_rank=lora_rank,
+            lora_dtype=lora_dtype,
+            use_logits_normalize=use_logits_normalize
+        )
+        model_type = f"lora-{model_type}" if lora_rank > 0 else model_type
+        verifier = cls._registry[model_type](args)
+        verifier.init_weights()
+        return verifier
 
 
 class AttentionForCausalLM(nn.Module):

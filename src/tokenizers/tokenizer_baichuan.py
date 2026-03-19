@@ -8,6 +8,7 @@ from transformers.tokenization_utils import AddedToken, PreTrainedTokenizer
 from transformers.utils import logging
 
 from src.tokenizers import Tokenizer
+from src.tokenizers.tokenizer import AutoTokenizer
 
 logger = logging.get_logger(__name__)
 
@@ -233,6 +234,7 @@ class BaiChuanTokenizer(PreTrainedTokenizer):
         return output
 
 
+@AutoTokenizer.register("baichuan")
 class BaichuanTokenizer(Tokenizer):
     def __init__(self, model_dir: str):
         self.model = BaiChuanTokenizer.from_pretrained(model_dir)

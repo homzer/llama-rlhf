@@ -6,8 +6,9 @@ from torch.utils.data import DataLoader
 
 from src.dataset import PairwiseDataset, ChatTemplateDataset
 from src.entities import Timer
-from src.modeling import get_parallel_model
+from src.models.modeling import AutoModelForCausalLM
 from src.parallel.initialize import setup_model_parallel
+from src.tokenizers.tokenizer import AutoTokenizer
 from src.trainer import ParallelSolverSimPOTrainer
 from src.utils import json_load
 
@@ -38,14 +39,17 @@ def run(
     policy_config_file = policy_config_file or policy_ckpt_dir
     policy_tokenizer_file = policy_tokenizer_file or policy_ckpt_dir
 
-    policy, policy_tokenizer = get_parallel_model(
+    policy = AutoModelForCausalLM.from_pretrained(
         model_type=policy_model_type,
         config_file=policy_config_file,
-        tokenizer_file=policy_tokenizer_file,
         max_seq_len=max_seq_len,
         dtype=dtype,
         lora_rank=lora_rank,
         lora_dtype=lora_dtype
+    )
+    policy_tokenizer = AutoTokenizer.from_pretrained(
+        model_type=policy_model_type,
+        tokenizer_file=policy_tokenizer_file
     )
     optimizer = torch.optim.Adam(policy.parameters(), lr=lr)
     trainer = ParallelSolverSimPOTrainer(

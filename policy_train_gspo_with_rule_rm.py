@@ -10,7 +10,7 @@ from policy_train_ppo_with_rule_rm import collect_actor_buffer_with_label, colle
 from policy_train_ppo_with_evaluate import evaluate_actor
 from src.dataset import JsonDataset
 from src.entities import IterationHandler, Timer
-from src.modeling import get_parallel_model
+from src.models.modeling import AutoModelForCausalLM
 from src.parallel.initialize import setup_model_parallel, set_barrier, get_rank
 from src.ppo.buffer import RolloutBuffer
 from src.ppo.trainer import ParallelGSPOTrainerForCausalLM
@@ -21,7 +21,6 @@ def train_gspo(
         policy_model_type: str,
         policy_config_file: str,
         max_seq_len: int,
-        policy_tokenizer_file: str,
         lora_rank: int,
         dtype: str,
         lora_dtype: str,
@@ -37,11 +36,10 @@ def train_gspo(
         accumulation_steps: int = 1,
         max_num_ckpts: int = None
 ):
-    policy, policy_tokenizer = get_parallel_model(
+    policy = AutoModelForCausalLM.from_pretrained(
         model_type=policy_model_type,
         config_file=policy_config_file,
         max_seq_len=max_seq_len,
-        tokenizer_file=policy_tokenizer_file,
         lora_rank=lora_rank,
         dtype=dtype,
         lora_dtype=lora_dtype
@@ -176,7 +174,6 @@ def run(
             policy_ckpt_dir=policy_ckpt_dir,
             policy_model_type=policy_model_type,
             policy_config_file=policy_config_file,
-            policy_tokenizer_file=policy_tokenizer_file,
             max_seq_len=max_seq_len,
             lora_rank=lora_rank,
             dtype=dtype,

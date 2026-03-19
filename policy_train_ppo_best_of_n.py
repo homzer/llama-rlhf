@@ -26,7 +26,7 @@ def select_best_of_n_buffer(
         num_samples_keep_per_prompt: int,
         use_last_token_reward: bool,
         score_threshold: float = None
-) -> (RolloutBuffer, CriticRolloutBuffer):
+):
     actor_rollout_buffer = ParallelRolloutBuffer(**actor_rollout_buffer)
     actor_rollout_buffer.gather_from_data_parallel_region()
     verifier_rollout_buffer = ParallelRolloutBuffer(**verifier_rollout_buffer)
@@ -224,7 +224,6 @@ def run(
             actor_model_type=actor_model_type,
             actor_config_file=actor_config_file,
             max_seq_len=max_seq_len,
-            actor_tokenizer_file=actor_tokenizer_file,
             actor_lora_rank=actor_lora_rank,
             dtype=dtype,
             actor_lora_dtype=actor_lora_dtype,
@@ -252,7 +251,6 @@ def run(
             critic_model_type=critic_model_type,
             critic_config_file=critic_config_file,
             max_seq_len=max_seq_len,
-            critic_tokenizer_file=critic_tokenizer_file,
             critic_lora_rank=critic_lora_rank,
             dtype=dtype,
             lr=lr,

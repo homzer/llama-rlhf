@@ -337,6 +337,9 @@ class QwenVisionModel(nn.Module):
         return window_index, cu_window_seqlens
 
     def forward(self, hidden_states: torch.Tensor, grid_thw: torch.Tensor):
+        hidden_states = hidden_states.to(next(self.parameters()).device)
+        grid_thw = grid_thw.to(next(self.parameters()).device)
+
         hidden_states = self.patch_embed(hidden_states)
         rotary_pos_emb = self.rot_pos_emb(grid_thw)
         window_index, cu_window_seqlens = self.get_window_index(grid_thw)
@@ -380,7 +383,7 @@ class QwenLanguageModel(nn.Module):
         self.embed_tokens = None
         self.layers = torch.nn.ModuleList()
         for layer_id in range(args.num_hidden_layers):
-            self.layers.append(QwenTransformerBlock(args))  # TODO: check position_ids for VL model
+            self.layers.append(QwenTransformerBlock(args))
         self.norm = None
 
     def init_weights(self):
@@ -391,13 +394,63 @@ class QwenLanguageModel(nn.Module):
             layer.init_weights()
         self.norm = RMSNorm(self.args.hidden_size, eps=self.args.rms_norm_eps).type(self.args.dtype)
 
-    def forward(self):
-        pass
+    def forward(self, text_embeds: torch.Tensor, start_pos: int, use_cache: bool):
+        seq_len = text_embeds.shape[1]
+
+        mask = None
+        if seq_len > 1:
+            mask = torch.full((1, 1, seq_len, seq_len), float("-inf"), device=text_embeds.device)
+            mask = torch.triu(mask, diagonal=start_pos + 1).type_as(text_embeds)
+
+        for layer in self.layers:
+            text_embeds = layer(text_embeds, start_pos, mask, use_cache)
+        return self.norm(text_embeds)
 
 
-class QwenVLModel:
+class QwenVLHead(nn.Module):
     def __init__(self, args: QwenVLArgs):
         super().__init__()
         self.args = args
         self.visual = QwenVisionModel(args)
         self.language_model = QwenLanguageModel(args)
+
+    def get_video_features(self, pixel_values_videos: torch.Tensor, video_grid_thw: torch.Tensor):
+        video_embeds = self.visual.forward(pixel_values_videos, grid_thw=video_grid_thw)
+        split_sizes = (video_grid_thw.prod(-1) // self.visual.spatial_merge_size**2).tolist()
+        return torch.split(video_embeds, split_sizes)
+
+    def get_image_features(self, pixel_values_images: torch.Tensor, image_grid_thw: torch.Tensor):
+        image_embeds = self.visual.forward(pixel_values_images, grid_thw=image_grid_thw)
+        split_sizes = (image_grid_thw.prod(-1) // self.visual.spatial_merge_size**2).tolist()
+        return torch.split(image_embeds, split_sizes)
+
+    def forward(
+            self,
+            tokens: torch.Tensor,
+            start_pos: int = 0,
+            use_cache: bool = False,
+            pixel_values_images: torch.Tensor = None,
+            pixel_values_videos: torch.Tensor = None,
+            image_grid_thw: torch.Tensor = None,
+            video_grid_thw: torch.Tensor = None,
+    ):
+        tokens = tokens.to(next(self.language_model.parameters()).device)
+
+        text_embeds = self.language_model.embed_tokens(tokens)
+
+        if pixel_values_images is not None:
+            image_embeds = self.get_image_features(pixel_values_images, image_grid_thw)
+            image_embeds = torch.cat(image_embeds, dim=0).to(text_embeds)
+            image_masks = tokens == self.args.image_token_id
+            image_masks = image_masks.unsqueeze(-1).expand_as(text_embeds).to(text_embeds.device)
+            text_embeds = text_embeds.masked_scatter(image_masks, image_embeds)
+
+        if pixel_values_videos is not None:
+            video_embeds = self.get_video_features(pixel_values_videos, video_grid_thw)
+            video_embeds = torch.cat(video_embeds, dim=0).to(text_embeds)
+            video_masks = tokens == self.args.video_token_id
+            video_masks = video_masks.unsqueeze(-1).expand_as(text_embeds).to(text_embeds.device)
+            text_embeds = text_embeds.masked_scatter(video_masks, video_embeds)
+
+        position_ids = None  # TODO
+        return self.language_model.forward(text_embeds, start_pos, use_cache)

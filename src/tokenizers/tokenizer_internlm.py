@@ -1,13 +1,15 @@
 from typing import List
 
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer as AutoTokenizerHf
 
 from src.tokenizers import Tokenizer
+from src.tokenizers.tokenizer import AutoTokenizer
 
 
+@AutoTokenizer.register("internlm")
 class InternLMTokenizer(Tokenizer):
     def __init__(self, model_dir: str):
-        self.model = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
+        self.model = AutoTokenizerHf.from_pretrained(model_dir, trust_remote_code=True)
         super().__init__(
             vocab_size=len(self.model.get_vocab()),
             bos_id=self.model.bos_token_id,
