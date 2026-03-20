@@ -480,6 +480,11 @@ class CheckpointForQwenVL(Checkpoint):
         return state_dict
 
 
+class CheckpointForQwen3VL(CheckpointForQwenVL):
+    def __init__(self):
+        super().__init__()
+
+
 class CheckpointForMinistral3(Checkpoint):
     def __init__(self):
         col_parallel_names = [

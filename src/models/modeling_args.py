@@ -331,6 +331,43 @@ class QwenVLArgs(QwenArgs):
 
 
 @dataclass
+@AutoArgs.register("qwen3-vl")
+class Qwen3VLArgs(BaseParallelArgs):
+    text_config_head_dim: int = None
+    text_config_hidden_size: int = None
+    text_config_intermediate_size: int = None
+    text_config_max_position_embeddings: int = None
+    text_config_num_attention_heads: int = None
+    text_config_num_hidden_layers: int = None
+    text_config_num_key_value_heads: int = None
+    text_config_rms_norm_eps: float = None
+    text_config_rope_scaling_mrope_interleaved: bool = None
+    text_config_rope_scaling_mrope_section: list = None
+    text_config_rope_theta: float = None
+    text_config_vocab_size: int = None
+    vision_config_deepstack_visual_indexes: list = None
+    vision_config_depth: int = None
+    vision_config_hidden_size: int = None
+    vision_config_in_channels: int = None
+    vision_config_intermediate_size: int = None
+    vision_config_num_heads: int = None
+    vision_config_num_position_embeddings: int = None
+    vision_config_out_hidden_size: int = None
+    vision_config_patch_size: int = None
+    vision_config_spatial_merge_size: int = None
+    vision_config_temporal_patch_size: int = None
+    image_token_id: int = None
+    video_token_id: int = None
+    vision_end_token_id: int = None
+    vision_start_token_id: int = None
+
+    def from_json(self, filename: str):
+        if not filename.endswith(".json"):
+            filename = os.path.join(filename, "config.json")
+        return super().from_json(filename)
+
+
+@dataclass
 @AutoArgs.register("lora-qwen")
 @AutoArgs.register("lora-qwen3")
 class LoraQwenArgs(QwenArgs):

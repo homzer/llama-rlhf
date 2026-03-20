@@ -1,3 +1,4 @@
+import itertools
 import math
 
 import torch
@@ -22,6 +23,21 @@ def apply_rotary_pos_emb_vision(
     k_embed = (k * cos) + (rotate_half(k) * sin)
     q_embed = q_embed.to(orig_q_dtype)
     k_embed = k_embed.to(orig_k_dtype)
+    return q_embed, k_embed
+
+
+def apply_multimodal_rotary_pos_emb(q, k, cos, sin, mrope_section, unsqueeze_dim=1):
+    """ See transformers.models.qwen2_5_vl.modeling_qwen2_5_vl.apply_multimodal_rotary_pos_emb() """
+    mrope_section = mrope_section * 2
+    cos = torch.cat([m[i % 3] for i, m in enumerate(cos.split(mrope_section, dim=-1))], dim=-1).unsqueeze(
+        unsqueeze_dim
+    )
+    sin = torch.cat([m[i % 3] for i, m in enumerate(sin.split(mrope_section, dim=-1))], dim=-1).unsqueeze(
+        unsqueeze_dim
+    )
+
+    q_embed = (q * cos) + (rotate_half(q) * sin)
+    k_embed = (k * cos) + (rotate_half(k) * sin)
     return q_embed, k_embed
 
 
@@ -413,6 +429,217 @@ class QwenVLHead(nn.Module):
         self.args = args
         self.visual = QwenVisionModel(args)
         self.language_model = QwenLanguageModel(args)
+        self.rope_deltas = None
+
+    @staticmethod
+    def get_vision_position_ids(
+            start_position: int,
+            grid_thw: list | torch.Tensor,
+            temp_merge_size: int = 1,
+            spatial_merge_size: int = 1,
+            time_interval: int = 1,
+            device: str | torch.device | None = None,
+    ):
+        """
+        Compute 3D positional indices for vision tokens derived from a single image or video input.
+
+        The positions are generated from the input grid defined by temporal (T), height (H), and
+        width (W) dimensions. Temporal and spatial dimensions can be downscaled according to the
+        merge sizes used in the vision backbone. The resulting positions are offset by `start_position`.
+
+        Args:
+            start_position (`int`):
+                Offset added to all computed positional indices.
+            grid_thw (`Sequence[int]` or `torch.Tensor` of shape `(3,)`):
+                The (T, H, W) grid representing the feature layout of the current image or video after patch embedding.
+            temp_merge_size (`int`, *optional*):
+                Factor by which the temporal dimension is reduced in the backbone. The temporal grid size is divided
+                by this value. Defaults to 1.
+            spatial_merge_size (`int`, *optional*):
+                Factor by which the spatial dimensions (H and W) are reduced in the backbone. Both H and W are divided
+                by this value. Defaults to 1.
+            time_interval (`int`, *optional*):
+                Spacing factor applied between consecutive temporal position indices.Defaults to 1.
+            device (`str` or `torch.device`, *optional*):
+                Device on which the resulting tensor is allocated. If `None`, uses the current default device.
+
+        Returns:
+            torch.LongTensor of shape (3, sequence_length):
+                Positional indices for temporal, height, and width dimensions,
+                flattened into sequence form and offset by `start_position`.
+        """
+        llm_grid_t, llm_grid_h, llm_grid_w = (
+            grid_thw[0].item() // temp_merge_size,
+            grid_thw[1].item() // spatial_merge_size,
+            grid_thw[2].item() // spatial_merge_size,
+        )
+
+        image_seq_length = llm_grid_h * llm_grid_w * llm_grid_t
+        position_width = torch.arange(start_position, start_position + llm_grid_w, device=device).repeat(
+            llm_grid_h * llm_grid_t
+        )
+        position_height = torch.arange(start_position, start_position + llm_grid_h, device=device).repeat_interleave(
+            llm_grid_w * llm_grid_t
+        )
+        position_temporal = torch.full((image_seq_length,), start_position, device=device, dtype=torch.long)
+        position_temporal = position_temporal * time_interval
+        vision_position_ids = torch.stack([position_temporal, position_height, position_width], dim=0)
+
+        return vision_position_ids
+
+    def get_rope_index(
+            self,
+            input_ids: torch.Tensor,
+            mm_token_type_ids: torch.Tensor,
+            image_grid_thw: torch.Tensor | None = None,
+            video_grid_thw: torch.Tensor | None = None,
+            second_per_grid_ts: torch.Tensor | None = None,
+            attention_mask: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Calculate the 3D rope index based on image and video's sizes. The utility expects a `vision + text`
+        sequence and will error out otherwise. For pure text sequence, please rely on model's auto-inferred
+        position ids. In a mixed vision + text sequence, vision tokens use 3D RoPE (temporal, height, width)
+        while text tokens use standard 1D RoPE.
+
+        Example:
+            Temporal patches: 3; Height patches: 2; Width patches: 2
+            Each vision input results in (temporal x height × width) positions. Here: 3 x 2 × 2 = 12 positions total.
+
+            Temporal position IDs are spaced by:
+                `interval = tokens_per_second * temporal_patch_size / fps`
+
+                If fps = 1; tokens_per_second = 25; temporal_patch_size = 2, temporal IDs increase by 50 for each temporal patch:
+                `[0, 0, 0, 0, 50, 50, 50, 50, 100, 100, 100, 100]`
+
+            Height IDs repeat per row: `[0, 0, 1, 1, ...]`
+            Width IDs alternate per column: `[0, 1, 0, 1, ...]`
+            Text tokens follow standard 1D RoPE and the position IDs grow consequently with a step of `1`
+
+        Args:
+            input_ids (`torch.LongTensor` of shape `(batch_size, sequence_length)`):
+                Indices of input sequence tokens in the vocabulary. Padding will be ignored by default should you provide
+                it.
+            mm_token_type_ids (`torch.IntTensor` of shape `(batch_size, sequence_length)`):
+                Token type ids matching each modality to a different value in the input sequence, i.e. text (0), image (1), video (2).
+            image_grid_thw (`torch.LongTensor` of shape `(num_images, 3)`, *optional*):
+                The temporal, height and width of feature shape of each image in LLM.
+            video_grid_thw (`torch.LongTensor` of shape `(num_videos, 3)`, *optional*):
+                The temporal, height and width of feature shape of each video in LLM.
+            second_per_grid_ts (`torch.Tensor` of shape `(num_videos)`, *optional*):
+                The time interval (in seconds) for each grid along the temporal dimension in the 3D position IDs.
+            attention_mask (`torch.Tensor` of shape `(batch_size, sequence_length)`, *optional*):
+                Mask to avoid performing attention on padding token indices. Mask values selected in `[0, 1]`:
+
+                - 1 for tokens that are **not masked**,
+                - 0 for tokens that are **masked**.
+
+        Returns:
+            position_ids (`torch.LongTensor` of shape `(3, batch_size, sequence_length)`)
+            mrope_position_deltas (`torch.Tensor` of shape `(batch_size)`)
+        """
+        spatial_merge_size = self.args.vision_config_spatial_merge_size
+        tokens_per_second = self.args.vision_config_tokens_per_second
+
+        mrope_position_deltas = []
+        position_ids = torch.zeros(
+            3,
+            input_ids.shape[0],
+            input_ids.shape[1],
+            dtype=input_ids.dtype,
+            device=input_ids.device,
+        )
+        grid_iters = {
+            1: iter(image_grid_thw) if image_grid_thw is not None else None,
+            2: iter(video_grid_thw) if video_grid_thw is not None else None,
+        }
+        second_per_grid_ts = (
+            iter(second_per_grid_ts) if second_per_grid_ts is not None else iter([1] * input_ids.shape[1])
+        )
+        for batch_idx, current_input_ids in enumerate(input_ids):
+            input_token_type = mm_token_type_ids[batch_idx]
+            if attention_mask is not None:
+                current_input_ids = current_input_ids[attention_mask[batch_idx].bool()]
+                input_token_type = input_token_type[attention_mask[batch_idx].bool()]
+
+            input_type_group = []
+            for key, group in itertools.groupby(enumerate(input_token_type.tolist()), lambda x: x[1]):
+                group = list(group)
+                start_index = group[0][0]
+                end_index = group[-1][0] + 1
+                input_type_group.append((key, start_index, end_index))
+
+            current_pos = 0
+            llm_pos_ids_list = []
+            for modality_type, start_idx, end_idx in input_type_group:
+                # text == 0
+                if modality_type == 0:
+                    text_len = end_idx - start_idx
+                    llm_pos_ids_list.append(
+                        torch.arange(text_len, device=input_ids.device).view(1, -1).expand(3, -1) + current_pos
+                    )
+                    current_pos += text_len
+                # image == 1, video == 2
+                else:
+                    grid_thw = next(grid_iters[modality_type])
+                    time_interval = tokens_per_second * int(next(second_per_grid_ts))
+                    vision_position_ids = self.get_vision_position_ids(
+                        current_pos, grid_thw, 1, spatial_merge_size, time_interval, device=input_ids.device
+                    )
+                    llm_pos_ids_list.append(vision_position_ids)
+                    current_pos += max(grid_thw[1], grid_thw[2]) // spatial_merge_size
+            llm_positions = torch.cat(llm_pos_ids_list, dim=1).reshape(3, -1)
+            if attention_mask is not None:
+                position_ids[:, batch_idx, attention_mask[batch_idx].bool()] = llm_positions.to(position_ids.device)
+            else:
+                position_ids[:, batch_idx] = llm_positions.to(position_ids.device)
+            mrope_position_deltas.append(llm_positions.max() + 1 - len(current_input_ids))
+        mrope_position_deltas = torch.tensor(mrope_position_deltas, device=input_ids.device).unsqueeze(1)
+        return position_ids, mrope_position_deltas
+
+    def compute_3d_position_ids(
+            self,
+            input_ids: torch.Tensor | None,
+            image_grid_thw: torch.Tensor | None,
+            video_grid_thw: torch.Tensor | None,
+            attention_mask: torch.Tensor | None,
+            past_key_values: torch.Tensor | None,
+            second_per_grid_ts: torch.Tensor | None = None,
+            mm_token_type_ids: torch.IntTensor | None = None,
+    ) -> torch.Tensor | None:
+        past_key_values_length = 0 if past_key_values is None else past_key_values.get_seq_length()
+        can_compute_mrope = (
+                input_ids is not None
+                and mm_token_type_ids is not None
+                and (image_grid_thw is not None or video_grid_thw is not None)
+        )
+
+        if can_compute_mrope and (self.rope_deltas is None or past_key_values_length == 0):
+            position_ids, rope_deltas = self.get_rope_index(
+                input_ids,
+                image_grid_thw=image_grid_thw,
+                video_grid_thw=video_grid_thw,
+                attention_mask=attention_mask,
+                second_per_grid_ts=second_per_grid_ts,
+                mm_token_type_ids=mm_token_type_ids,
+            )
+            self.rope_deltas = rope_deltas
+        # Use pre-calculated rope-deltas to infer correct 3D position ids
+        elif self.rope_deltas is not None:
+            batch_size, seq_length = input_ids.shape
+            if attention_mask is not None:
+                position_ids = attention_mask.long().cumsum(-1) - 1
+                position_ids = position_ids.masked_fill(attention_mask == 0, 0)
+                position_ids = position_ids.view(1, batch_size, -1).repeat(3, 1, 1)
+            else:
+                position_ids = torch.arange(past_key_values_length, past_key_values_length + seq_length)
+                position_ids = position_ids.view(1, 1, -1).expand(3, batch_size, -1)
+            delta = self.rope_deltas.repeat_interleave(batch_size // self.rope_deltas.shape[0], dim=0)
+            position_ids = position_ids + delta.to(device=position_ids.device)
+        else:
+            # Can't build correct 3D positions. Let the model infer it from `cache_position`
+            position_ids = None
+        return position_ids
 
     def get_video_features(self, pixel_values_videos: torch.Tensor, video_grid_thw: torch.Tensor):
         video_embeds = self.visual.forward(pixel_values_videos, grid_thw=video_grid_thw)
@@ -433,6 +660,8 @@ class QwenVLHead(nn.Module):
             pixel_values_videos: torch.Tensor = None,
             image_grid_thw: torch.Tensor = None,
             video_grid_thw: torch.Tensor = None,
+            second_per_grid_ts: torch.Tensor = None,
+            mm_token_type_ids: torch.Tensor = None
     ):
         tokens = tokens.to(next(self.language_model.parameters()).device)
 
@@ -452,5 +681,13 @@ class QwenVLHead(nn.Module):
             video_masks = video_masks.unsqueeze(-1).expand_as(text_embeds).to(text_embeds.device)
             text_embeds = text_embeds.masked_scatter(video_masks, video_embeds)
 
-        position_ids = None  # TODO
+        position_ids = self.compute_3d_position_ids(
+            input_ids=tokens,
+            image_grid_thw=image_grid_thw,
+            video_grid_thw=video_grid_thw,
+            second_per_grid_ts=second_per_grid_ts,
+            attention_mask=attention_mask,
+            past_key_values=past_key_values,
+            mm_token_type_ids=mm_token_type_ids,
+        )  # TODO
         return self.language_model.forward(text_embeds, start_pos, use_cache)
