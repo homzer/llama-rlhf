@@ -173,6 +173,7 @@ class Qwen3VisionMLP(nn.Module):
         self.intermediate_size = args.vision_config_intermediate_size
         self.linear_fc1 = None
         self.linear_fc2 = None
+        self.act_fn = GELUTanh()
 
     def init_weights(self):
         self.linear_fc1 = ColumnParallelLinear(
@@ -191,7 +192,7 @@ class Qwen3VisionMLP(nn.Module):
         ).type(self.args.dtype)
 
     def forward(self, x: torch.Tensor):
-        return self.linear_fc2(GELUTanh(self.linear_fc1(x)))
+        return self.linear_fc2(self.act_fn(self.linear_fc1(x)))
 
 
 class Qwen3VisionBlock(nn.Module):
