@@ -386,7 +386,7 @@ class CheckpointForQwenVL(Checkpoint):
             "qkv.weights", "qkv.bias"
         ]
         row_parallel_names = [
-            "o_proj.weight", "proj.weight", "down_proj.weight", "embed_tokens.weight",
+            "o_proj.weight", "attn.proj.weight", "down_proj.weight", "embed_tokens.weight",
         ]
         self.col_qkv_parallel_names = ["qkv.weights", "qkv.bias"]
         super().__init__(col_parallel_names, row_parallel_names)
@@ -483,6 +483,15 @@ class CheckpointForQwenVL(Checkpoint):
 class CheckpointForQwen3VL(CheckpointForQwenVL):
     def __init__(self):
         super().__init__()
+        self.col_parallel_names = [
+            "q_proj.weight", "k_proj.weight", "v_proj.weight", "gate_proj.weight", "up_proj.weight", "lm_head.weight",
+            "q_proj.bias", "k_proj.bias", "v_proj.bias", "gate_proj.bias", "up_proj.bias", "lm_head.bias",
+            "qkv.weights", "qkv.bias", "linear_fc1.weight", "linear_fc1.weight"
+        ]
+        self.row_parallel_names = [
+            "o_proj.weight", "attn.proj.weight", "down_proj.weight", "embed_tokens.weight", "linear_fc2.weight"
+        ]
+        self.col_qkv_parallel_names = ["qkv.weights", "qkv.bias"]
 
 
 class CheckpointForMinistral3(Checkpoint):

@@ -9,6 +9,7 @@ from src.models.modeling_acts import LogitsNormalize
 from src.models.modeling_args import Qwen3VLArgs
 from src.models.qwen3_vl_language import Qwen3LanguageModel
 from src.models.qwen3_vl_vision import Qwen3VisionModel
+from src.parallel.initialize import set_model_parallel_barrier
 from src.parallel.model_parallel.layers import ColumnParallelLinear
 
 
@@ -311,11 +312,17 @@ class Qwen3VL(nn.Module):
     def __init__(self, args: Qwen3VLArgs):
         super().__init__()
         self.args = args
+        self.global_rank = args.global_rank
+        self.model_parallel_world_size = args.model_parallel_world_size
+
         self.model = Qwen3VLHead(args)
         self.lm_head = None
         self.lm_head_fn = lambda x: self.lm_head(x)
         self.logits_norm = LogitsNormalize(enable=self.args.use_logits_normalize)
         self.checkpoint = CheckpointForQwen3VL()
+
+    def device(self):
+        return next(self.parameters()).device
 
     def init_weights(self):
         self.model.init_weights()
@@ -349,3 +356,18 @@ class Qwen3VL(nn.Module):
         )
         logits = self.lm_head_fn(h)
         return self.logits_norm.forward(logits)
+
+    # Copied from llama_hf.LlamaHf.load
+    def load(self, ckpt_dir: str, verbose: bool = True, **kwargs):
+        ckpt_dir = self.checkpoint.auto_split_or_merge_checkpoints(
+            ckpt_dir=ckpt_dir,
+            model_parallel_world_size=self.model_parallel_world_size,
+            global_rank=self.global_rank
+        )
+        merge_lora = kwargs.get("merge_lora", True)
+        super().load(ckpt_dir, verbose=verbose, merge_lora=merge_lora)
+
+    def flush(self):
+        for i in range(self.args.text_config_num_hidden_layers):
+            self.model.language_model.layers[i].self_attn.flush()
+        set_model_parallel_barrier()
