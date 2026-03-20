@@ -486,7 +486,7 @@ class CheckpointForQwen3VL(CheckpointForQwenVL):
         self.col_parallel_names = [
             "q_proj.weight", "k_proj.weight", "v_proj.weight", "gate_proj.weight", "up_proj.weight", "lm_head.weight",
             "q_proj.bias", "k_proj.bias", "v_proj.bias", "gate_proj.bias", "up_proj.bias", "lm_head.bias",
-            "qkv.weight", "qkv.bias", "mlp.linear_fc1.weight", "mlp.linear_fc1.weight"
+            "qkv.weight", "qkv.bias", "mlp.linear_fc1.weight", "mlp.linear_fc1.bias"
         ]
         self.row_parallel_names = [
             "o_proj.weight", "attn.proj.weight", "down_proj.weight", "embed_tokens.weight", "mlp.linear_fc2.weight"
