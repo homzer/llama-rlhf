@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 
 from src.checkpoint import CheckpointForQwen3VL
+from src.models import ParallelModule
 from src.models.modeling_acts import LogitsNormalize
 from src.models.modeling_args import Qwen3VLArgs
 from src.models.qwen3_vl_language import Qwen3LanguageModel
@@ -308,7 +309,7 @@ class Qwen3VLHead(nn.Module):
         )
 
 
-class Qwen3VL(nn.Module):
+class Qwen3VL(ParallelModule):
     def __init__(self, args: Qwen3VLArgs):
         super().__init__()
         self.args = args
@@ -320,9 +321,6 @@ class Qwen3VL(nn.Module):
         self.lm_head_fn = lambda x: self.lm_head(x)
         self.logits_norm = LogitsNormalize(enable=self.args.use_logits_normalize)
         self.checkpoint = CheckpointForQwen3VL()
-
-    def device(self):
-        return next(self.parameters()).device
 
     def init_weights(self):
         self.model.init_weights()
