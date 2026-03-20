@@ -85,6 +85,8 @@ class Qwen3VisionAttention(nn.Module):
         self.dim = args.vision_config_hidden_size
         self.num_heads = args.vision_config_num_heads
         self.head_dim = self.dim // self.num_heads
+        assert args.vision_config_num_heads % args.model_parallel_world_size == 0
+        self.num_local_heads = args.vision_config_num_heads // args.model_parallel_world_size
         self.num_key_value_groups = 1
         self.qkv = None  # parallel column splitting and interleaving
         self.proj = None
@@ -142,7 +144,7 @@ class Qwen3VisionAttention(nn.Module):
     ):
         seq_length = hidden_states.shape[0]
         query_states, key_states, value_states = (
-            self.qkv(hidden_states).reshape(seq_length, 3, self.num_heads, -1).permute(1, 0, 2, 3).unbind(0)
+            self.qkv(hidden_states).reshape(seq_length, 3, self.num_local_heads, -1).permute(1, 0, 2, 3).unbind(0)
         )
         cos, sin = position_embeddings
         query_states, key_states = apply_rotary_pos_emb_vision(query_states, key_states, cos, sin)
