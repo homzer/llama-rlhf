@@ -51,11 +51,11 @@ class Qwen3VLProcessor:
             return_mm_token_type_ids=False
         )
         return ProcessorOutputs(
-            input_ids=outputs["input_ids"],
-            pixel_values_images=outputs["pixel_values"],
-            image_grid_thw=outputs["image_grid_thw"],
-            pixel_values_videos=outputs["pixel_values_videos"],
-            video_grid_thw=outputs["video_grid_thw"]
+            input_ids=outputs.get("input_ids"),
+            pixel_values_images=outputs.get("pixel_values", None),
+            image_grid_thw=outputs.get("image_grid_thw", None),
+            pixel_values_videos=outputs.get("pixel_values_videos", None),
+            video_grid_thw=outputs.get("video_grid_thw", None)
         )
 
     def encode(self, s: str, bos: bool = False, eos: bool = False) -> List[int]:
