@@ -260,6 +260,7 @@ class Qwen3VLHead(nn.Module):
             image_masks = input_ids == self.args.image_token_id
             image_masks = image_masks.unsqueeze(-1).expand_as(inputs_embeds).to(inputs_embeds.device)
             inputs_embeds = inputs_embeds.masked_scatter(image_masks, image_embeds)
+            print("image_embeds.shape", image_embeds.shape, "deepstack_image_embeds.shape", deepstack_image_embeds.shape)
         if pixel_values_videos is not None:
             video_outputs = self.get_video_features(pixel_values_videos, video_grid_thw)
             video_embeds = video_outputs.pooler_output

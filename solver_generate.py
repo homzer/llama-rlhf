@@ -74,7 +74,7 @@ def main(
         for i, result in enumerate(convert_dataloader_data_to_list(data)):
             result["output"] = responses[i]
             writer.write(json.dumps(result, ensure_ascii=False) + '\n')
-    writer.flush()
+        writer.flush()
 
 
 if __name__ == '__main__':
