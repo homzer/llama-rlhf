@@ -258,35 +258,26 @@ class Qwen3VLHead(nn.Module):
             deepstack_image_embeds = image_outputs.deepstack_features
             image_embeds = torch.cat(image_embeds, dim=0).to(inputs_embeds)
             image_masks = input_ids == self.args.image_token_id
-            print("Num pos of image masks before unsqueeze", image_masks.sum())
             image_masks = image_masks.unsqueeze(-1).expand_as(inputs_embeds).to(inputs_embeds.device)
             inputs_embeds = inputs_embeds.masked_scatter(image_masks, image_embeds)
-            print("image_embeds.shape", image_embeds.shape, "deepstack_image_embeds.shape", deepstack_image_embeds[0].shape)
         if pixel_values_videos is not None:
             video_outputs = self.get_video_features(pixel_values_videos, video_grid_thw)
             video_embeds = video_outputs.pooler_output
             deepstack_video_embeds = video_outputs.deepstack_features
             video_embeds = torch.cat(video_embeds, dim=0).to(inputs_embeds)
             video_masks = input_ids == self.args.video_token_id
-            print("Num pos of video masks before unsqueeze", video_masks.sum())
             video_masks = video_masks.unsqueeze(-1).expand_as(inputs_embeds).to(inputs_embeds.device)
             inputs_embeds = inputs_embeds.masked_scatter(video_masks, video_embeds)
-            print("video_embeds.shape", video_embeds.shape, "deepstack_video_embeds.shape", deepstack_video_embeds[0].shape)
 
         visual_pos_masks = None
         deepstack_visual_embeds = None
         if image_masks is not None and video_masks is not None:
             image_masks = image_masks[..., 0]
             video_masks = video_masks[..., 0]
-            print("Num pos of image masks", image_masks.sum())
-            print("Num pos of video masks", video_masks.sum())
             visual_pos_masks = image_masks | video_masks
-            print("Num pos of visual_pos_masks", visual_pos_masks.sum())
             deepstack_visual_embeds = []
             image_mask_joint = image_masks[visual_pos_masks]
             video_mask_joint = video_masks[visual_pos_masks]
-            print("Num pos of image_mask_joint", image_mask_joint.sum())
-            print("Num pos of video_mask_joint", video_mask_joint.sum())
             for img_embed, vid_embed in zip(deepstack_image_embeds, deepstack_video_embeds):
                 embed_joint = img_embed.new_zeros(visual_pos_masks.sum(), img_embed.shape[-1]).to(img_embed.device)
                 embed_joint[image_mask_joint, :] = img_embed
