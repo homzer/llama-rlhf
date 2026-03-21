@@ -30,6 +30,7 @@ def main(
         num_samples_per_prompt: int = 1,
         dtype: str = "bfloat16",
         model_parallel_size: int = None,
+        system_prompt: str = None,
         seed: int = None
 ):
     setup_model_parallel(
@@ -52,6 +53,7 @@ def main(
         model_type=model_type,
         tokenizer_file=tokenizer_file
     )
+    tokenizer.system_prompt = system_prompt
     dataset = JsonDataset(label_file)
     if use_chat_template:
         dataset = ChatTemplateDataset(dataset, tokenizer)

@@ -20,6 +20,9 @@ class Qwen3VLHead(nn.Module):
         self.args = args
         self.visual = Qwen3VisionModel(args)
         self.language_model = Qwen3LanguageModel(args)
+        self.spatial_merge_size = args.vision_config_spatial_merge_size
+        self.image_token_id = args.image_token_id
+        self.video_token_id = args.video_token_id
         self.rope_deltas = None
 
     def init_weights(self):
@@ -64,9 +67,9 @@ class Qwen3VLHead(nn.Module):
                 flattened into sequence form and offset by `start_position`.
         """
         llm_grid_t, llm_grid_h, llm_grid_w = (
-            grid_thw[0].item() // temp_merge_size,
-            grid_thw[1].item() // spatial_merge_size,
-            grid_thw[2].item() // spatial_merge_size,
+            grid_thw[0] // temp_merge_size,
+            grid_thw[1] // spatial_merge_size,
+            grid_thw[2] // spatial_merge_size,
         )
 
         image_seq_length = llm_grid_h * llm_grid_w * llm_grid_t
@@ -85,10 +88,9 @@ class Qwen3VLHead(nn.Module):
     def get_rope_index(
             self,
             input_ids: torch.Tensor,
-            mm_token_type_ids: torch.Tensor,
+            input_masks: torch.Tensor,
             image_grid_thw: torch.Tensor | None = None,
             video_grid_thw: torch.Tensor | None = None,
-            attention_mask: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Calculate the 3D rope index based on image and video's sizes. The utility expects a `vision + text`
@@ -114,23 +116,24 @@ class Qwen3VLHead(nn.Module):
             input_ids (`torch.LongTensor` of shape `(batch_size, sequence_length)`):
                 Indices of input sequence tokens in the vocabulary. Padding will be ignored by default should you provide
                 it.
-            mm_token_type_ids (`torch.IntTensor` of shape `(batch_size, sequence_length)`):
-                Token type ids matching each modality to a different value in the input sequence, i.e. text (0), image (1), video (2).
+            input_masks (`torch.Tensor` of shape `(batch_size, sequence_length)`, *optional*):
+                Mask to avoid performing attention on padding token indices. Mask values selected in `[0, 1]`:
+                - 1 for tokens that are **not masked**,
+                - 0 for tokens that are **masked**.
             image_grid_thw (`torch.LongTensor` of shape `(num_images, 3)`, *optional*):
                 The temporal, height and width of feature shape of each image in LLM.
             video_grid_thw (`torch.LongTensor` of shape `(num_videos, 3)`, *optional*):
                 The temporal, height and width of feature shape of each video in LLM.
-            attention_mask (`torch.Tensor` of shape `(batch_size, sequence_length)`, *optional*):
-                Mask to avoid performing attention on padding token indices. Mask values selected in `[0, 1]`:
 
-                - 1 for tokens that are **not masked**,
-                - 0 for tokens that are **masked**.
 
         Returns:
             position_ids (`torch.LongTensor` of shape `(3, batch_size, sequence_length)`)
             mrope_position_deltas (`torch.Tensor` of shape `(batch_size)`)
         """
-        spatial_merge_size = self.args.vision_config_spatial_merge_size
+        # Matching each modality to a different value in the input sequence, i.e. text (0), image (1), video (2).
+        mm_token_type_ids = torch.zeros_like(input_ids)
+        mm_token_type_ids[input_ids == self.image_token_id] = 1
+        mm_token_type_ids[input_ids == self.video_token_id] = 2
 
         mrope_position_deltas = []
         position_ids = torch.zeros(
@@ -140,16 +143,17 @@ class Qwen3VLHead(nn.Module):
             dtype=input_ids.dtype,
             device=input_ids.device,
         )
+        if video_grid_thw is not None:
+            video_grid_thw = torch.repeat_interleave(video_grid_thw, video_grid_thw[:, 0], dim=0)
+            video_grid_thw[:, 0] = 1
         grid_iters = {
             1: iter(image_grid_thw) if image_grid_thw is not None else None,
             2: iter(video_grid_thw) if video_grid_thw is not None else None,
         }
 
-        for batch_idx, current_input_ids in enumerate(input_ids):
-            input_token_type = mm_token_type_ids[batch_idx]
-            if attention_mask is not None:
-                current_input_ids = current_input_ids[attention_mask[batch_idx].bool()]
-                input_token_type = input_token_type[attention_mask[batch_idx].bool()]
+        for batch_idx in range(input_ids.shape[0]):
+            current_input_ids = input_ids[batch_idx][input_masks[batch_idx].bool()]
+            input_token_type = mm_token_type_ids[batch_idx][input_masks[batch_idx].bool()]
 
             input_type_group = []
             for key, group in itertools.groupby(enumerate(input_token_type.tolist()), lambda x: x[1]):
@@ -170,17 +174,14 @@ class Qwen3VLHead(nn.Module):
                     current_pos += text_len
                 # image == 1, video == 2
                 else:
-                    grid_thw = next(grid_iters[modality_type])
+                    grid_thw = next(grid_iters[modality_type]).tolist()
                     vision_position_ids = self.get_vision_position_ids(
-                        current_pos, grid_thw, 1, spatial_merge_size, device=input_ids.device
+                        current_pos, grid_thw, 1, self.spatial_merge_size, device=input_ids.device
                     )
                     llm_pos_ids_list.append(vision_position_ids)
-                    current_pos += max(grid_thw[1], grid_thw[2]) // spatial_merge_size
+                    current_pos += max(grid_thw[1], grid_thw[2]) // self.spatial_merge_size
             llm_positions = torch.cat(llm_pos_ids_list, dim=1).reshape(3, -1)
-            if attention_mask is not None:
-                position_ids[:, batch_idx, attention_mask[batch_idx].bool()] = llm_positions.to(position_ids.device)
-            else:
-                position_ids[:, batch_idx] = llm_positions.to(position_ids.device)
+            position_ids[:, batch_idx, input_masks[batch_idx].bool()] = llm_positions.to(position_ids.device)
             mrope_position_deltas.append(llm_positions.max() + 1 - len(current_input_ids))
         mrope_position_deltas = torch.tensor(mrope_position_deltas, device=input_ids.device).unsqueeze(1)
         return position_ids, mrope_position_deltas
@@ -198,33 +199,30 @@ class Qwen3VLHead(nn.Module):
     def compute_3d_position_ids(
             self,
             input_ids: torch.Tensor,
+            input_masks: torch.Tensor,
             start_pos: int,
             image_grid_thw: torch.Tensor | None = None,
             video_grid_thw: torch.Tensor | None = None,
-            attention_mask: torch.Tensor | None = None,
-            mm_token_type_ids: torch.IntTensor | None = None,
     ) -> torch.Tensor | None:
         can_compute_mrope = (
                 input_ids is not None
-                and mm_token_type_ids is not None
                 and (image_grid_thw is not None or video_grid_thw is not None)
         )
 
         if can_compute_mrope and (self.rope_deltas is None or start_pos == 0):
             position_ids, rope_deltas = self.get_rope_index(
-                input_ids,
+                input_ids=input_ids,
+                input_masks=input_masks,
                 image_grid_thw=image_grid_thw,
                 video_grid_thw=video_grid_thw,
-                attention_mask=attention_mask,
-                mm_token_type_ids=mm_token_type_ids,
             )
             self.rope_deltas = rope_deltas
         # Use pre-calculated rope-deltas to infer correct 3D position ids
         elif self.rope_deltas is not None:
             batch_size, seq_length = input_ids.shape
-            if attention_mask is not None:
-                position_ids = attention_mask.long().cumsum(-1) - 1
-                position_ids = position_ids.masked_fill(attention_mask == 0, 0)
+            if input_masks is not None:
+                position_ids = input_masks.long().cumsum(-1) - 1
+                position_ids = position_ids.masked_fill(input_masks == 0, 0)
                 position_ids = position_ids.view(1, batch_size, -1).repeat(3, 1, 1)
             else:
                 position_ids = torch.arange(start_pos, start_pos + seq_length)
@@ -239,15 +237,16 @@ class Qwen3VLHead(nn.Module):
     def forward(
             self,
             input_ids: torch.Tensor,
+            input_masks: torch.Tensor,
             start_pos: int = 0,
             use_cache: bool = False,
             pixel_values_images: torch.Tensor = None,
             pixel_values_videos: torch.Tensor = None,
             image_grid_thw: torch.Tensor = None,
             video_grid_thw: torch.Tensor = None,
-            mm_token_type_ids: torch.Tensor = None
     ):
-        input_ids = input_ids.to(next(self.language_model.parameters()).device)
+        input_ids = input_ids.to(next(self.parameters()).device)
+        input_masks = input_masks.to(next(self.parameters()).device)
         inputs_embeds = self.language_model.embed_tokens(input_ids)
 
         image_masks, video_masks = None, None
@@ -294,10 +293,10 @@ class Qwen3VLHead(nn.Module):
 
         position_ids = self.compute_3d_position_ids(
             input_ids=input_ids,
+            input_masks=input_masks,
             start_pos=start_pos,
             image_grid_thw=image_grid_thw,
             video_grid_thw=video_grid_thw,
-            mm_token_type_ids=mm_token_type_ids,
         )
         return self.language_model.forward(
             inputs_embeds=inputs_embeds,
@@ -334,23 +333,23 @@ class Qwen3VL(ParallelModule):
     def forward(
             self,
             input_ids: torch.Tensor,
+            input_masks: torch.Tensor,
             start_pos: int = 0,
             use_cache: bool = False,
             pixel_values_images: torch.Tensor = None,
             pixel_values_videos: torch.Tensor = None,
             image_grid_thw: torch.Tensor = None,
             video_grid_thw: torch.Tensor = None,
-            mm_token_type_ids: torch.Tensor = None
     ) -> torch.Tensor:
         h = self.model.forward(
             input_ids=input_ids,
+            input_masks=input_masks,
             start_pos=start_pos,
             use_cache=use_cache,
             pixel_values_images=pixel_values_images,
             pixel_values_videos=pixel_values_videos,
             image_grid_thw=image_grid_thw,
             video_grid_thw=video_grid_thw,
-            mm_token_type_ids=mm_token_type_ids
         )
         logits = self.lm_head_fn(h)
         return self.logits_norm.forward(logits)

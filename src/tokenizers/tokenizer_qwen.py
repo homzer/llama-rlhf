@@ -17,12 +17,18 @@ class QwenTokenizer(Tokenizer):
             eos_id=self.model.eos_token_id,
             pad_id=self.model.pad_token_id
         )
+        self.system_prompt = None
 
     def apply_chat_template(self, messages: List[dict]) -> str:
         """
         :param messages: [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "greetings!"}]
         :return:
         """
+        if self.system_prompt is not None:
+            if messages[0]["role"] == "system":
+                messages[0]["content"] = self.system_prompt
+            else:
+                messages.insert(0, {"role": "system", "content": self.system_prompt})
         return self.model.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 
     def encode(self, s: str, bos: bool = False, eos: bool = False) -> List[int]:
