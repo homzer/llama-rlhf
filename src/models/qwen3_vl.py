@@ -258,6 +258,7 @@ class Qwen3VLHead(nn.Module):
             deepstack_image_embeds = image_outputs.deepstack_features
             image_embeds = torch.cat(image_embeds, dim=0).to(inputs_embeds)
             image_masks = input_ids == self.args.image_token_id
+            print("Num pos of image masks before unsqueeze", image_masks.sum())
             image_masks = image_masks.unsqueeze(-1).expand_as(inputs_embeds).to(inputs_embeds.device)
             inputs_embeds = inputs_embeds.masked_scatter(image_masks, image_embeds)
             print("image_embeds.shape", image_embeds.shape, "deepstack_image_embeds.shape", deepstack_image_embeds[0].shape)
@@ -267,6 +268,7 @@ class Qwen3VLHead(nn.Module):
             deepstack_video_embeds = video_outputs.deepstack_features
             video_embeds = torch.cat(video_embeds, dim=0).to(inputs_embeds)
             video_masks = input_ids == self.args.video_token_id
+            print("Num pos of video masks before unsqueeze", video_masks.sum())
             video_masks = video_masks.unsqueeze(-1).expand_as(inputs_embeds).to(inputs_embeds.device)
             inputs_embeds = inputs_embeds.masked_scatter(video_masks, video_embeds)
             print("video_embeds.shape", video_embeds.shape, "deepstack_video_embeds.shape", deepstack_video_embeds[0].shape)
