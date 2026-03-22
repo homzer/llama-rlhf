@@ -273,28 +273,35 @@ class Qwen3LanguageModel(nn.Module):
 
     def forward(
             self,
-            inputs_embeds: torch.Tensor,
+            inputs_embeds: torch.Tensor,  # [batch_size, seq_len, hidden_size]
+            inputs_masks: torch.Tensor,  # [batch_size, max_seq_len]
             start_pos: int,
             use_cache: bool,
-            position_ids: torch.Tensor = None,
+            position_ids: torch.Tensor,
             deepstack_visual_embeds: list[torch.Tensor] = None,
             visual_pos_masks: torch.Tensor = None
     ) -> torch.Tensor:
-        seq_len = inputs_embeds.shape[1]
+        bsz, seq_len = inputs_embeds.shape[:2]
 
-        mask = None
-        if seq_len > 1:
-            mask = torch.full((1, 1, seq_len, seq_len), float("-inf"), device=inputs_embeds.device)
-            mask = torch.triu(mask, diagonal=start_pos + 1).type_as(inputs_embeds)
+        masks = torch.full((bsz, 1, seq_len, start_pos + seq_len), float("-inf"))
+        masks = torch.triu(masks, diagonal=start_pos + 1)
+        for i in range(bsz):
+            prefix_len = torch.nonzero(inputs_masks[i])[0][0].item()  # for prefix padding
+            masks[i][..., : prefix_len] = float("-inf")
 
-        if position_ids is None:
-            position_ids = torch.arange(start_pos, start_pos + seq_len)
-            position_ids = position_ids.view(1, 1, -1).expand(3, inputs_embeds.shape[0], -1)
+        # mask = None
+        # if seq_len > 1:
+        #     mask = torch.full((1, 1, seq_len, seq_len), float("-inf"), device=inputs_embeds.device)
+        #     mask = torch.triu(mask, diagonal=start_pos + 1).type_as(inputs_embeds)
+
+        # if position_ids is None:
+        #     position_ids = torch.arange(start_pos, start_pos + seq_len)
+        #     position_ids = position_ids.view(1, 1, -1).expand(3, inputs_embeds.shape[0], -1)
 
         position_embeddings = self.rotary_emb(inputs_embeds, position_ids)
         h = inputs_embeds
         for layer_idx, layer in enumerate(self.layers):
-            h = layer(h, position_embeddings, start_pos, mask, use_cache)
+            h = layer(h, position_embeddings, start_pos, masks, use_cache)
 
             if deepstack_visual_embeds is not None and layer_idx in range(len(deepstack_visual_embeds)):
                 h = self._deepstack_process(

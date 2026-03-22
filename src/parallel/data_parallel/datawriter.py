@@ -1,5 +1,6 @@
 import os
 import re
+from collections.abc import Callable
 
 from src.parallel.data_parallel.utils import gather_object_from_data_parallel_region
 from src.parallel.initialize import get_data_parallel_src_rank, get_data_parallel_rank
@@ -16,6 +17,35 @@ class ParallelDataWriter:
         if self.data_parallel_src_rank == 0:
             self.writer = open(self.worker_file, mode=mode, encoding="utf-8")
         self.final_gather = final_gather
+
+    def filter_unprocessed_data(self, datalist: list, key_extractor: Callable) -> list:
+        """
+        Filters out already processed data and returns the list of unprocessed data.
+
+        This method implements checkpoint resumption for generation tasks. It reads processed
+        records from a worker file, compares them with the current data list, and filters
+        out data items that have not been processed yet.
+
+        Args:
+            datalist: List of data to be processed
+            key_extractor: Function to extract a unique identifier from a data item
+
+        Returns:
+            List of unprocessed data
+        """
+        processed_keys = []
+        if os.path.exists(self.worker_file):
+            with open(self.worker_file, mode='r', encoding="utf-8") as reader:
+                processed_keys = [key_extractor(line.strip()) for line in reader]
+        processed_keys = gather_object_from_data_parallel_region(processed_keys)
+        print(f"Number of processed data {len(processed_keys)}")
+        unprocessed_data = []
+        for data in datalist:
+            if key_extractor(data) not in processed_keys:
+                unprocessed_data.append(data)
+        print(f"Number of unprocessed data {len(unprocessed_data)}")
+        return unprocessed_data
+
 
     def format_file(self, file: str) -> str:
         match = re.search(r".+(\..+)$", file)

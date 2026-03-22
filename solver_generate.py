@@ -31,6 +31,7 @@ def main(
         dtype: str = "bfloat16",
         model_parallel_size: int = None,
         system_prompt: str = None,
+        open_fault_tolerance: bool = False,
         seed: int = None
 ):
     setup_model_parallel(
@@ -54,10 +55,6 @@ def main(
         tokenizer_file=tokenizer_file
     )
     tokenizer.system_prompt = system_prompt
-    dataset = JsonDataset(label_file)
-    if use_chat_template:
-        dataset = ChatTemplateDataset(dataset, tokenizer)
-    dataloader = ParallelDataLoader(dataset, batch_size=max_batch_size)
     model.load(ckpt_dir)
     generator = GroupGeneratorForCausalLM(
         model=model,
@@ -67,9 +64,20 @@ def main(
         top_p=top_p,
         num_samples_per_prompt=num_samples_per_prompt
     )
-    timer = Timer(len(dataloader))
+    dataset = JsonDataset(label_file)
     os.makedirs(log_dir, exist_ok=True)
-    writer = ParallelDataWriter(os.path.join(log_dir, "results.jsonl"), 'w')
+    if open_fault_tolerance:
+        writer = ParallelDataWriter(os.path.join(log_dir, "results.jsonl"), 'a')
+        dataset.datalist = writer.filter_unprocessed_data(
+            dataset.datalist,
+            key_extractor=lambda x: json.loads(x)["instruction"] if isinstance(x, str) else x["instruction"]
+        )
+    else:
+        writer = ParallelDataWriter(os.path.join(log_dir, "results.jsonl"), 'a')
+    if use_chat_template:
+        dataset = ChatTemplateDataset(dataset, tokenizer)
+    dataloader = ParallelDataLoader(dataset, batch_size=max_batch_size)
+    timer = Timer(len(dataloader))
     for data in dataloader:
         timer.step()
         responses = generator.forward(data['instruction'])
