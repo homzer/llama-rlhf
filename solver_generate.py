@@ -70,7 +70,7 @@ def main(
         writer = ParallelDataWriter(os.path.join(log_dir, "results.jsonl"), 'a')
         dataset.datalist = writer.filter_unprocessed_data(
             dataset.datalist,
-            key_extractor=lambda x: json.loads(x)["instruction"] if isinstance(x, str) else x["instruction"]
+            key_extractor=lambda x: json.loads(x)["original_instruction"] if isinstance(x, str) else x["instruction"]
         )
     else:
         writer = ParallelDataWriter(os.path.join(log_dir, "results.jsonl"), 'a')
