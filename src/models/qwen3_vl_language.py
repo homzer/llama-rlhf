@@ -148,8 +148,8 @@ class Qwen3LanguageAttention(AttentionForCausalLM):
     ) -> torch.Tensor:
         bsz, seq_len = x.shape[0], x.shape[1]
         xq, xk, xv = self.q_proj_fn(x), self.k_proj_fn(x), self.v_proj_fn(x)
-        xq = self.q_norm(xq).view(bsz, seq_len, self.num_local_heads, self.head_dim)
-        xk = self.k_norm(xk).view(bsz, seq_len, self.num_local_key_value_heads, self.head_dim)
+        xq = self.q_norm(xq.view(bsz, seq_len, self.num_local_heads, self.head_dim))
+        xk = self.k_norm(xk.view(bsz, seq_len, self.num_local_key_value_heads, self.head_dim))
         xv = xv.view(bsz, seq_len, self.num_local_key_value_heads, self.head_dim)
 
         cos, sin = position_embeddings
