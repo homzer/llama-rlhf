@@ -208,12 +208,6 @@ class Qwen3VLHead(nn.Module):
             image_grid_thw: torch.Tensor | None = None,
             video_grid_thw: torch.Tensor | None = None,
     ) -> torch.Tensor | None:
-        # can_compute_mrope = (
-        #         input_ids is not None
-        #         and (image_grid_thw is not None or video_grid_thw is not None)
-        # )
-
-        # if can_compute_mrope and (self.rope_deltas is None or start_pos == 0):
         if start_pos == 0:
             position_ids, rope_deltas = self.get_rope_index(
                 input_ids=input_ids,
@@ -227,22 +221,6 @@ class Qwen3VLHead(nn.Module):
             position_ids = torch.arange(start_pos, start_pos + input_ids.shape[1])
             position_ids = position_ids.view(1, 1, -1).expand(3, input_ids.shape[0], -1)
             position_ids = position_ids.to(self.rope_deltas.device) + self.rope_deltas.view(1, -1, 1)
-            # delta = self.rope_deltas.repeat_interleave(batch_size // self.rope_deltas.shape[0], dim=0)
-
-        # elif self.rope_deltas is not None:
-        #     batch_size, seq_len = input_ids.shape
-        #     if input_masks is not None:
-        #         position_ids = input_masks.long().cumsum(-1) - 1
-        #         position_ids = position_ids.masked_fill(input_masks == 0, 0)
-        #         position_ids = position_ids.view(1, batch_size, -1).repeat(3, 1, 1)
-        #     else:
-        #         position_ids = torch.arange(start_pos, start_pos + seq_len)
-        #         position_ids = position_ids.view(1, 1, -1).expand(3, batch_size, -1)
-        #     delta = self.rope_deltas.repeat_interleave(batch_size // self.rope_deltas.shape[0], dim=0)
-        #     position_ids = position_ids + delta
-        # else:
-        #     # Can't build correct 3D positions. Let the model infer it from `cache_position`
-        #     position_ids = None
         return position_ids
 
     def forward(
