@@ -283,7 +283,7 @@ class Qwen3LanguageModel(nn.Module):
     ) -> torch.Tensor:
         bsz, seq_len = inputs_embeds.shape[:2]
 
-        masks = torch.full((bsz, 1, seq_len, start_pos + seq_len), float("-inf"))
+        masks = torch.full((bsz, 1, seq_len, start_pos + seq_len), float("-inf"), device=inputs_embeds.device)
         masks = torch.triu(masks, diagonal=start_pos + 1)
         for i in range(bsz):
             prefix_len = torch.nonzero(inputs_masks[i])[0][0].item()  # for prefix padding
