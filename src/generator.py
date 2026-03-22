@@ -102,14 +102,14 @@ def prepare_for_generation_with_prefix(
     return Outputs(tokens=tokens, input_masks=input_masks, prefix_masks=prefix_masks, start_pos=min_prompt_size)
 
 
-def get_output_masks(tokens: torch.Tensor, input_masks: torch.Tensor, tokenizer: Tokenizer) -> torch.Tensor:
+def get_output_masks(tokens: torch.Tensor, input_masks: torch.Tensor, eos_id: int) -> torch.Tensor:
     prompt_lengths = torch.sum(input_masks, dim=-1)
     output_masks = torch.full_like(tokens, fill_value=True)
     for i, t in enumerate(tokens.tolist()):
         output_masks[i][: prompt_lengths[i] - 1] = False
-        if tokenizer.eos_id in t[prompt_lengths[i]:]:
+        if eos_id in t[prompt_lengths[i]:]:
             # find index of eos
-            end = t.index(tokenizer.eos_id, prompt_lengths[i])
+            end = t.index(eos_id, prompt_lengths[i])
             output_masks[i][end:] = False
         else:
             output_masks[i][-1:] = False
@@ -184,7 +184,7 @@ class GeneratorForCausalLM:
         return get_output_masks(
             tokens=tokens,
             input_masks=input_masks,
-            tokenizer=self.tokenizer
+            eos_id=self.tokenizer.eos_id
         )
 
     def decode_response(self, tokens, output_masks):
