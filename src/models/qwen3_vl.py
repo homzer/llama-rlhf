@@ -226,7 +226,7 @@ class Qwen3VLHead(nn.Module):
         else:
             position_ids = torch.arange(start_pos, start_pos + input_ids.shape[1])
             position_ids = position_ids.view(1, 1, -1).expand(3, input_ids.shape[0], -1)
-            position_ids = position_ids + self.rope_deltas.view(1, -1, 1)
+            position_ids = position_ids.to(self.rope_deltas.device) + self.rope_deltas.view(1, -1, 1)
             # delta = self.rope_deltas.repeat_interleave(batch_size // self.rope_deltas.shape[0], dim=0)
 
         # elif self.rope_deltas is not None:
