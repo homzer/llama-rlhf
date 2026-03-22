@@ -105,7 +105,7 @@ def prepare_for_generation_with_prefix(
 def get_output_masks(tokens: torch.Tensor, input_masks: torch.Tensor, eos_id: int) -> torch.Tensor:
     prompt_ends = []
     for input_mask in input_masks:
-        prompt_ends.append(torch.nonzero(input_mask)[-1][0].item())
+        prompt_ends.append(torch.nonzero(input_mask)[-1][0].item() + 1)
     output_masks = torch.full_like(tokens, fill_value=True)
     for i, t in enumerate(tokens.tolist()):
         output_masks[i][: prompt_ends[i] - 1] = False
