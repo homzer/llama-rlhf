@@ -287,7 +287,10 @@ class Qwen3LanguageModel(nn.Module):
         masks = torch.triu(masks, diagonal=start_pos + 1)
         for i in range(bsz):
             prefix_len = torch.nonzero(inputs_masks[i])[0][0].item()  # for prefix padding
-            masks[i][..., : prefix_len] = float("-inf")
+            if start_pos == 0:
+                masks[i][:, prefix_len:, : prefix_len] = float("-inf")
+            else:
+                masks[i][..., : prefix_len] = float("-inf")
 
         position_embeddings = self.rotary_emb(inputs_embeds, position_ids)
         h = inputs_embeds
