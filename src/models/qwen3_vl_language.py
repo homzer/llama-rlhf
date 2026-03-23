@@ -277,7 +277,7 @@ class Qwen3LanguageModel(nn.Module):
             inputs_masks: torch.Tensor,  # [batch_size, max_seq_len]
             start_pos: int,
             use_cache: bool,
-            position_ids: torch.Tensor,
+            position_ids: torch.Tensor,  # [3, batch_size, seq_len]
             deepstack_visual_embeds: list[torch.Tensor] = None,
             visual_pos_masks: torch.Tensor = None
     ) -> torch.Tensor:
@@ -288,15 +288,6 @@ class Qwen3LanguageModel(nn.Module):
         for i in range(bsz):
             prefix_len = torch.nonzero(inputs_masks[i])[0][0].item()  # for prefix padding
             masks[i][..., : prefix_len] = float("-inf")
-
-        # mask = None
-        # if seq_len > 1:
-        #     mask = torch.full((1, 1, seq_len, seq_len), float("-inf"), device=inputs_embeds.device)
-        #     mask = torch.triu(mask, diagonal=start_pos + 1).type_as(inputs_embeds)
-
-        # if position_ids is None:
-        #     position_ids = torch.arange(start_pos, start_pos + seq_len)
-        #     position_ids = position_ids.view(1, 1, -1).expand(3, inputs_embeds.shape[0], -1)
 
         position_embeddings = self.rotary_emb(inputs_embeds, position_ids)
         h = inputs_embeds
