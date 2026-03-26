@@ -377,6 +377,7 @@ class LoraQwenArgs(QwenArgs):
 
 @dataclass
 @AutoArgs.register("qwen-moe")
+@AutoArgs.register("qwen3-moe")
 class QwenMoeArgs(QwenArgs):
     moe_intermediate_size: int = None
     norm_topk_prob: bool = True

@@ -8,6 +8,8 @@ from src.tokenizers.tokenizer import AutoTokenizer
 
 @AutoTokenizer.register("qwen")
 @AutoTokenizer.register("qwen3")
+@AutoTokenizer.register("qwen-moe")
+@AutoTokenizer.register("qwen3-moe")
 class QwenTokenizer(Tokenizer):
     def __init__(self, model_dir: str):
         self.model = AutoTokenizerHf.from_pretrained(model_dir)

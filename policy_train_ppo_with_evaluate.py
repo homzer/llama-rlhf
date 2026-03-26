@@ -14,9 +14,10 @@ from policy_train_ppo import (
 )
 from src.dataset import JsonDataset, ChatTemplateDataset
 from src.evaluator import DataParallelPolicyEvaluator
-from src.modeling import get_parallel_model
+from src.models.modeling import AutoModelForCausalLM
 from src.parallel.initialize import setup_model_parallel, set_barrier, get_rank
 from src.ppo.buffer import PPORolloutBuffer
+from src.tokenizers.tokenizer import AutoTokenizer
 from src.utils import json_load, json_dump
 
 
@@ -37,12 +38,14 @@ def evaluate_actor(
         temperature: float = 0.0,
         top_p: float = 1.0,
 ):
-    actor, actor_tokenizer = get_parallel_model(
+    actor = AutoModelForCausalLM.from_pretrained(
         model_type=actor_model_type,
         config_file=actor_config_file,
         max_seq_len=max_seq_len,
-        tokenizer_file=actor_tokenizer_file,
         dtype=dtype,
+    )
+    actor_tokenizer = AutoTokenizer.from_pretrained(
+        model_type=actor_model_type, tokenizer_file=actor_tokenizer_file
     )
     actor.load(os.path.join(actor_save_dir, "epoch-%03d" % (epoch + 1)))
     print("Actor Evaluating ...")

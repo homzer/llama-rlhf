@@ -378,6 +378,21 @@ class CheckpointForQwen(Checkpoint):
         return state_dict
 
 
+class CheckpointForQwen3Moe(Checkpoint):
+    def __init__(self):
+        col_parallel_names = [
+            "q_proj.weight", "k_proj.weight", "v_proj.weight", "lm_head.weight",
+            "q_proj.bias", "k_proj.bias", "v_proj.bias", "lm_head.bias"
+        ]
+        row_parallel_names = [
+            "o_proj.weight", "embed_tokens.weight",
+        ]
+        # TODO
+        # col_parallel_names.extend(["gate_proj.weight", "up_proj.weight", "gate_proj.bias", "up_proj.bias"])
+        # row_parallel_names.extend(["down_proj.weight"])
+        super().__init__(col_parallel_names, row_parallel_names)
+
+
 class CheckpointForQwenVL(Checkpoint):
     def __init__(self):
         col_parallel_names = [

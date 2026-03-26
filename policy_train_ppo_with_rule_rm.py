@@ -15,11 +15,12 @@ from policy_train_ppo_with_evaluate import evaluate_actor
 from src.dataset import JsonDataset, ChatTemplateDataset
 from src.entities import IterationHandler, Timer
 from src.evaluator import EVALUATORS
-from src.modeling import get_parallel_model
+from src.models.modeling import AutoModelForCausalLM
 from src.parallel.data_parallel.dataloader import ParallelDataLoader
 from src.parallel.initialize import setup_model_parallel, set_barrier
 from src.ppo.buffer import PPORolloutBuffer, RolloutBuffer, CriticRolloutBuffer
 from src.ppo.collector import ActorBufferCollector
+from src.tokenizers.tokenizer import AutoTokenizer
 from src.utils import json_load, print_current_func_args
 
 
@@ -41,14 +42,14 @@ def collect_actor_buffer_with_label(
 ) -> RolloutBuffer:
     dataset.repeat(num_samples_per_prompt).shuffle()
 
-    actor, actor_tokenizer = get_parallel_model(
+    actor = AutoModelForCausalLM.from_pretrained(
         model_type=actor_model_type,
         config_file=actor_config_file,
         max_seq_len=max_seq_len,
-        tokenizer_file=actor_tokenizer_file,
         lora_rank=-1,
         dtype=dtype
     )
+    actor_tokenizer = AutoTokenizer.from_pretrained(model_type=actor_model_type, tokenizer_file=actor_tokenizer_file)
     actor.load(actor_ckpt_dir if epoch == 0 else os.path.join(actor_save_dir, "epoch-%03d" % epoch))
     actor_buffer_collector = ActorBufferCollector(
         actor=actor,

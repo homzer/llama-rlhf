@@ -1,10 +1,88 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
+from src.checkpoint import CheckpointForQwen3Moe
 from src.models.modeling import AutoModelForCausalLM
 from src.models.modeling_args import QwenMoeArgs
-from src.models.qwen import QwenFeedForward
 from src.models.qwen3 import Qwen3TransformerBlock, Qwen3Head, Qwen3
+
+
+# class Qwen3MoeFeedForward(nn.Module):
+#     def __init__(self, args: QwenMoeArgs):
+#         super().__init__()
+#         self.args = args
+#         self.num_experts = args.num_experts
+#         self.top_k = args.num_experts_per_tok
+#         self.norm_topk_prob = args.norm_topk_prob
+#
+#         self.gate = None
+#         self.experts = nn.ModuleList(
+#             [QwenFeedForward(args, intermediate_size=args.moe_intermediate_size) for _ in range(self.num_experts)]
+#         )
+#
+#     def init_weights(self):
+#         for expert in self.experts:
+#             expert.init_weights()
+#         self.gate = nn.Linear(self.args.hidden_size, self.args.num_experts, bias=False).type(self.args.dtype)
+#
+#     def forward(self, x: torch.Tensor):
+#         bsz, seq_len, hidden_dim = x.shape
+#         x = x.view(-1, hidden_dim)
+#
+#         router_logits = self.gate(x)
+#         routing_weights = torch.softmax(router_logits, dim=-1)
+#         routing_weights, selected_experts = torch.topk(routing_weights, self.top_k, dim=-1)
+#         if self.norm_topk_prob:
+#             routing_weights /= routing_weights.sum(dim=-1, keepdim=True)
+#         routing_weights = routing_weights.to(x)
+#
+#         final_hidden_states = torch.zeros_like(x)
+#         with torch.no_grad():
+#             expert_mask = torch.nn.functional.one_hot(selected_experts, num_classes=self.num_experts).permute(2, 1, 0)
+#             expert_hit = torch.greater(expert_mask.sum(dim=(-1, -2)), 0).nonzero()
+#
+#         for expert_idx in expert_hit:
+#             expert_idx = expert_idx[0]
+#             if expert_idx == self.num_experts:
+#                 continue
+#             top_k_pos, token_idx = torch.where(expert_mask[expert_idx])
+#             current_state = x[token_idx]
+#
+#             expert = self.experts[expert_idx]
+#             idx, top_x = torch.where(expert_mask[expert_idx])
+#             current_state = x[None, top_x].reshape(-1, hidden_dim)
+#             current_hidden_states = expert(current_state) * routing_weights[top_x, idx, None]
+#             final_hidden_states.index_add_(0, top_x, current_hidden_states.to(x))
+#         final_hidden_states = final_hidden_states.reshape(bsz, seq_len, hidden_dim)
+#         return final_hidden_states
+
+class Qwen3Expert(nn.Module):
+    def __init__(self, args: QwenMoeArgs, intermediate_size: int = None):
+        super().__init__()
+        self.args = args
+        self.intermediate_size = intermediate_size or args.intermediate_size
+
+        self.gate_proj = None
+        self.down_proj = None
+        self.up_proj = None
+        self.gate_proj_fn = lambda x: self.gate_proj(x)
+        self.down_proj_fn = lambda x: self.down_proj(x)
+        self.up_proj_fn = lambda x: self.up_proj(x)
+
+    def init_weights(self):
+        self.gate_proj = nn.Linear(
+            self.args.hidden_size, self.intermediate_size, bias=False,
+        ).type(self.args.dtype)
+        self.down_proj = nn.Linear(
+            self.intermediate_size, self.args.hidden_size, bias=False,
+        ).type(self.args.dtype)
+        self.up_proj = nn.Linear(
+            self.args.hidden_size, self.intermediate_size, bias=False,
+        ).type(self.args.dtype)
+
+    def forward(self, x):
+        return self.down_proj_fn(F.silu(self.gate_proj_fn(x)) * self.up_proj_fn(x))
 
 
 class Qwen3MoeFeedForward(nn.Module):
@@ -17,7 +95,7 @@ class Qwen3MoeFeedForward(nn.Module):
 
         self.gate = None
         self.experts = nn.ModuleList(
-            [QwenFeedForward(args, intermediate_size=args.moe_intermediate_size) for _ in range(self.num_experts)]
+            [Qwen3Expert(args, intermediate_size=args.moe_intermediate_size) for _ in range(self.num_experts)]
         )
 
     def init_weights(self):
@@ -37,7 +115,7 @@ class Qwen3MoeFeedForward(nn.Module):
         routing_weights = routing_weights.to(x)
 
         final_hidden_states = torch.zeros((bsz * seq_len, hidden_dim), dtype=x.dtype, device=x.device)
-        expert_mask = torch.nn.functional.one_hot(selected_experts, num_classes=self.num_experts).permute(2, 1, 0)
+        expert_mask = F.one_hot(selected_experts, num_classes=self.num_experts).permute(2, 1, 0)
         for expert_idx in range(self.num_experts):
             expert = self.experts[expert_idx]
             idx, top_x = torch.where(expert_mask[expert_idx])
@@ -60,8 +138,9 @@ class Qwen3MoeHead(Qwen3Head):
         self.layers = torch.nn.ModuleList([Qwen3MoeTransformerBlock(args) for _ in range(args.num_hidden_layers)])
 
 
-@AutoModelForCausalLM.register("qwen3moe")
+@AutoModelForCausalLM.register("qwen3-moe")
 class Qwen3Moe(Qwen3):
     def __init__(self, args: QwenMoeArgs):
         super().__init__(args=args)
         self.model = Qwen3MoeHead(args)
+        self.checkpoint = CheckpointForQwen3Moe()
