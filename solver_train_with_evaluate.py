@@ -86,6 +86,7 @@ def main(
         lora_dtype: str = "bfloat16",
         chunk_size: int = None,
         begin_epoch: int = 0,
+        max_epoch: int = None,
         use_chat_template: bool = False,
         seed: int = None,
         save_optim: bool = False,
@@ -122,6 +123,8 @@ def main(
     random.shuffle(datalist)
 
     for epoch, datalist in IterationHandler(datalist, epochs, chunk_size, begin_epoch):
+        if max_epoch is not None and epoch >= max_epoch:
+            break
         dataset = JsonDataset(f=datalist)
         if len(dataset) == 0:
             continue
