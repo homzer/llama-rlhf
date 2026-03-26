@@ -372,7 +372,7 @@ class Qwen3VLArgs(BaseParallelArgs):
 @AutoArgs.register("lora-qwen3")
 class LoraQwenArgs(QwenArgs):
     r: int = None  # Rank of lora
-    lora_dtype: str = "float32"
+    lora_dtype: str = "bfloat16"
 
 
 @dataclass
@@ -383,6 +383,14 @@ class QwenMoeArgs(QwenArgs):
     norm_topk_prob: bool = True
     num_experts: int = None
     num_experts_per_tok: int = None
+
+
+@dataclass
+@AutoArgs.register("lora-qwen-moe")
+@AutoArgs.register("lora-qwen3-moe")
+class LoraQwenMoeArgs(QwenMoeArgs):
+    r: int = None
+    lora_dtype: str = "bfloat16"
 
 
 @dataclass

@@ -1,15 +1,20 @@
 from typing import Optional
 
 import torch
+import torch.nn as nn
+import torch.nn.init as init
 
 from src.models.modeling import AttentionForCausalLM, AutoModelForCausalLM, AutoVerifier
 from src.models.modeling_acts import RMSNorm, RotaryEmbedding
-from src.models.modeling_args import QwenArgs
+from src.models.modeling_args import QwenArgs, LoraQwenArgs
 from src.models.qwen import (
     Qwen,
     QwenHead,
     QwenTransformerBlock,
-    QwenVerifier
+    QwenVerifier,
+    LoraQwen,
+    LoraQwenHead,
+    LoraQwenTransformerBlock
 )
 from src.parallel.model_parallel.layers import (
     RowParallelLinear,
@@ -19,7 +24,7 @@ from src.parallel.sequence_parallel.mappings import (
     gather_from_sequence_parallel_region,
     scatter_to_sequence_parallel_region
 )
-from src.utils import compute_position_ids, apply_rotary_pos_emb_
+from src.utils import compute_position_ids, apply_rotary_pos_emb_, apply_lora
 
 
 class Qwen3Attention(AttentionForCausalLM):
@@ -146,6 +151,98 @@ class Qwen3(Qwen):
     def __init__(self, args: QwenArgs):
         super().__init__(args=args)
         self.model = Qwen3Head(args)
+
+
+class LoraQwen3Attention(Qwen3Attention):
+    def __init__(self, args: LoraQwenArgs):
+        super().__init__(args)
+        self.args = args
+        self.lora_a_q_proj = None
+        self.lora_b_q_proj = None
+        self.lora_a_k_proj = None
+        self.lora_b_k_proj = None
+        self.lora_a_v_proj = None
+        self.lora_b_v_proj = None
+        self.lora_a_o_proj = None
+        self.lora_b_o_proj = None
+        self.q_proj_fn = lambda x: self.q_proj(x) + apply_lora(x, self.lora_a_q_proj, self.lora_b_q_proj)
+        self.k_proj_fn = lambda x: self.k_proj(x) + apply_lora(x, self.lora_a_k_proj, self.lora_b_k_proj)
+        self.v_proj_fn = lambda x: self.v_proj(x) + apply_lora(x, self.lora_a_v_proj, self.lora_b_v_proj)
+        self.o_proj_fn = lambda x: self.o_proj(x) + apply_lora(x, self.lora_a_o_proj, self.lora_b_o_proj)
+
+    def init_weights(self):
+        super().init_weights()
+
+        self.lora_a_q_proj = nn.Linear(
+            self.args.hidden_size,
+            self.args.r,
+            bias=False
+        ).type(self.args.lora_dtype)
+        self.lora_b_q_proj = ColumnParallelLinear(
+            self.args.r,
+            self.args.num_attention_heads * self.head_dim,
+            bias=False,
+            gather_output=False,
+            init_method=init.zeros_
+        ).type(self.args.lora_dtype)
+        self.lora_a_k_proj = nn.Linear(
+            self.args.hidden_size,
+            self.args.r,
+            bias=False
+        ).type(self.args.lora_dtype)
+        self.lora_b_k_proj = ColumnParallelLinear(
+            self.args.r,
+            self.num_key_value_heads * self.head_dim,
+            bias=False,
+            gather_output=False,
+            init_method=init.zeros_
+        ).type(self.args.lora_dtype)
+        self.lora_a_v_proj = nn.Linear(
+            self.args.hidden_size,
+            self.args.r,
+            bias=False
+        ).type(self.args.lora_dtype)
+        self.lora_b_v_proj = ColumnParallelLinear(
+            self.args.r,
+            self.num_key_value_heads * self.head_dim,
+            bias=False,
+            gather_output=False,
+            init_method=init.zeros_
+        ).type(self.args.lora_dtype)
+        self.lora_a_o_proj = RowParallelLinear(
+            self.args.num_attention_heads * self.head_dim,
+            self.args.r,
+            bias=False,
+            input_is_parallel=True,
+            init_method=init.xavier_normal_
+        ).type(self.args.lora_dtype)
+        self.lora_b_o_proj = nn.Linear(
+            self.args.r,
+            self.args.hidden_size,
+            bias=False
+        ).type(self.args.lora_dtype)
+        init.zeros_(self.lora_b_o_proj.weight)
+
+
+class LoraQwen3TransformerBlock(LoraQwenTransformerBlock):
+    def __init__(self, args: LoraQwenArgs):
+        super().__init__(args=args)
+        self.self_attn = LoraQwen3Attention(args)
+
+
+class LoraQwen3Head(LoraQwenHead):
+    def __init__(self, args: LoraQwenArgs):
+        super().__init__(args=args)
+        self.layers = torch.nn.ModuleList()
+        for layer_id in range(args.num_hidden_layers):
+            self.layers.append(LoraQwen3TransformerBlock(args))
+
+
+@AutoModelForCausalLM.register("lora-qwen3")
+class LoraQwen3(LoraQwen):
+    def __init__(self, args: LoraQwenArgs):
+        super().__init__(args=args)
+        self.model = LoraQwen3Head(args)
 
 
 @AutoVerifier.register("qwen3")

@@ -3,9 +3,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from src.checkpoint import CheckpointForQwen3Moe
+from src.models import LoraQwen
 from src.models.modeling import AutoModelForCausalLM
-from src.models.modeling_args import QwenMoeArgs
-from src.models.qwen3 import Qwen3TransformerBlock, Qwen3Head, Qwen3
+from src.models.modeling_args import QwenMoeArgs, LoraQwenMoeArgs
+from src.models.qwen3 import Qwen3TransformerBlock, Qwen3Head, Qwen3, LoraQwen3
 from src.parallel.model_parallel.mappings import reduce_from_model_parallel_region
 
 
@@ -100,3 +101,19 @@ class Qwen3Moe(Qwen3):
         super().__init__(args=args)
         self.model = Qwen3MoeHead(args)
         self.checkpoint = CheckpointForQwen3Moe(num_experts=args.num_experts)
+
+
+@AutoModelForCausalLM.register("lora-qwen3-moe")
+class LoraQwen3Moe(LoraQwen3):
+    def __init__(self, args: LoraQwenMoeArgs):
+        super().__init__(args=args)
+        self.model = Qwen3MoeHead(args)
+        self.checkpoint = CheckpointForQwen3Moe(num_experts=args.num_experts)
+
+    def _freeze(self):
+        """ Freeze all parameters but lora ones and mlp.gate. """
+        frozen_names = []
+        for name, param in self.named_parameters():
+            if 'lora' not in name and "mlp.gate" not in name:
+                param.requires_grad_(False)
+                frozen_names.append(name)
