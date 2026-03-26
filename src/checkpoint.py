@@ -379,7 +379,7 @@ class CheckpointForQwen(Checkpoint):
 
 
 class CheckpointForQwen3Moe(Checkpoint):
-    def __init__(self):
+    def __init__(self, num_experts: int):
         col_parallel_names = [
             "q_proj.weight", "k_proj.weight", "v_proj.weight", "lm_head.weight",
             "q_proj.bias", "k_proj.bias", "v_proj.bias", "lm_head.bias"
@@ -387,10 +387,72 @@ class CheckpointForQwen3Moe(Checkpoint):
         row_parallel_names = [
             "o_proj.weight", "embed_tokens.weight",
         ]
-        # TODO
-        # col_parallel_names.extend(["gate_proj.weight", "up_proj.weight", "gate_proj.bias", "up_proj.bias"])
-        # row_parallel_names.extend(["down_proj.weight"])
         super().__init__(col_parallel_names, row_parallel_names)
+        self.num_experts = num_experts
+
+    def split(self, state_dict: dict, n: int) -> List[dict]:
+        """
+        Split experts alongside the expert id.
+        For example:
+            n = 4
+            experts = [0, 1, 2, 3, 4, 5, 6, 7]
+            -> [[0, 1], [2, 3], [4, 5], [6, 7]]
+            -> [[0, 1], [0, 1], [0, 1], [0, 1]]  # sub expert_offset
+        """
+        assert self.num_experts % n == 0
+        num_local_experts = self.num_experts // n
+
+        state_dicts = super().split(state_dict, n)
+        new_state_dicts = [OrderedDict() for _ in range(n)]
+        for i, new_state_dict in enumerate(state_dicts):
+            expert_offset = i * num_local_experts
+            for name, param in new_state_dict.items():
+                match = re.search(r"\.experts\.(\d+)\.", name)
+                if match:
+                    expert_idx = int(match.group(1))
+                    if expert_offset <= expert_idx < expert_offset + num_local_experts:
+                        name = re.sub(
+                            r"\.experts\.(\d+)\.",
+                            lambda m: f".experts.{int(m.group(1)) - expert_offset}.",
+                            name
+                        )
+                        new_state_dicts[i][name] = param
+                else:
+                    new_state_dicts[i][name] = param
+        return new_state_dicts
+
+
+    def merge(self, state_dict1: dict, state_dict2: dict) -> dict:
+        """
+        Merge experts alongside the expert id.
+        For example:
+            experts1 = [0, 1, 2, 3]
+            experts2 = [0, 1, 2, 3]
+            -> [[0, 1, 2, 3], [1, 2, 3, 4]]
+            -> [[0, 1, 2, 3], [4, 5, 6, 7]]  # add expert_offset
+            -> [0, 1, 2, 3, 4, 5, 6, 7]
+        """
+        expert_offset = 0
+        for name in state_dict1:
+            match = re.search(r"\.experts\.(\d+)\.", name)
+            if match:
+                expert_offset = max(expert_offset, int(match.group(1)))
+        expert_offset += 1
+        new_names = []
+        for name, param in state_dict2.items():
+            match = re.search(r"\.experts\.(\d+)\.", name)
+            if match:
+                new_name = re.sub(
+                    r"\.experts\.(\d+)\.",
+                    lambda m: f".experts.{int(m.group(1)) + expert_offset}.",
+                    name
+                )
+                state_dict1[new_name] = param
+                new_names.append(new_name)
+        for name in new_names:
+            state_dict2[name] = None
+        return super().merge(state_dict1, state_dict2)
+
 
 
 class CheckpointForQwenVL(Checkpoint):
