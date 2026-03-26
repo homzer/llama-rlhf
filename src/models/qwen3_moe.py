@@ -3,10 +3,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from src.checkpoint import CheckpointForQwen3Moe
-from src.models import LoraQwen
 from src.models.modeling import AutoModelForCausalLM
 from src.models.modeling_args import QwenMoeArgs, LoraQwenMoeArgs
-from src.models.qwen3 import Qwen3TransformerBlock, Qwen3Head, Qwen3, LoraQwen3
+from src.models.qwen3 import Qwen3TransformerBlock, Qwen3Head, Qwen3, LoraQwen3, LoraQwen3TransformerBlock
 from src.parallel.model_parallel.mappings import reduce_from_model_parallel_region
 
 
@@ -103,11 +102,23 @@ class Qwen3Moe(Qwen3):
         self.checkpoint = CheckpointForQwen3Moe(num_experts=args.num_experts)
 
 
+class LoraQwen3MoeTransformerBlock(LoraQwen3TransformerBlock):
+    def __init__(self, args: LoraQwenMoeArgs):
+        super().__init__(args=args)
+        self.mlp = Qwen3MoeFeedForward(args)
+
+
+class LoraQwen3MoeHead(Qwen3MoeHead):
+    def __init__(self, args: LoraQwenMoeArgs):
+        super().__init__(args=args)
+        self.layers = torch.nn.ModuleList([LoraQwen3MoeTransformerBlock(args) for _ in range(args.num_hidden_layers)])
+
+
 @AutoModelForCausalLM.register("lora-qwen3-moe")
 class LoraQwen3Moe(LoraQwen3):
     def __init__(self, args: LoraQwenMoeArgs):
         super().__init__(args=args)
-        self.model = Qwen3MoeHead(args)
+        self.model = LoraQwen3MoeHead(args)
         self.checkpoint = CheckpointForQwen3Moe(num_experts=args.num_experts)
 
     def _freeze(self):
