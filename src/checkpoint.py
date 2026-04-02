@@ -552,8 +552,8 @@ class CheckpointForQwenVL(Checkpoint):
     def load_hf(cls, ckpt_files: List[str]) -> dict:
         state_dict = Checkpoint.load_hf(ckpt_files)
         if "lm_head.weight" not in state_dict:  # for tie word embeddings
-            print("`lm_head.weight` not found in checkpoint, copy `model.embed_tokens.weight` to replace it.")
-            state_dict["lm_head.weight"] = state_dict["model.embed_tokens.weight"].clone()
+            print("`lm_head.weight` not found in checkpoint, copy `model.language_model.embed_tokens.weight` to replace it.")
+            state_dict["lm_head.weight"] = state_dict["model.language_model.embed_tokens.weight"].clone()
         return state_dict
 
 
