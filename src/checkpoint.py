@@ -507,10 +507,14 @@ class CheckpointForQwenVL(Checkpoint):
         #   [v1],
         #   [v2],
         # ] after column parallel splitting
-        if len(param.shape) == 2:
-            param = param.transpose(-1, -2)
-            param = param.reshape(3, param.shape[0] // 3, -1).transpose(-1, -2)
-            param = torch.cat(param.unbind(0), dim=0).contiguous()
+        num_dims = len(param.shape)
+        if num_dims == 1:
+            param = param.reshape(-1, 3)
+        param = param.transpose(-1, -2)
+        param = param.reshape(3, param.shape[0] // 3, -1).transpose(-1, -2)
+        param = torch.cat(param.unbind(0), dim=0).contiguous()
+        if num_dims == 1:
+            param = param.reshape(-1)
         return param
 
     def split(self, state_dict: dict, n: int) -> List[dict]:
