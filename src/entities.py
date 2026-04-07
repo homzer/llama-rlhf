@@ -155,7 +155,7 @@ class AverageMeter:
         self.average = 0
         self.step = 0
 
-    def forward(self, x: int):
+    def forward(self, x: float):
         """ Accumulate average computation """
         self.step += 1
         self.average = self.average + 1 / self.step * (x - self.average)

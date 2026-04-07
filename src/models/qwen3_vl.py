@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 
 from src.checkpoint import CheckpointForQwen3VL
-from src.models import ParallelModule
+from src.models.modeling import ParallelModelForVisualLM, AutoModelForVisualLM
 from src.models.modeling_acts import LogitsNormalize
 from src.models.modeling_args import Qwen3VLArgs
 from src.models.qwen3_vl_language import Qwen3LanguageModel
@@ -299,7 +299,8 @@ class Qwen3VLHead(nn.Module):
         )
 
 
-class Qwen3VL(ParallelModule):
+@AutoModelForVisualLM.register("qwen3-vl")
+class Qwen3VL(ParallelModelForVisualLM):
     def __init__(self, args: Qwen3VLArgs):
         super().__init__()
         self.args = args

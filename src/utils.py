@@ -459,7 +459,7 @@ def deduplicate_texts(iterable: list, threshold: float = 0.8, key: Callable = No
     if key is None:
         def key(x):
             return x
-    for i in trange(len(iterable)):
+    for i in range(len(iterable)):
         results.append(iterable[i])
         for j in range(i + 1, len(iterable)):
             if threshold == 1:

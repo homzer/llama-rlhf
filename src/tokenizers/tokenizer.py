@@ -7,6 +7,7 @@ class Tokenizer:
         self.bos_id = bos_id
         self.eos_id = eos_id
         self.pad_id = pad_id
+        self.system_prompt = None
 
     def apply_chat_template(self, messages: List[dict]) -> str:
         """

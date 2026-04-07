@@ -194,6 +194,31 @@ class ParallelModelForCausalLM(ParallelModule):
         pass
 
 
+class ParallelModelForVisualLM(ParallelModule):
+    def __init__(self):
+        super().__init__()
+
+    def init_weights(self):
+        raise NotImplementedError
+
+    def forward(
+            self,
+            input_ids: torch.Tensor,
+            input_masks: torch.Tensor,
+            start_pos: int = 0,
+            use_cache: bool = False,
+            pixel_values_images: torch.Tensor = None,
+            pixel_values_videos: torch.Tensor = None,
+            image_grid_thw: torch.Tensor = None,
+            video_grid_thw: torch.Tensor = None,
+    ) -> torch.Tensor:
+        raise NotImplementedError
+
+    def flush(self):
+        """ clean KV cache """
+        raise NotImplementedError
+
+
 class ParallelModelForMaskedLM(ParallelModule):
     def __init__(self):
         super().__init__()
@@ -255,6 +280,42 @@ class AutoModelForCausalLM:
             lora_dtype: str = 'bfloat16',
             use_logits_normalize: bool = True
     ) -> ParallelModelForCausalLM:
+        args = AutoArgs.from_pretrained(
+            model_type=model_type,
+            config_file=config_file,
+            max_seq_len=max_seq_len,
+            dtype=dtype,
+            lora_rank=lora_rank,
+            lora_dtype=lora_dtype,
+            use_logits_normalize=use_logits_normalize
+        )
+        model_type = f"lora-{model_type}" if lora_rank > 0 else model_type
+        model = cls._registry[model_type](args)
+        model.init_weights()
+        return model
+
+
+class AutoModelForVisualLM:
+    _registry = {}
+
+    @classmethod
+    def register(cls, name):
+        def wrapper(model_cls):
+            cls._registry[name] = model_cls
+            return model_cls
+        return wrapper
+
+    @classmethod
+    def from_pretrained(
+            cls,
+            model_type: str,
+            config_file: str,
+            max_seq_len: int,
+            dtype: str = 'bfloat16',
+            lora_rank: int = -1,
+            lora_dtype: str = 'bfloat16',
+            use_logits_normalize: bool = True
+    ) -> ParallelModelForVisualLM:
         args = AutoArgs.from_pretrained(
             model_type=model_type,
             config_file=config_file,

@@ -1,26 +1,24 @@
-import collections
 from typing import List
 
 from transformers import Qwen3VLProcessor as Qwen3VLProcessorHf
 
-
-ProcessorOutputs = collections.namedtuple(
-    "ProcessorOutputs", [
-        "input_ids", "pixel_values_images", "image_grid_thw", "pixel_values_videos", "video_grid_thw"
-    ]
-)
+from src.tokenizers.processor import Processor, ProcessorOutputs, AutoProcessor
 
 
-class Qwen3VLProcessor:
+@AutoProcessor.register("qwen3-vl")
+class Qwen3VLProcessor(Processor):
     def __init__(self, model_dir: str):
         self.model = Qwen3VLProcessorHf.from_pretrained(model_dir)
-        self.bos_id = self.model.tokenizer.bos_token_id or self.model.tokenizer.convert_tokens_to_ids('<|im_start|>')
-        self.eos_id=self.model.tokenizer.eos_token_id
-        self.pad_id=self.model.tokenizer.pad_token_id
+        super().__init__(
+            vocab_size=self.model.tokenizer.vocab_size,
+            bos_id=self.model.tokenizer.bos_token_id or self.model.tokenizer.convert_tokens_to_ids('<|im_start|>'),
+            eos_id=self.model.tokenizer.eos_token_id,
+            pad_id=self.model.tokenizer.pad_token_id
+        )
         self.image_token_id = self.model.image_token_id
         self.video_token_id = self.model.video_token_id
 
-    def apply_chat_template(self, messages: list) -> ProcessorOutputs:
+    def apply_chat_template(self, messages: List[List[dict]]) -> ProcessorOutputs:
         """
         messages = [
             [
