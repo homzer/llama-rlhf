@@ -40,8 +40,6 @@ def main(
     tokenizer_file = tokenizer_file or ckpt_dir
     config_file = config_file or ckpt_dir
 
-    print(AutoModelForVisualLM._registry)
-
     model = AutoModelForVisualLM.from_pretrained(
         model_type=model_type,
         config_file=config_file,
