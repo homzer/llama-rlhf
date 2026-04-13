@@ -28,7 +28,7 @@ class GeneratorForVisualLM:
         processor_outputs = self.processor.apply_chat_template(texts=texts, images=images, videos=videos)
         bsz = len(processor_outputs.input_ids)
         start_pos = max([len(t) for t in processor_outputs.input_ids])
-        assert start_pos < self.max_seq_len  # TODO
+        assert start_pos < self.max_seq_len, start_pos  # TODO
         tokens = torch.full((bsz, self.max_seq_len), self.processor.pad_id).long()
         for k, t in enumerate(processor_outputs.input_ids):
             tokens[k, start_pos - len(t): start_pos] = torch.tensor(t).long()
