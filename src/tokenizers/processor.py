@@ -16,7 +16,9 @@ class Processor:
         self.pad_id = pad_id
         self.system_prompt = None
 
-    def apply_chat_template(self, messages: List[List[dict]]) -> ProcessorOutputs:
+    def apply_chat_template(
+            self, texts: List[str], images: List[str] = None, videos: List[str] = None
+    ) -> ProcessorOutputs:
         """
         messages = [
             [

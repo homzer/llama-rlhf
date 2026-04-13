@@ -23,9 +23,9 @@ class GeneratorForVisualLM:
         self.temperature = temperature
         self.top_p = top_p
 
-    def prepare_for_generation(self, messages: list):
+    def prepare_for_generation(self, texts: List[str], images: List[str] = None, videos: List[str] = None):
         # prefix padding
-        processor_outputs = self.processor.apply_chat_template(messages)
+        processor_outputs = self.processor.apply_chat_template(texts=texts, images=images, videos=videos)
         bsz = len(processor_outputs.input_ids)
         start_pos = max([len(t) for t in processor_outputs.input_ids])
         assert start_pos < self.max_seq_len  # TODO
@@ -121,9 +121,9 @@ class GeneratorForVisualLM:
             responses.append(self.processor.decode(t[m].tolist()))
         return responses
 
-    def forward(self, messages: list) -> List[str]:
+    def forward(self, texts: List[str], images: List[str] = None, videos: List[str] = None) -> List[str]:
         self.model.eval()
-        prep_outputs = self.prepare_for_generation(messages)
+        prep_outputs = self.prepare_for_generation(texts, images, videos)
         forward_outputs = self.model_forward(
             tokens=prep_outputs.tokens,
             input_masks=prep_outputs.input_masks,

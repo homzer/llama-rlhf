@@ -18,7 +18,9 @@ class Qwen3VLProcessor(Processor):
         self.image_token_id = self.model.image_token_id
         self.video_token_id = self.model.video_token_id
 
-    def apply_chat_template(self, messages: List[List[dict]]) -> ProcessorOutputs:
+    def apply_chat_template(
+            self, texts: List[str], images: List[str] = None, videos: List[str] = None
+    ) -> ProcessorOutputs:
         """
         messages = [
             [
@@ -41,6 +43,23 @@ class Qwen3VLProcessor(Processor):
             ],
         ]
         """
+        messages = []
+        if images is None:
+            images = [None] * len(texts)
+        if videos is None:
+            videos = [None] * len(texts)
+        for i, text in enumerate(texts):
+            message = []
+            if self.system_prompt is not None:
+                message.append({"role": "system", "content": [{"type": "text", "text": self.system_prompt}]})
+            user_content = []
+            if images[i] is not None and len(images[i]) > 0:
+                user_content.append({"type": "image", "image": images[i]})
+            if videos[i] is not None and len(videos[i]) > 0:
+                user_content.append({"type": "video", "video": videos[i]})
+            user_content.append({"type": "text", "text": texts[i]})
+            message.append({"role": "user", "content": user_content})
+            messages.append(message)
         outputs = self.model.apply_chat_template(
             messages,
             tokenize=True,

@@ -3,7 +3,7 @@ import os
 
 import fire
 
-from src.dataset import JsonDataset, ChatTemplateDataset
+from src.dataset import JsonDataset, ChatTemplateDataset, VisionDataset
 from src.entities import Timer
 from src.generator_vl import GeneratorForVisualLM
 from src.models.modeling import AutoModelForVisualLM
@@ -26,8 +26,6 @@ def main(
         top_p: float = 1.0,
         tokenizer_file: str = None,
         config_file: str = None,
-        use_chat_template: bool = False,
-        num_samples_per_prompt: int = 1,
         dtype: str = "bfloat16",
         model_parallel_size: int = None,
         system_prompt: str = None,
@@ -62,14 +60,15 @@ def main(
         temperature=temperature,
         top_p=top_p,
     )
-    dataset = JsonDataset(label_file)
+    dataset = VisionDataset(label_file)
     os.makedirs(log_dir, exist_ok=True)
     writer = ParallelDataWriter(os.path.join(log_dir, "results.jsonl"), 'a')
     dataloader = ParallelDataLoader(dataset, batch_size=max_batch_size)
     timer = Timer(len(dataloader))
     for data in dataloader:
         timer.step()
-        responses = generator.forward(data['message'])
+        responses = generator.forward(data['text'], videos=data['video'])
+        print(data['text'][-1] + '\n=======\n' + responses[-1])
         for i, result in enumerate(convert_dataloader_data_to_list(data)):
             result["output"] = responses[i]
             writer.write(json.dumps(result, ensure_ascii=False) + '\n')

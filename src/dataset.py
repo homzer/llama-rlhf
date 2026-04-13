@@ -1,3 +1,4 @@
+import os.path
 import random
 from copy import deepcopy
 from typing import List
@@ -41,6 +42,17 @@ class JsonDataset(Dataset):
     def shuffle(self) -> "JsonDataset":
         random.shuffle(self.datalist)
         return self
+
+
+class VisionDataset(JsonDataset):
+    def __init__(self, f: str):
+        super().__init__(f)
+        self.root = os.path.dirname(f)
+        for data in self.datalist:
+            if "image" in data:
+                data["image"] = os.path.join(self.root, data["image"])
+            if "video" in data:
+                data["video"] = os.path.join(self.root, data["video"])
 
 
 class ChatTemplateDataset(Dataset):
