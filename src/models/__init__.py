@@ -13,3 +13,4 @@ from src.models.internlm import InternLM
 from src.models.internlm3 import InternLM3
 from src.models.gemma2 import Gemma2
 from src.models.mistral3 import Mistral3, Mistral3Verifier
+from src.models.qwen3_vl import Qwen3VL
