@@ -62,7 +62,7 @@ def main(
     )
     dataset = VisionDataset(label_file)
     os.makedirs(log_dir, exist_ok=True)
-    writer = ParallelDataWriter(os.path.join(log_dir, "results.jsonl"), 'a')
+    writer = ParallelDataWriter(os.path.join(log_dir, "results.jsonl"), 'w')
     dataloader = ParallelDataLoader(dataset, batch_size=max_batch_size)
     timer = Timer(len(dataloader))
     for data in dataloader:
