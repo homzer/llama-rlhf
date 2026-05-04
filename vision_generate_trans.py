@@ -7,15 +7,21 @@ from src.video_utils import downscale_video
 
 def preprocess_trans_bench(root_dir: str = "../../data/results/trans/") -> list:
     datalist = json_load(os.path.join(root_dir, "results.json"))["test"]
+    results = []
     for data in datalist:
+        mp4_path = os.path.join(root_dir, data["video"])
+        if not os.path.exists(mp4_path):  # skip
+            continue
         flv_path = os.path.join(root_dir, data["video"].replace(".mp4", ".flv"))  # .flv for qwen processor
         if not os.path.exists(flv_path):
-            downscale_video(os.path.join(root_dir, data["video"]), flv_path, fps=1)
+            downscale_video(mp4_path, flv_path, fps=1)
+        data["video"] = flv_path
         data["text"] = f"{data['question']}"
         for option in data["options"].keys():
             data["text"] += f"\n{option}. {data['options'][option]}"
-    print(datalist[-1]["text"])
-    return datalist
+        results.append(data)
+    print(results[-1]["text"])
+    return results
 
 
 def read_data():
