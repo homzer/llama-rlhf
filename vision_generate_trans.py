@@ -30,7 +30,7 @@ def read_data():
     lens = []
     for data in datalist:
         input_ids = processor.apply_chat_template(texts=[data["text"]], videos=[data["video"]]).input_ids[0]
-        print(len(input_ids))
+        print(data["id"], len(input_ids))
         lens.append(len(input_ids))
     print(max(lens))
 
